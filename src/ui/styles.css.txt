@@ -1,19 +1,24 @@
-  /* ---------- iOS-Systemfarben (Human Interface Guidelines) ----------
-     Variablennamen bleiben die von Eddies Oberfläche, damit alle Diagramme unverändert funktionieren. */
+  /* ---------- Stil B (#35): neutrale Flächen, eine Akzentfarbe (Orange), keine Schatten ----------
+     Variablennamen bleiben, damit alle Diagramme unverändert funktionieren:
+     --accent = Akzent und erste Datenreihe (Orange), --accent-2 = zweite Datenreihe (Blau),
+     --ok/--warn/--bad nur für Bewertungen (Ampel, Trends), nie als Deko. --ter = tertiärer Text, Achsen. */
+  @font-face { font-family: "Inter"; src: url(/fonts/inter.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url(/fonts/jetbrains-mono.woff2) format("woff2"); font-weight: 100 800; font-display: swap; }
   :root {
-    --bg: #f2f2f7; --panel: #ffffff; --fg: #000000; --muted: rgba(60,60,67,.6); --line: rgba(60,60,67,.18); --grid: rgba(60,60,67,.1);
-    --accent: #007aff; --accent-2: #ff9500; --prev: #c7c7cc; --ok: #34c759; --warn: #ff9500; --bad: #ff3b30;
-    --tint: #ff2d55; --fill: rgba(120,120,128,.12); --bar: rgba(249,249,249,.8); --seg-on: #ffffff;
-    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
-    --num: -apple-system-ui-rounded, ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
-    --r: 12px;
+    --bg: #f2f2ef; --panel: #ffffff; --fg: #141414; --muted: #6b6b6b; --ter: #9a9a9a; --line: #e4e3df; --grid: #ecebe6;
+    --accent: #fc5000; --accent-2: #2e62ff; --prev: #d3d1ca; --ok: #2fa36b; --warn: #e8a800; --bad: #e5484d;
+    --tint: #fc5000; --fill: #f2f1ec; --bar: rgba(242,242,239,.86); --seg-on: #ffffff; --dot: rgba(0,0,0,.05);
+    --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    --num: "Inter", -apple-system, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --r: 16px;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #000000; --panel: #1c1c1e; --fg: #ffffff; --muted: rgba(235,235,245,.6); --line: rgba(84,84,88,.6); --grid: rgba(84,84,88,.35);
-      --accent: #0a84ff; --accent-2: #ff9f0a; --prev: #48484a; --ok: #30d158; --warn: #ff9f0a; --bad: #ff453a;
-      --tint: #ff375f; --fill: rgba(118,118,128,.24); --bar: rgba(22,22,24,.8); --seg-on: #636366;
+      --bg: #0a0a0a; --panel: #161616; --fg: #eeeeee; --muted: #a7a7a7; --ter: #7c7c7c; --line: #2a2a2a; --grid: #222222;
+      --accent: #ff6a2b; --accent-2: #6798ff; --prev: #3a3a3a; --ok: #a0ca92; --warn: #f0c040; --bad: #ff6b6b;
+      --tint: #ff6a2b; --fill: #1f1f1f; --bar: rgba(10,10,10,.86); --seg-on: #383838; --dot: rgba(255,255,255,.05);
       color-scheme: dark;
     }
   }
@@ -407,3 +412,50 @@
   .progress { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
   .progress i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .4s; }
   @media (prefers-reduced-motion: reduce) { .progress i { transition: none; } }
+
+  /* ---------- Stil B (#35): Flächen, Schrift, Labels ---------- */
+  html, body { font-feature-settings: "cv11", "ss01"; letter-spacing: -0.011em; }
+  /* Feines Punktraster im Hintergrund */
+  body { background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 18px 18px; background-attachment: fixed; }
+  h2 { font-weight: 700; letter-spacing: -0.035em; }
+  h3 { letter-spacing: -0.015em; }
+  h3.sec { letter-spacing: -0.025em; }
+  /* Karten: Haarlinie statt Schatten; Kacheln in Karten als Fläche ohne Linie */
+  .card, .tile, .srclist, .banner { border: 1px solid var(--line); }
+  .card .tiles .tile, .card .tile { background: var(--fill); border-color: transparent; }
+  .banner { box-shadow: inset 3px 0 0 var(--accent); }
+  .seg { background: var(--fill); border: 1px solid var(--line); border-radius: 10px; }
+  .seg button { border-radius: 8px; }
+  .seg button[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--line); }
+  body.scrolled header.top { box-shadow: 0 1px 0 var(--line); }
+  nav.tabs { box-shadow: 0 -1px 0 var(--line); }
+  nav.tabs button { color: var(--ter); }
+  .tip { box-shadow: 0 0 0 1px var(--line); border-radius: 12px; }
+  .neu-panel { box-shadow: 0 0 0 1px var(--line); }
+  /* Mono-Labels: Kennzahl-Beschriftungen, Achsen, Tabellenköpfe („Instrumente“) */
+  .tile .lbl, .hrsel .lbl, .bd-item .lbl, .st-cell span, th, .zgrid .h, .u-lap.head {
+    font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ter);
+  }
+  .tile .val, .fa-val, .dg-big .val, .ap-stats b, .zrow .zv, .hrsel .val { letter-spacing: -0.03em; }
+  .tile .val { font-size: 30px; margin-top: 4px; }
+  .tile .cmp { font-family: var(--mono); font-size: 11px; letter-spacing: 0; }
+  .chart svg text { font-family: var(--mono); font-size: 10px; fill: var(--ter); }
+  .chart .domain { display: none; }
+  .chip { font-family: var(--mono); font-weight: 500; font-size: 11px; letter-spacing: .02em; }
+  /* Erholungs-Ampel: Punkt mit weichem Hof */
+  .readiness summary .light { width: 12px; height: 12px; }
+  .readiness summary .light.g { box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .readiness summary .light.y { box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 22%, transparent); }
+  .readiness summary .light.r { box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 22%, transparent); }
+  .readiness .verdict { font-size: 18px; letter-spacing: -0.02em; }
+  .readiness .more { color: var(--accent); }
+  /* Body Battery (#35): Ring über die ganze Breite */
+  .tile.bb-tile { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 16px; }
+  .bb-ring { flex: none; width: 116px; height: 116px; }
+  .bb-ring svg { display: block; width: 100%; height: 100%; }
+  .bb-ring .n { font: 700 34px var(--num); letter-spacing: -0.04em; fill: var(--fg); }
+  .bb-ring .s { font: 500 9px var(--mono); letter-spacing: .08em; fill: var(--ter); }
+  .bb-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .bb-side .bb-facts { display: flex; flex-direction: column; gap: 2px; font-size: 14px; color: var(--muted); }
+  .bb-side .bb-facts b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bb-side .spark { margin-top: 6px; }

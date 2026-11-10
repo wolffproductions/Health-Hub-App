@@ -3,6 +3,9 @@ import { UI_PARTS, UI_SHELL } from "./ui/parts";
 import appleTouchIcon from "./assets/apple-touch-icon.png";
 import icon192 from "./assets/icon-192.png";
 import icon512 from "./assets/icon-512.png";
+// Schriften (#35), selbst ausgeliefert statt von Google Fonts (dann sieht Google nicht, wer die App öffnet); SIL OFL 1.1
+import fontInter from "./assets/fonts/inter.woff2";
+import fontMono from "./assets/fonts/jetbrains-mono.woff2";
 import type { Env } from "./env";
 import { accessValid, authorize, authServerMeta, corsPreflight, listClients, protectedResource, register, removeClient, token, unauthorized } from "./mcp/oauth";
 import { handleBody } from "./mcp/server";
@@ -37,13 +40,14 @@ const MANIFEST = {
   scope: "/",
   display: "standalone",
   orientation: "portrait",
-  background_color: "#f2f2f7",
-  theme_color: "#f2f2f7",
+  background_color: "#f2f2ef",
+  theme_color: "#f2f2ef",
   icons: [
     { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
     { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
   ],
 };
+const FONTS: Record<string, ArrayBuffer> = { "/fonts/inter.woff2": fontInter, "/fonts/jetbrains-mono.woff2": fontMono };
 const PNGS: Record<string, ArrayBuffer> = {
   "/apple-touch-icon.png": appleTouchIcon,
   "/apple-touch-icon-precomposed.png": appleTouchIcon,
@@ -425,6 +429,7 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   if (path === "/health") return json({ ok: true });
   if (path === "/manifest.webmanifest") return respond(JSON.stringify(MANIFEST), 200, "application/manifest+json");
   if (PNGS[path]) return new Response(PNGS[path], { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=604800" } });
+  if (FONTS[path]) return new Response(FONTS[path], { headers: { "Content-Type": "font/woff2", "Cache-Control": "public, max-age=31536000, immutable" } });
   // Service Worker für Push (#13): enthält keine Daten, Geltungsbereich die ganze App
   if (path === "/sw.js") return respond(SW, 200, "text/javascript; charset=utf-8", { "Service-Worker-Allowed": "/", "Cache-Control": "no-cache" });
   // Interner Schlüssel: Secret oder in D1 erzeugt (#12). Ohne Tabellen (Migrationen fehlen) geht nichts.

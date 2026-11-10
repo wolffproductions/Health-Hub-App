@@ -8,7 +8,7 @@
   "workers_dev": true,
 
   // App-Icons als Binärdaten einbinden (Teile der Oberfläche, .html und .txt, sind von Haus aus Text)
-  "rules": [{ "type": "Data", "globs": ["**/*.png"], "fallthrough": true }],
+  "rules": [{ "type": "Data", "globs": ["**/*.png", "**/*.woff2"], "fallthrough": true }],
 
   // Alle 30 Minuten: neueste Tage aktuell halten und ein Stück Historie nachladen
   "triggers": { "crons": ["*/30 * * * *"] },

@@ -64,19 +64,36 @@ function bbTile(tiles, days) {
   const fallback = now == null ? [...days].reverse().find((x) => x.bbMax != null) : null;
   const t = el('div', 'tile tap bb-tile'); t.tabIndex = 0; t.setAttribute('role', 'button');
   t.addEventListener('click', () => openChart('bbMax')); t.addEventListener('keydown', (e) => { if (e.key === 'Enter') openChart('bbMax'); });
-  t.append(el('span', 'lbl', 'Body Battery' + (now == null && fallback ? ' max. · ' + dayLabel(fallback.d).split(',')[0] : '')));
-  t.append(el('span', 'val', now != null ? String(now) : fallback ? num(fallback.bbMax, 0) : '–'));
+  // Stil B (#35): Ring mit dem Stand in der Mitte, rechts daneben Eckwerte und Tageskurve
+  const shown = now != null ? now : fallback ? fallback.bbMax : null;
+  const ring = el('div', 'bb-ring');
+  ring.innerHTML = bbRing(shown, lastPt ? 'STAND ' + bbClock(lastPt[0]) : now != null ? 'AKTUELL' : fallback ? 'MAX. ' + dayLabel(fallback.d).split(',')[0].toUpperCase() : '');
+  const side = el('div', 'bb-side');
+  side.append(el('span', 'lbl', 'Body Battery'));
   // Tiefstwert bis jetzt: aus dem Verlauf, sonst Garmins Tageswert
   const lo = pts.length ? Math.min(...pts.map((p) => p[1])) : today.bbMin ?? null;
   const bits = [];
   if (lastPt) bits.push('Stand ' + bbClock(lastPt[0]));
   else if (now != null) bits.push('aktuell');
-  if (lo != null && now != null) bits.push('Tief ' + lo);
-  if (today.bbWake != null) bits.push('Aufwachen ' + today.bbWake);
-  t.append(el('span', 'cmp', bits.join(' · ') || (now == null ? 'noch kein Wert heute' : '')));
-  const s = el('div', 'spark'); t.append(s); tiles.prepend(t);
+  const facts = el('div', 'bb-facts');
+  const fact = (txt, v) => { const f = el('span', null, txt + ' '); f.append(el('b', null, String(v))); facts.append(f); };
+  if (today.bbWake != null) { fact('Aufwachen', today.bbWake); bits.push('Aufwachen ' + today.bbWake); }
+  if (lo != null && now != null) { fact('Tief', lo); bits.push('Tief ' + lo); }
+  if (shown == null) facts.append(el('span', null, 'noch kein Wert heute'));
+  side.append(facts);
+  const s = el('div', 'spark'); side.append(s);
+  t.append(ring, side); tiles.prepend(t);
   if (pts.length >= 2) bbSpark(s, pts);
   t.setAttribute('aria-label', 'Body Battery ' + (now ?? '–') + (bits.length ? ', ' + bits.join(', ') : ''));
+}
+
+// Ring 0–100 (Stil B, #35): Hintergrundring zart, Stand in Akzentfarbe, Zahl in der Mitte
+function bbRing(v, sub) {
+  const r = 48, c = 2 * Math.PI * r, p = v == null ? 0 : Math.max(0, Math.min(100, v)) / 100;
+  return '<svg viewBox="0 0 116 116" aria-hidden="true"><circle cx="58" cy="58" r="' + r + '" fill="none" stroke="var(--accent)" stroke-opacity=".14" stroke-width="11"/>'
+    + (p ? '<circle cx="58" cy="58" r="' + r + '" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="' + (c * p).toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(-90 58 58)"/>' : '')
+    + '<text class="n" x="58" y="62" text-anchor="middle">' + (v == null ? '–' : Math.round(v)) + '</text>'
+    + (sub ? '<text class="s" x="58" y="80" text-anchor="middle">' + sub + '</text>' : '') + '</svg>';
 }
 
 // Tageskurve 0–24 Uhr, Skala 0–100, letzter Punkt hervorgehoben
