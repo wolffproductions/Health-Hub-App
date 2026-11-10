@@ -28,7 +28,10 @@ async function loadData() {
   S.today = S.daily.length ? S.daily[S.daily.length - 1].d : null;
   $('#updated').textContent = data.updated ? 'Stand ' + new Date(data.updated).toLocaleString('de-DE', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const exp = keyExpiry(status);
-  if (status.key === 'none') { banner('Hinterlege zuerst deinen Garmin-Schlüssel.', false, GARMIN_KEY_LINK); }
+  // Ohne Garmin, aber mit Strava oder Withings: kein Garmin-Hinweis, die App läuft mit den anderen Quellen
+  const otherSource = !!(status.strava?.connected || status.withings?.connected);
+  if (status.key === 'none' && otherSource) banner('');
+  else if (status.key === 'none') { banner('Verbinde zuerst eine Datenquelle: Garmin, Strava oder Withings (oben rechts unter Konto).', false); }
   else if (status.lastError && /abgelehnt|401|403/.test(status.lastError)) banner('Garmin lehnt deinen Schlüssel ab – vermutlich ist er abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.', true, GARMIN_KEY_LINK);
   else if (exp && exp.left < 0) banner(`Dein Garmin-Schlüssel ist am ${exp.label} abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.`, true, GARMIN_KEY_LINK);
   else if (exp && exp.left <= KEY_WARN_DAYS) banner(`Dein Garmin-Schlüssel läuft ${exp.left === 0 ? 'heute' : exp.left === 1 ? 'morgen' : 'in ' + exp.left + ' Tagen'} ab (${exp.label}). Erstelle rechtzeitig einen neuen und trag ihn unter „Konto“ ein.`, false, GARMIN_KEY_LINK);
@@ -36,8 +39,9 @@ async function loadData() {
   else if (!status.complete) banner('Die Historie wird noch geladen. Unter „Konto“ kannst du das beschleunigen.');
   else banner('');
   // Schlüssel-Hinweise: zusätzlich ein Sprung direkt zur Garmin-Seite im Konto (#28)
-  if (status.key === 'none' || (status.lastError && /abgelehnt|401|403/.test(status.lastError)) || (exp && exp.left <= KEY_WARN_DAYS)) {
-    const go = el('button', 'btn small ghost', 'Zum Schlüssel ›'); go.type = 'button'; go.dataset.goto = 'key-input';
+  if ((status.key === 'none' && !otherSource) || (status.lastError && /abgelehnt|401|403/.test(status.lastError)) || (exp && exp.left <= KEY_WARN_DAYS)) {
+    const none = status.key === 'none';
+    const go = el('button', 'btn small ghost', none ? 'Datenquelle verbinden ›' : 'Zum Schlüssel ›'); go.type = 'button'; go.dataset.goto = none ? 'sources' : 'key-input';
     const row = el('div', 'row'); row.style.marginTop = '8px'; row.append(go); $('#banner').append(row);
   }
   renderAll(); renderAccount();
