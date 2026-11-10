@@ -1,0 +1,149 @@
+// ---------- HEUTE ----------
+function renderToday() {
+  renderTodayActs();
+  const days = S.daily;
+  // Erholungs-Ampel kommt fertig vom Server (src/ampel.ts), dieselbe Regel wie im Morgen-Push (#13)
+  const A = S.ampel;
+  const factors = $('#r-factors'); factors.replaceChildren();
+  if (!A) { $('#r-verdict').textContent = days.length ? 'Noch keine Daten' : 'Lade Daten …'; $('#r-light').className = 'light'; }
+  else {
+    $('#r-date').textContent = 'Stand: Nacht auf ' + dayLabel(A.day);
+    for (const it of A.items) {
+      const li = el('li'); const l = el('i', 'light ' + it.st); const mid = el('div');
+      mid.append(el('span', null, it.name), el('span', 'why', it.why));
+      li.append(l, mid, el('b', null, it.val)); factors.append(li);
+    }
+    $('#r-verdict').textContent = A.verdict; $('#r-light').className = 'light ' + A.light;
+  }
+
+  // Kernwerte des Tages (#14, #15): unabhängig von der Zeitraum-Auswahl, verglichen mit dem
+  // eigenen Schnitt der 30 Tage vor dem jeweiligen Wert
+  const tiles = $('#today-tiles'); tiles.replaceChildren();
+  const last14 = days.filter((x) => x.d > addDays(S.today, -14));
+  const base30 = (k, day) => mean(days.filter((x) => x.d < day && x.d >= addDays(day, -30)).map((x) => x[k]));
+  const defs = [
+    ['HRV letzte Nacht', 'hrv', ' ms', true, true],
+    ['Schlafscore', 'score', '', true, false],
+    ['Schlaf', 'slp', ' h', true, false],
+    ['Ruhepuls', 'rhr', ' bpm', false, false],
+    ['Stress Ø', 'stress', '', false, false]
+  ];
+  for (const [label, k, unit, up, band] of defs) {
+    const lastV = [...last14].reverse().find((x) => x[k] != null);
+    let cmp = null;
+    if (lastV) {
+      const b = base30(k, lastV.d);
+      // Schlafdauer in Minuten vergleichen, sonst ganze Werte
+      cmp = k === 'slp' ? cmpLine(lastV[k] * 60, b == null ? null : b * 60, 0, up, ' min') : cmpLine(lastV[k], b, 0, up, unit);
+      cmp.text = cmp.text.replace(/ggü\..*$/, 'ggü. Ø 30 Tage');
+    }
+    tile(tiles, {
+      // Ist der letzte Wert nicht von heute, steht der Tag dabei
+      label: label + (lastV && lastV.d !== S.today ? ' · ' + dayLabel(lastV.d).split(',')[0] : ''),
+      value: lastV ? (k === 'slp' ? hm(lastV[k]) : num(lastV[k], 0)) : '–', unit: lastV ? unit : '',
+      cmp,
+      spark: { data: last14.map((x) => ({ d: x.d, v: x[k] })), band: band ? last14.map((x) => ({ d: x.d, lo: x.hrvLo, hi: x.hrvHi })) : null },
+      open: () => openChart(k)
+    });
+  }
+  // Body Battery als erste Kachel, erst jetzt, damit die Kurve die richtige Breite misst
+  bbTile(tiles, days);
+}
+
+// ---------- Body Battery (#79) ----------
+// Aktueller Stand statt Tagesmaximum, dazu der Verlauf des Tages als kleine Kurve. Garmin kennt
+// den Stand erst, wenn die Uhr synchronisiert hat; deshalb steht die Uhrzeit des letzten Messpunkts dabei.
+const bbClock = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+
+function bbTile(tiles, days) {
+  const today = days.find((x) => x.d === S.today) || {};
+  const curve = ((S.bb && S.bb.curves) || []).find((c) => c.day === S.today);
+  const pts = curve ? curve.pts : [];
+  const lastPt = pts[pts.length - 1];
+  const now = lastPt ? lastPt[1] : today.bbNow ?? null;
+  const fallback = now == null ? [...days].reverse().find((x) => x.bbMax != null) : null;
+  const t = el('div', 'tile tap bb-tile'); t.tabIndex = 0; t.setAttribute('role', 'button');
+  t.addEventListener('click', () => openChart('bbMax')); t.addEventListener('keydown', (e) => { if (e.key === 'Enter') openChart('bbMax'); });
+  t.append(el('span', 'lbl', 'Body Battery' + (now == null && fallback ? ' max. · ' + dayLabel(fallback.d).split(',')[0] : '')));
+  t.append(el('span', 'val', now != null ? String(now) : fallback ? num(fallback.bbMax, 0) : '–'));
+  // Tiefstwert bis jetzt: aus dem Verlauf, sonst Garmins Tageswert
+  const lo = pts.length ? Math.min(...pts.map((p) => p[1])) : today.bbMin ?? null;
+  const bits = [];
+  if (lastPt) bits.push('Stand ' + bbClock(lastPt[0]));
+  else if (now != null) bits.push('aktuell');
+  if (lo != null && now != null) bits.push('Tief ' + lo);
+  if (today.bbWake != null) bits.push('Aufwachen ' + today.bbWake);
+  t.append(el('span', 'cmp', bits.join(' · ') || (now == null ? 'noch kein Wert heute' : '')));
+  const s = el('div', 'spark'); t.append(s); tiles.prepend(t);
+  if (pts.length >= 2) bbSpark(s, pts);
+  t.setAttribute('aria-label', 'Body Battery ' + (now ?? '–') + (bits.length ? ', ' + bits.join(', ') : ''));
+}
+
+// Tageskurve 0–24 Uhr, Skala 0–100, letzter Punkt hervorgehoben
+function bbSpark(node, pts) {
+  const f = frame(node, 42);
+  const x = d3.scaleLinear([0, 1440], [2, f.w - 9]), y = d3.scaleLinear([0, 100], [36, 5]);
+  const c = css('--accent');
+  const id = 'bbg' + (++gradSeq);
+  const g = f.svg.append('defs').append('linearGradient').attr('id', id).attr('x1', 0).attr('x2', 0).attr('y1', 0).attr('y2', 1);
+  g.append('stop').attr('offset', '0%').attr('stop-color', c).attr('stop-opacity', .3);
+  g.append('stop').attr('offset', '100%').attr('stop-color', c).attr('stop-opacity', 0);
+  f.svg.append('path').datum(pts).attr('fill', `url(#${id})`).attr('d', d3.area().curve(d3.curveMonotoneX).x((p) => x(p[0])).y0(36).y1((p) => y(p[1])));
+  f.svg.append('path').datum(pts).style('fill', 'none').style('stroke', c).style('stroke-width', 1.8)
+    .attr('d', d3.line().curve(d3.curveMonotoneX).x((p) => x(p[0])).y((p) => y(p[1])));
+  const l = pts[pts.length - 1];
+  f.svg.append('circle').attr('cx', x(l[0])).attr('cy', y(l[1])).attr('r', 3).style('fill', c).style('stroke', css('--panel')).style('stroke-width', 1.5);
+}
+
+// ---------- Aktivitäten des Tages (#16) ----------
+// Mini-Post je Einheit: Karte mit Route (Kartenteil in karte.js.txt), Kennzahlen, Einstufung.
+// Ohne Einheit heute steht dort die letzte Einheit. Antippen öffnet die Seite der Einheit (#60).
+
+// Dauer als „48:12“ bzw. „1:23:05“
+const duration = (min) => {
+  const s = Math.round(min * 60), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
+};
+
+function actPost(a) {
+  const card = el('article', 'card actpost');
+  const sp = sportOf(a.type), cat = catOf(a.label);
+  const head = el('div', 'ap-head'), title = el('div', 'ap-title');
+  title.append(el('div', 'ap-name', a.name || sp.label), el('div', 'note', (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr'));
+  const chip = el('span', 'chip', cat[1]); chip.style.background = cat[2]; chip.style.color = '#fff';
+  head.append(title, chip);
+  card.append(head);
+  if (a.rt) { const m = el('div', 'ap-map'); card.append(m); drawRoute(m, a.id); }
+  // Antippen öffnet die eigene Seite der Einheit (#60), dort ist die Karte zoombar
+  card.classList.add('tappable');
+  card.addEventListener('click', () => openUnit(a.id));
+  const stats = el('div', 'ap-stats');
+  const add = (v, u, l) => { if (v == null) return; const s = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u)); s.append(b, el('span', null, l)); stats.append(s); };
+  add(a.km ? num(a.km, a.km < 10 ? 2 : 1) : null, ' km', 'Distanz');
+  add(a.min ? duration(a.min) : null, '', 'Zeit');
+  if (sp.key === 'swim' && a.spd) add(pace(100 / a.spd), ' /100 m', 'Ø Pace');
+  else if (sp.key === 'run' && runPace(a)) add(pace(runPace(a)), ' /km', 'Ø Pace');
+  else if (a.spd) add(num(a.spd * 3.6, 1), ' km/h', 'Ø Tempo');
+  add(a.hr ? String(a.hr) : null, ' bpm', 'Ø Puls');
+  if (sp.key === 'ride' && a.pw) add(String(a.pw), ' W', 'Ø Leistung');
+  else add(a.elev != null && a.km ? num(a.elev) : null, ' m', 'Höhenmeter');
+  card.append(stats);
+  return card;
+}
+
+function renderTodayActs() {
+  const box = $('#today-acts');
+  let list = S.acts.filter((a) => a.date === S.today);
+  const title = list.length ? 'Heute trainiert' : 'Letzte Einheit';
+  if (!list.length && S.acts.length) list = [S.acts[S.acts.length - 1]];
+  list = [...list].reverse();
+  // Nur neu zeichnen, wenn sich die Einheiten geändert haben (Karten nicht bei jedem Neuzeichnen neu laden)
+  const key = list.map((a) => a.id + (a.rt ? 'r' : '')).join(',');
+  if (box.dataset.key === key && box.childElementCount) return;
+  box.dataset.key = key;
+  $('#acts-title').textContent = title;
+  box.replaceChildren();
+  if (!list.length) { box.append(el('p', 'note', 'Noch keine Einheit erfasst.')); return; }
+  for (const a of list) box.append(actPost(a));
+}
+

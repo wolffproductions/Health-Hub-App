@@ -1,0 +1,7 @@
+{
+  // Skript- und Style-Teile der Oberfläche (src/ui/*.js.txt, *.css.txt) richtig einfärben
+  "files.associations": {
+    "*.js.txt": "javascript",
+    "*.css.txt": "css"
+  }
+}

@@ -1,0 +1,110 @@
+// ---------- DIAGRAMM IM VOLLBILD (#61) ----------
+// Zwei Arten:
+//  • „c-…“ (Id des Diagramms) – eine Diagramm-Karte aus Statistiken wird auf diese Seite verschoben und größer gezeichnet
+//    (dieselbe Zeichenfunktion, frame() erkennt #dg-body). Beim Verlassen wandert sie zurück.
+//  • Metrik-Name (hrv, slp …) – Tageswert von „Heute“ (HRV, Schlaf, Ruhepuls …) mit großem Verlauf, Zeitraum und Erklärung.
+
+const METRICS = {
+  hrv: { label: 'HRV letzte Nacht', unit: ' ms', up: true, band: true, info: 'Herzfrequenzvariabilität im Schlaf: wie stark der Abstand zwischen zwei Herzschlägen schwankt. Höher heißt meist besser erholt. Aussagekräftig ist der Vergleich mit deinem eigenen Normalbereich (graue Fläche), nicht mit anderen Menschen.' },
+  score: { label: 'Schlafscore', unit: '', up: true, info: 'Garmins Bewertung der Nacht von 0 bis 100 aus Dauer, Schlafphasen, Unruhe und Stress im Schlaf.' },
+  slp: { label: 'Schlaf', unit: ' h', up: true, fmt: (v) => hm(v), info: 'Geschlafene Zeit ohne Wachphasen. Für die meisten Erwachsenen sind 7 bis 9 Stunden das Ziel.' },
+  rhr: { label: 'Ruhepuls', unit: ' bpm', up: false, info: 'Niedrigster Puls des Tages in Ruhe. Steigt er mehrere Tage über deinen Schnitt, kann das auf Belastung, Stress, wenig Schlaf oder einen beginnenden Infekt hinweisen.' },
+  bbMax: { label: 'Body Battery max.', unit: '', up: true, info: 'Höchster Body-Battery-Wert des Tages (0–100), meist morgens nach dem Schlaf. Zeigt, wie gut du die Speicher über Nacht aufgefüllt hast.' },
+  stress: { label: 'Stress Ø', unit: '', up: false, info: 'Durchschnittlicher Garmin-Stresswert (0–100) aus der Herzfrequenzvariabilität am Tag. Steigt auch durch Sport, Koffein, Alkohol oder Krankheit, nicht nur durch Anspannung im Kopf.' },
+};
+
+function openChart(key) { openSub('diagramm', key); }
+
+// Diagramm-Karte zurück an ihren Platz
+function restoreChartCard() {
+  const d = S.dgCard; if (!d) return;
+  d.ph.replaceWith(d.card); d.card.classList.remove('dg-card'); S.dgCard = null;
+}
+
+function renderDiagram() {
+  const key = (S.sub && S.sub.key) || '', body = $('#dg-body');
+  if (key.startsWith('c-')) {
+    const id = key;
+    if (!S.dgCard || S.dgCard.id !== id) {
+      restoreChartCard();
+      const node = document.getElementById(id), card = node && node.closest('.card');
+      if (!card) { body.replaceChildren(el('div', 'card empty', 'Dieses Diagramm gibt es nicht mehr.')); return; }
+      const ph = document.createComment('dg:' + id);
+      const tab = card.closest('section[data-tab]').dataset.tab;
+      card.replaceWith(ph); body.replaceChildren(card); card.classList.add('dg-card');
+      S.dgCard = { id, card, ph, tab };
+    }
+    const title = S.dgCard.card.querySelector('h3')?.textContent || 'Diagramm';
+    $('#dg-title').textContent = title; $('#navTitle').textContent = title;
+    $('#dg-sub').textContent = { training: 'Statistiken · Training', leistung: 'Statistiken · Leistung', schlaf: 'Statistiken · Schlaf' }[S.dgCard.tab] || '';
+    // Die Zeichenfunktion des Herkunftsbereichs zeichnet alle seine Diagramme, auch das verschobene
+    const fns = { training: () => { renderLoad(); renderVolume(); }, leistung: renderPerf, schlaf: renderSleep };
+    fns[S.dgCard.tab]?.();
+    return;
+  }
+  restoreChartCard();
+  const k = key, M = METRICS[k];
+  if (!M) { body.replaceChildren(el('div', 'card empty', 'Unbekannter Wert.')); return; }
+  $('#dg-title').textContent = M.label; $('#navTitle').textContent = M.label;
+  const { cur, prev } = ranges();
+  $('#dg-sub').textContent = periodName() + ' · ' + dayLabel(cur[0]) + ' bis ' + dayLabel(cur[1]);
+  const fmt = M.fmt || ((v) => num(v));
+  const D = S.daily.filter((d) => inR(d.d, cur)), P = S.daily.filter((d) => inR(d.d, prev));
+  const vals = D.map((d) => d[k]).filter((v) => v != null);
+  body.replaceChildren();
+
+  // Kopf: letzter Wert, Schnitt im Zeitraum, Vergleich mit dem Zeitraum davor
+  const top = el('div', 'card');
+  const lastD = [...D].reverse().find((d) => d[k] != null);
+  const big = el('div', 'dg-big');
+  const v = el('span', 'val', lastD ? fmt(lastD[k]) : '–'); if (lastD && M.unit) v.append(el('small', null, M.unit));
+  big.append(v, el('span', 'note', lastD ? (lastD.d === S.today ? 'heute' : dayLabel(lastD.d)) : 'kein Wert im Zeitraum'));
+  top.append(big);
+  const cmp = cmpLine(mean(vals), mean(P.map((d) => d[k])), k === 'slp' ? 1 : 0, M.up, M.unit);
+  const stats = el('div', 'ap-stats');
+  const add = (val, l) => { const s = el('div'); s.append(el('b', null, val), el('span', null, l)); stats.append(s); };
+  add(vals.length ? fmt(mean(vals)) : '–', 'Ø ' + periodName());
+  add(vals.length ? fmt(Math.min(...vals)) : '–', 'Tiefster');
+  add(vals.length ? fmt(Math.max(...vals)) : '–', 'Höchster');
+  top.append(stats);
+  if (cmp) top.append(el('span', 'cmp ' + (cmp.cls || ''), cmp.text));
+  body.append(top);
+
+  // Großer Verlauf mit Verlauf-Fläche (#42), beim Antippen/Ziehen Wert des Tages
+  const card = el('div', 'card'), node = el('div', 'chart'); card.append(node); body.append(card);
+  if (vals.length < 2) empty(node, 'Zu wenige Werte im Zeitraum.');
+  else {
+    const f = frame(node, 260);
+    const pts = D.filter((d) => d[k] != null);
+    const ext = pts.flatMap((d) => (M.band ? [d[k], d.hrvLo, d.hrvHi] : [d[k]])).filter((x) => x != null);
+    const y = d3.scaleLinear(d3.extent(ext), [f.h - 22, 8]).nice();
+    const ml = measure(f.svg, y.ticks(5).map((t) => fmt(t))) + 10;
+    const x = d3.scaleUtc([parse(cur[0]), parse(cur[1])], [ml, f.w - 12]);
+    yAxis(f, y, ml, f.w - 12, 5, (t) => fmt(t)); xTime(f, x, f.h - 22);
+    if (M.band) f.svg.append('path').datum(pts.filter((d) => d.hrvLo != null)).style('fill', css('--prev')).style('opacity', .25)
+      .attr('d', d3.area().curve(d3.curveMonotoneX).x((d) => x(parse(d.d))).y0((d) => y(d.hrvLo)).y1((d) => y(d.hrvHi)));
+    const avg = mean(vals);
+    f.svg.append('line').attr('x1', ml).attr('x2', f.w - 12).attr('y1', y(avg)).attr('y2', y(avg)).style('stroke', css('--muted')).style('stroke-dasharray', '4 4').style('opacity', .7);
+    glowLine(f, pts, { x: (d) => x(parse(d.d)), y: (d) => y(d[k]), base: f.h - 22, dot: true });
+    const bis = d3.bisector((d) => parse(d.d)).center;
+    hoverLayer(f, { x0: ml, x1: f.w - 12, y0: 8, y1: f.h - 22 }, (px) => {
+      const d = pts[bis(pts, x.invert(px))]; if (!d) return null;
+      const lines = [{ label: M.label, value: fmt(d[k]) + M.unit }];
+      if (M.band && d.hrvLo != null) lines.push({ label: 'Normalbereich', value: d.hrvLo + '–' + d.hrvHi + ' ms' });
+      return { x: x(parse(d.d)), y: y(d[k]), title: dayLabel(d.d), lines };
+    });
+    card.append(el('p', 'note', 'Gestrichelt: dein Schnitt im Zeitraum.' + (M.band ? ' Graue Fläche: dein Normalbereich laut Garmin.' : '')));
+  }
+  const info = el('div', 'card'); info.append(el('h3', null, 'Was bedeutet das?'), el('p', 'note', M.info)); body.append(info);
+}
+
+// Diagramm-Karten unter Statistiken bekommen eine Vollbild-Taste (oben rechts)
+function addExpandButtons() {
+  for (const node of document.querySelectorAll('section[data-tab="training"] .chart[id], section[data-tab="leistung"] .chart[id], section[data-tab="schlaf"] .chart[id]')) {
+    const card = node.closest('.card'); if (!card || card.querySelector(':scope > .expand')) continue;
+    const b = el('button', 'expand'); b.type = 'button'; b.setAttribute('aria-label', 'Im Vollbild zeigen');
+    b.innerHTML = icon('vollbild');
+    b.addEventListener('click', (e) => { e.stopPropagation(); openChart(node.id); });
+    card.classList.add('expandable'); card.append(b);
+  }
+}

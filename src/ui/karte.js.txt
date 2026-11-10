@@ -1,0 +1,130 @@
+// ---------- KARTE (Route einer Aktivität) ----------
+// Dunkler, fast einfarbiger Kartenstil (angelehnt an das Pollar-Prinzip) mit MapLibre und
+// Vektorkarten von OpenFreeMap (OpenStreetMap-Daten, kein Schlüssel nötig). Rote Route, dünn,
+// mit sanftem Glow. Vorschau unter „Heute“ ist fest, die Vollbild-Ansicht lässt sich zoomen.
+// MapLibre und der Stil werden erst geladen, wenn eine Route angezeigt wird.
+const MAPLIBRE = 'https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/';
+const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
+const ROUTE = { color: '#ff3b3b', width: 2.8, opacity: 0.85, casing: 5, casingOpacity: 0.5, glow: 14, glowBlur: 8, glowOpacity: 0.2 };
+
+let mapLibReady = null;
+function loadMapLibre() {
+  if (window.maplibregl) return Promise.resolve();
+  if (mapLibReady) return mapLibReady;
+  mapLibReady = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = MAPLIBRE + 'maplibre-gl.css'; css.crossOrigin = 'anonymous';
+    css.integrity = 'sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V';
+    const js = document.createElement('script');
+    js.src = MAPLIBRE + 'maplibre-gl.js'; js.crossOrigin = 'anonymous';
+    js.integrity = 'sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj';
+    js.onload = () => resolve();
+    js.onerror = () => { mapLibReady = null; reject(new Error('Karte nicht geladen')); };
+    document.head.append(css, js);
+  });
+  return mapLibReady;
+}
+
+// Grundstil „dark“ von OpenFreeMap, umgefärbt: fast schwarz, graue Straßen, blaues Wasser,
+// Namen in Großbuchstaben; Symbole (POIs, Schilder) ausgeblendet
+let mapStyle = null;
+function darkStyle() {
+  if (mapStyle) return mapStyle;
+  mapStyle = fetch(MAP_STYLE_URL).then((r) => r.json()).then((s) => {
+    for (const l of s.layers) {
+      const id = l.id; l.paint ||= {}; l.layout ||= {};
+      if (l.type === 'background') l.paint['background-color'] = '#0b0b0c';
+      else if (/water/.test(id) && l.type === 'fill') l.paint['fill-color'] = '#1d3654';
+      else if (/water/.test(id) && l.type === 'line') l.paint['line-color'] = '#1d3654';
+      else if (/building/.test(id) && l.type === 'fill') { l.paint['fill-color'] = '#1e1e20'; l.paint['fill-outline-color'] = '#2c2c2f'; }
+      else if (/park|landcover|landuse|wood|grass/.test(id) && l.type === 'fill') { l.paint['fill-color'] = '#141615'; l.paint['fill-opacity'] = 1; }
+      else if (l.type === 'line' && /motorway|trunk|primary/.test(id)) l.paint['line-color'] = '#5b5b60';
+      else if (l.type === 'line' && /road|highway|street|path|minor|secondary|tertiary|service|track/.test(id)) l.paint['line-color'] = '#38383c';
+      else if (l.type === 'line' && /rail/.test(id)) l.paint['line-color'] = '#2e2e32';
+      if (l.type === 'symbol') {
+        if (/poi|icon|shield/.test(id)) l.layout.visibility = 'none';
+        l.layout['text-transform'] = 'uppercase'; l.layout['text-letter-spacing'] = 0.14;
+        l.paint['text-color'] = '#d8d8dc'; l.paint['text-halo-color'] = '#0b0b0c'; l.paint['text-halo-width'] = 1.2;
+      }
+    }
+    return s;
+  }).catch((e) => { mapStyle = null; throw e; });
+  return mapStyle;
+}
+
+const routeCache = new Map();
+const loadRoute = (id) => {
+  if (!routeCache.has(id)) routeCache.set(id, api('/api/route?id=' + encodeURIComponent(id)).catch(() => []));
+  return routeCache.get(id);
+};
+
+/** Karte mit Route in `node`; `interactive` = zoom- und verschiebbar (Vollbild) */
+async function routeMap(node, route, interactive) {
+  const [style] = await Promise.all([darkStyle(), loadMapLibre()]);
+  const ml = window.maplibregl;
+  const lo = route.map(([la, ln]) => ln), la = route.map(([l]) => l);
+  const bounds = [[Math.min(...lo), Math.min(...la)], [Math.max(...lo), Math.max(...la)]];
+  const pad = interactive ? 32 : 14;
+  const map = new ml.Map({ container: node, style, bounds, fitBoundsOptions: { padding: pad }, interactive, attributionControl: false });
+  map.addControl(new ml.AttributionControl({ compact: true }));
+  if (interactive) map.addControl(new ml.NavigationControl({ showCompass: false }));
+  const fit = () => { map.resize(); map.fitBounds(bounds, { padding: pad, animate: false }); };
+  map.on('load', () => {
+    fit();
+    node.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
+    map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: route.map(([a, b]) => [b, a]) } } });
+    const layout = { 'line-join': 'round', 'line-cap': 'round' };
+    map.addLayer({ id: 'r-glow', type: 'line', source: 'route', layout, paint: { 'line-color': ROUTE.color, 'line-width': ROUTE.glow, 'line-blur': ROUTE.glowBlur, 'line-opacity': ROUTE.glowOpacity } });
+    map.addLayer({ id: 'r-casing', type: 'line', source: 'route', layout, paint: { 'line-color': '#000', 'line-width': ROUTE.casing, 'line-opacity': ROUTE.casingOpacity } });
+    map.addLayer({ id: 'r-line', type: 'line', source: 'route', layout, paint: { 'line-color': ROUTE.color, 'line-width': ROUTE.width, 'line-opacity': ROUTE.opacity } });
+  });
+  // Breite ändert sich (Handy drehen, Fenster): Vorschau neu einpassen, Vollbild nur Größe anpassen
+  new ResizeObserver(() => (interactive ? map.resize() : fit())).observe(node);
+  return map;
+}
+
+/** Vorschau-Karte unter „Heute“ (fest, nicht zoombar) */
+async function drawRoute(node, id) {
+  try {
+    const route = await loadRoute(id);
+    if (!Array.isArray(route) || route.length < 2 || !node.isConnected) { node.remove(); return; }
+    await routeMap(node, route, false);
+  } catch {
+    node.replaceChildren(el('div', 'empty', 'Karte konnte nicht geladen werden.'));
+  }
+}
+
+/** Vollbild-Ansicht einer Aktivität: zoombare Karte, Kennzahlen, „Fertig“; Zurück-Taste schließt sie */
+async function openRouteFull(a, card) {
+  if (document.querySelector('.mapfull')) return;
+  const view = el('div', 'mapfull');
+  view.setAttribute('role', 'dialog'); view.setAttribute('aria-modal', 'true');
+  const bar = el('div', 'mf-bar'), title = el('div', 'ap-title');
+  title.append(el('div', 'ap-name', a.name || sportOf(a.type).label), el('div', 'note', (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr'));
+  const done = el('button', 'btn small', 'Fertig'); done.type = 'button';
+  bar.append(title, done);
+  const mapNode = el('div', 'mf-map');
+  const stats = card.querySelector('.ap-stats')?.cloneNode(true) || el('div');
+  view.append(bar, mapNode, stats);
+  document.body.append(view);
+  document.body.classList.add('mapfull-open');
+  let map = null;
+  const close = (fromHistory) => {
+    if (!view.isConnected) return;
+    map?.remove(); view.remove(); document.body.classList.remove('mapfull-open');
+    window.removeEventListener('popstate', onPop);
+    if (!fromHistory) history.back();
+  };
+  const onPop = () => close(true);
+  // Eigener Verlaufseintrag, damit die Zurück-Taste die Ansicht schließt statt die App
+  history.pushState({ mapfull: true }, '');
+  window.addEventListener('popstate', onPop);
+  done.addEventListener('click', () => close(false));
+  done.focus();
+  try {
+    const route = await loadRoute(a.id);
+    if (Array.isArray(route) && route.length > 1) map = await routeMap(mapNode, route, true);
+  } catch {
+    mapNode.replaceChildren(el('div', 'empty', 'Karte konnte nicht geladen werden.'));
+  }
+}

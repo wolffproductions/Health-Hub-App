@@ -1,0 +1,536 @@
+// ---------- VO2MAX (manuell) ----------
+const VO2S = [{ key: 'run', label: 'Laufen', c: '--accent' }, { key: 'ride', label: 'Rad', c: '--accent-2' }];
+// VO2max-Verlauf: automatisch aus den Garmin-Einheiten (vO2MaxValue), dazu eigene Einträge aus „Konto“.
+// Am selben Tag und für dieselbe Sportart gilt der eigene Eintrag.
+function vo2All() {
+  const by = new Map();
+  for (const a of S.acts) {
+    const k = sportOf(a.type).key;
+    if (!a.vo2 || (k !== 'run' && k !== 'ride')) continue;
+    const key = a.date + '|' + k, e = by.get(key);
+    if (!e || a.vo2 > e.v) by.set(key, { d: a.date, sport: k, v: a.vo2, auto: true });
+  }
+  for (const e of S.vo2) by.set(e.d + '|' + e.sport, e);
+  return [...by.values()].sort((a, b) => a.d < b.d ? -1 : a.d > b.d ? 1 : 0);
+}
+// Bezugswert: letzter Eintrag bis zum Beginn des Zeitraums, sonst der erste danach
+const vo2Ref = (list, from) => { const b = list.filter((e) => e.d <= from); return b.length ? b[b.length - 1] : list[0] || null; };
+
+function renderVo2() {
+  const { cur, prev } = ranges();
+  const all = vo2All();
+  const by = (k) => all.filter((e) => e.sport === k && e.d <= cur[1]);
+  const tiles = $('#vo2-tiles'); tiles.replaceChildren();
+  for (const s of VO2S) {
+    const list = by(s.key); if (!list.length) continue;
+    const last = list[list.length - 1], ref = vo2Ref(list, cur[0]);
+    let cmp = { text: 'erster Eintrag', cls: '' };
+    if (ref && ref !== last) { cmp = cmpLine(last.v, ref.v, 0, true); cmp.text = cmp.text.replace(/ggü\. .*$/, 'seit ' + dayLabel(ref.d)); }
+    tile(tiles, { label: 'VO2max ' + s.label + ' · ' + dayLabel(last.d), value: num(last.v), cmp });
+  }
+
+  // Eigene Einschätzung aus VO2max-Verlauf und Trainingslast
+  const st = $('#vo2-status'); st.replaceChildren();
+  const cand = VO2S.map((s) => ({ s, list: by(s.key) })).filter((x) => x.list.length)
+    .sort((a, b) => b.list.filter((e) => inR(e.d, cur)).length - a.list.filter((e) => inR(e.d, cur)).length);
+  const say = (light, head, why) => {
+    const box = el('div', 'vo2-verdict'); const txt = el('div');
+    txt.append(el('b', null, head), el('span', 'note', why));
+    box.append(el('i', 'light ' + light), txt); st.append(box);
+  };
+  if (!cand.length) say('', 'Noch keine Einschätzung', 'Sobald du zwei Werte im Abstand von mindestens zwei Wochen eingetragen hast, vergleicht die App deine VO2max mit deiner Trainingslast.');
+  else {
+    const { s, list } = cand[0];
+    const last = list[list.length - 1], ref = vo2Ref(list, cur[0]);
+    const span = ref ? (parse(last.d) - parse(ref.d)) / 864e5 : 0;
+    if (!ref || ref === last || span < 14 || !inR(last.d, cur)) {
+      say('', 'Noch keine Einschätzung', 'Dafür braucht es im gewählten Zeitraum einen Wert, der mindestens zwei Wochen nach dem Bezugswert liegt.');
+    } else {
+      const w = S.days / 7;
+      const lc = sum(S.acts.filter((a) => inR(a.date, cur)).map((a) => a.load)) / w;
+      const lp = sum(S.acts.filter((a) => inR(a.date, prev)).map((a) => a.load)) / w;
+      const change = lp ? lc / lp : null;
+      const ls = loadSeries(addDays(cur[1], -1), cur[1]); const lr = ls[ls.length - 1];
+      const ratio = lr && lr.chronic ? lr.acute / lr.chronic : null;
+      const dv = last.v - ref.v;
+      const loadTxt = change == null ? 'Kein Lastvergleich möglich.' : `Wochenlast ${num(lc)} gegen ${num(lp)} davor (${change >= 1 ? '+' : '−'}${num(Math.abs(change - 1) * 100)} %).`;
+      const base = `VO2max ${s.label} ${num(ref.v)} → ${num(last.v)} (${dayLabel(ref.d)} bis ${dayLabel(last.d)}). ${loadTxt} Eigene Einschätzung, nicht Garmins Trainingsstatus.`;
+      if (dv >= 1) say('g', 'Produktiv: deine VO2max steigt', base);
+      else if (dv <= -1 && ratio != null && ratio > 1.3) say('r', 'Mögliche Überlastung: VO2max sinkt trotz hoher Last', base + ' Die Last der letzten 7 Tage liegt beim ' + num(ratio, 2) + '-Fachen deines 28-Tage-Schnitts.');
+      else if (dv <= -1 && change != null && change < 0.8) say('y', 'Formverlust: VO2max sinkt bei weniger Training', base);
+      else if (dv <= -1) say('y', 'VO2max sinkt', base + ' Krankheit, Hitze oder viele ruhige Einheiten können das erklären.');
+      else if (change != null && change >= 1.1) say('g', 'Stabil bei steigender Last', base + ' Die Wirkung von mehr Training zeigt sich oft erst nach einigen Wochen.');
+      else say('g', 'Erhaltend: VO2max stabil', base);
+    }
+  }
+
+  // Verlauf
+  const node = $('#c-vo2');
+  const pts = all.filter((e) => inR(e.d, [prev[0], cur[1]]));
+  if (!pts.length) empty(node, all.length ? 'Keine Werte in diesem und dem vorherigen Zeitraum.' : 'Noch keine Werte. Garmin liefert die VO2max mit Läufen und Radfahrten (ab etwa 10 Minuten im Freien mit Puls). Du kannst sie auch unter „Konto“ eintragen.');
+  else {
+    const f = frame(node, 170);
+    const [lo, hi] = d3.extent(pts, (e) => e.v);
+    const y = d3.scaleLinear([lo - 1, hi + 1], [f.h - 22, 8]).nice();
+    const ml = measure(f.svg, y.ticks(4).map((v) => num(v))) + 10;
+    const x = d3.scaleUtc([parse(prev[0]), parse(cur[1])], [ml, f.w - 10]);
+    yAxis(f, y, ml, f.w - 10, 4, (v) => num(v)); xTime(f, x, f.h - 22);
+    f.svg.append('rect').attr('x', x(parse(cur[0]))).attr('y', 8).attr('width', x(parse(cur[1])) - x(parse(cur[0]))).attr('height', f.h - 30).style('fill', css('--accent')).style('opacity', .06);
+    for (const s of VO2S) {
+      const L = pts.filter((e) => e.sport === s.key); if (!L.length) continue;
+      glowLine(f, L, { x: (e) => x(parse(e.d)), y: (e) => y(e.v), base: f.h - 22, color: css(s.c), top: .2 });
+      f.svg.append('g').selectAll('circle').data(L).join('circle').attr('cx', (e) => x(parse(e.d))).attr('cy', (e) => y(e.v)).attr('r', 3.5).style('fill', css(s.c));
+    }
+    hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px, py) => {
+      const e = d3.least(pts, (q) => (x(parse(q.d)) - px) ** 2 + (y(q.v) - py) ** 2);
+      const s = VO2S.find((v) => v.key === e.sport);
+      return { x: x(parse(e.d)), y: y(e.v), color: css(s.c), title: dayLabel(e.d), lines: [{ label: 'VO2max ' + s.label, value: num(e.v) }, { label: 'Quelle', value: e.auto ? 'Garmin' : 'eingetragen' }] };
+    }, false);
+  }
+
+}
+
+// Liste aller Einträge, steht unter „Konto“ (#27)
+function renderVo2List() {
+  const ul = $('#vo2-list'); ul.replaceChildren();
+  $('#vo2-count').textContent = String(S.vo2.length);
+  for (const e of [...S.vo2].reverse()) {
+    const li = el('li'); const s = VO2S.find((v) => v.key === e.sport);
+    li.append(el('div', null, dayLabel(e.d) + ' · ' + s.label + ': ' + num(e.v)));
+    const b = el('button', 'btn danger small', 'Löschen'); b.type = 'button';
+    b.addEventListener('click', async () => {
+      if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Wirklich löschen?'; return; }
+      b.disabled = true;
+      const r = await api('/api/vo2', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d: e.d, sport: e.sport }) });
+      if (r.ok) { S.vo2 = r.list; renderAll(); } else { b.disabled = false; $('#vo2-msg').textContent = r.error || 'Löschen fehlgeschlagen.'; }
+    });
+    const right = el('div', 'right'); right.append(b); li.append(right); ul.append(li);
+  }
+}
+
+// ---------- ZEIT IN HERZFREQUENZZONEN (#19) ----------
+// Fünf Zonen wie bei Strava aus den drei eigenen Bereichen: Z1 darunter, Z2–Z4 die Bereiche, Z5 darüber.
+// a.hz kommt vom Server: je Zone [Sekunden, Meter, Sekunden in Bewegung], sekundengenau aus der Uhr-Datei.
+const Z5NAMES = ['Erholung', 'Grundlage', 'Tempo', 'Schwelle', 'Maximal'];
+const zoneRanges = () => { const z = S.zoneCfg; return ['unter ' + z[0][0], z[0][0] + '–' + z[0][1], z[1][0] + '–' + z[1][1], z[2][0] + '–' + z[2][1], 'über ' + z[2][1]]; };
+
+function renderHrZones() {
+  const { cur, prev } = ranges();
+  const sec = (arr) => [0, 1, 2, 3, 4].map((i) => sum(arr.map((a) => a.hz[i][0])));
+  const A = sec(S.acts.filter((a) => a.hz && inR(a.date, cur))), B = sec(S.acts.filter((a) => a.hz && inR(a.date, prev)));
+  const tA = sum(A), tB = sum(B);
+  const open = S.acts.filter((a) => inR(a.date, cur) && a.hr && !a.hz).length;
+  const z = S.zoneCfg;
+  $('#hz-note').textContent = 'Zeit je Zone aus dem Puls jeder Sekunde, alle Sportarten. Grenzen wie unter „Konto → Pulszonen“: Z1 unter ' + z[0][0] + ', Z5 über ' + z[2][1] + ' bpm.'
+    + (open ? ' ' + open + (open === 1 ? ' Einheit' : ' Einheiten') + ' im Zeitraum noch ohne Auswertung, die App lädt sie nach und nach.' : '');
+  const box = $('#hz-bars');
+  if (!tA && !tB) { empty(box, 'Keine Pulsdaten im Zeitraum.'); return; }
+  box.replaceChildren();
+  const pA = A.map((v) => tA ? v / tA : 0), pB = B.map((v) => tB ? v / tB : 0);
+  const top = Math.max(...pA, ...pB) || 1;
+  const rng = zoneRanges();
+  for (let i = 0; i < 5; i++) {
+    const row = el('div', 'zrow');
+    const name = el('div', 'zn', 'Z' + (i + 1) + ' ' + Z5NAMES[i]); name.append(el('small', null, rng[i] + ' bpm'));
+    const track = el('div', 'track');
+    const bar = el('div', 'bar'); bar.style.width = (pA[i] / top * 100) + '%'; bar.style.opacity = 0.4 + i * 0.15;
+    const pb = el('div', 'bar prev'); pb.style.width = (pB[i] / top * 100) + '%';
+    track.append(bar, pb);
+    const val = el('div', 'zv', tA ? Math.round(pA[i] * 100) + ' %' : '–');
+    val.append(el('small', null, hm(A[i] / 3600) + ' h'));
+    if (tB) val.append(el('small', null, 'davor ' + Math.round(pB[i] * 100) + ' %'));
+    row.setAttribute('role', 'img');
+    row.setAttribute('aria-label', 'Zone ' + (i + 1) + ' ' + Z5NAMES[i] + ', ' + rng[i] + ' bpm: ' + Math.round(pA[i] * 100) + ' Prozent, ' + hm(A[i] / 3600) + ' Stunden, davor ' + Math.round(pB[i] * 100) + ' Prozent');
+    row.append(name, track, val); box.append(row);
+  }
+}
+
+// ---------- PACE JE ZONE ----------
+const ZNAMES = ['Grundlage', 'Tempo', 'Schwelle'];
+const DEFAULT_ZONES = [[129, 160], [161, 175], [176, 191]];
+// Abschnitte eines Laufs: einzelne Runden, sobald vorhanden, sonst der ganze Lauf.
+// Runden unter 2 Minuten zählen nicht (Puls noch nicht eingeschwungen), Gehen und Stehen auch nicht.
+const segsOf = (a) => (a.laps && a.laps.length ? a.laps : [{ hr: a.hr, v: a.gap || a.spd, s: a.min * 60 }])
+  .filter((l) => l.hr && l.v > 1.5 && l.s >= 120);
+// Zeit (s) und Strecke (m) eines Laufs in Zone i (0 = Grundlage). Mit Uhr-Datei sekundengenau
+// (nur in Bewegung), sonst ersatzweise über die Runden.
+function runInZone(a, i, lo, hi) {
+  if (a.hz) { const [, m, s] = a.hz[i + 1]; return s >= 60 && m > 0 ? { s, m } : null; }
+  const inZ = segsOf(a).filter((l) => l.hr >= lo && l.hr <= hi);
+  return inZ.length ? { s: sum(inZ.map((l) => l.s)), m: sum(inZ.map((l) => l.v * l.s)) } : null;
+}
+
+function zoneSeries() {
+  const { cur, prev } = ranges();
+  const step = S.days <= 7 ? 1 : S.days <= 28 ? 7 : 14;
+  const dates = [];
+  for (let d = cur[1]; d >= prev[0]; d = addDays(d, -step)) dates.unshift(d);
+  const runs = S.acts.filter(isRun);
+  const parts = S.zoneCfg.map(([lo, hi], i) => runs.map((a) => ({ d: a.date, r: runInZone(a, i, lo, hi) })).filter((p) => p.r));
+  return dates.map((d) => ({ d, z: parts.map((list) => {
+    const w = list.filter((p) => p.d > addDays(d, -42) && p.d <= d);
+    const t = sum(w.map((p) => p.r.s));
+    if (w.length < 2 || t < 600) return null;
+    return { pace: 1000 * t / sum(w.map((p) => p.r.m)), n: w.length, min: t / 60 };
+  }) }));
+}
+
+function renderHrPace() {
+  const { cur, prev } = ranges();
+  const series = zoneSeries();
+  const sel = S.zSel || 0;
+  const tiles = $('#hr-tiles'); tiles.replaceChildren();
+  S.zoneCfg.forEach(([lo, hi], i) => {
+    const pts = series.filter((p) => p.z[i]);
+    const last = pts[pts.length - 1];
+    const before = pts.filter((p) => p.d <= cur[0]);
+    const ref = before.length ? before[before.length - 1] : pts.find((p) => p.d >= cur[0]);
+    const b = el('button'); b.type = 'button'; b.setAttribute('aria-pressed', String(i === sel));
+    b.append(el('span', 'name', ZNAMES[i]), el('span', 'lbl', lo + '–' + hi + ' bpm'), el('span', 'val', last ? pace(last.z[i].pace) : '–'));
+    let cmp = { text: last ? 'kein Vergleich' : 'zu wenig Läufe', cls: '' };
+    if (last && ref && ref !== last) {
+      const dsec = Math.round(last.z[i].pace - ref.z[i].pace);
+      cmp = dsec === 0 ? { text: 'unverändert', cls: '' } : { text: Math.abs(dsec) + ' s ' + (dsec < 0 ? 'schneller' : 'langsamer'), cls: dsec < 0 ? 'good' : 'bad' };
+    }
+    if (last && last.d < addDays(cur[1], -14)) cmp = { text: 'Stand ' + dayLabel(last.d).replace(/^\w+, /, ''), cls: '' };
+    b.append(el('span', 'cmp ' + cmp.cls, cmp.text));
+    b.addEventListener('click', () => { S.zSel = i; try { localStorage.setItem('zSel', String(i)); } catch {} renderHrPace(); });
+    tiles.append(b);
+  });
+
+  const [lo, hi] = S.zoneCfg[sel];
+  const node = $('#c-hrpace');
+  const P = series.map((p) => ({ d: p.d, r: p.z[sel] }));
+  const def = P.filter((p) => p.r);
+  const fileRuns = S.acts.filter((a) => isRun(a) && a.hz).length;
+  $('#hrpace-text').textContent = `${ZNAMES[sel]} (${lo}–${hi} bpm): durchschnittliche Pace in dieser Zone aus den jeweils letzten 6 Wochen. Schneller ist oben. `
+    + (fileRuns ? 'Sekundengenau ausgewertet: Es zählt nur die Zeit, in der dein Puls in der Zone lag und du gelaufen bist (Stehen und Gehen zählen nicht).' : 'Noch nach Runden berechnet, die genaue Auswertung wird nachgeladen.')
+    + ' Gestrichelt: zu wenige Läufe in dieser Zone, die Linie überbrückt die Lücke.';
+  if (!def.length) { empty(node, 'In diesem Zeitraum gab es zu wenige Abschnitte in dieser Zone.'); return; }
+  const f = frame(node, 220);
+  const [pmin, pmax] = d3.extent(def, (p) => p.r.pace);
+  const y = d3.scaleLinear([pmin - 6, pmax + 6], [8, f.h - 22]);
+  const span = pmax - pmin + 12, st = span <= 40 ? 10 : span <= 120 ? 30 : 60;
+  const ticks = d3.range(Math.ceil((pmin - 6) / st) * st, pmax + 6, st);
+  const ml = measure(f.svg, ticks.map(pace)) + 10;
+  const x = d3.scaleUtc([parse(prev[0]), parse(cur[1])], [ml, f.w - 12]);
+  yAxis(f, y, ml, f.w - 12, ticks, pace); xTime(f, x, f.h - 22);
+  f.svg.append('rect').attr('x', x(parse(cur[0]))).attr('y', 8).attr('width', x(parse(cur[1])) - x(parse(cur[0]))).attr('height', f.h - 30).style('fill', css('--accent')).style('opacity', .06);
+  const defined = (p) => !!p.r;
+  // Lücken gestrichelt überbrücken, darüber die durchgehenden Abschnitte
+  f.svg.append('path').datum(def).style('fill', 'none').style('stroke', css('--accent')).style('stroke-width', 1.5).style('stroke-dasharray', '3 4').style('opacity', .55)
+    .attr('d', d3.line().curve(d3.curveMonotoneX).x((p) => x(parse(p.d))).y((p) => y(p.r.pace)));
+  glowLine(f, P, { x: (p) => x(parse(p.d)), y: (p) => y(p.r.pace), base: f.h - 22, defined });
+  // Einzelne Werte ohne Nachbarn wären als Linie unsichtbar
+  P.forEach((p, i) => {
+    if (!p.r || (P[i - 1] && P[i - 1].r) || (P[i + 1] && P[i + 1].r)) return;
+    f.svg.append('circle').attr('cx', x(parse(p.d))).attr('cy', y(p.r.pace)).attr('r', 3.5).style('fill', css('--accent'));
+  });
+  const last = def[def.length - 1];
+  f.svg.append('circle').attr('cx', x(parse(last.d))).attr('cy', y(last.r.pace)).attr('r', 5).style('fill', css('--accent')).style('stroke', css('--panel')).style('stroke-width', 2);
+  const bis = d3.bisector((p) => parse(p.d)).center;
+  hoverLayer(f, { x0: ml, x1: f.w - 12, y0: 8, y1: f.h - 22 }, (px) => {
+    const p = def[bis(def, x.invert(px))]; if (!p) return null;
+    return { x: x(parse(p.d)), y: y(p.r.pace), title: '6 Wochen bis ' + dayLabel(p.d), lines: [
+      { label: 'Pace', value: pace(p.r.pace) + ' /km' }, { label: 'Läufe', value: String(p.r.n) },
+      { label: 'Zeit in Zone', value: num(p.r.min) + ' min' }] };
+  });
+}
+
+function renderZoneForm(force) {
+  const box = $('#zone-form');
+  if (box.childElementCount && !force) return;
+  box.replaceChildren(el('span', 'h', 'Zone'), el('span', 'h', 'von bpm'), el('span', 'h', 'bis bpm'));
+  S.zoneCfg.forEach(([lo, hi], i) => {
+    const mk = (v, label) => { const inp = el('input'); inp.type = 'number'; inp.inputMode = 'numeric'; inp.min = 60; inp.max = 230; inp.step = 1; inp.value = v; inp.setAttribute('aria-label', ZNAMES[i] + ' ' + label); return inp; };
+    box.append(el('span', null, ZNAMES[i]), mk(lo, 'von'), mk(hi, 'bis'));
+  });
+}
+
+// ---------- LEISTUNG ----------
+function renderPerf() {
+  try { renderVo2(); } catch (e) { console.error(e); }
+  try { renderPredictions(); } catch (e) { console.error(e); }
+  const { cur, prev } = ranges();
+  const runs = S.acts.filter((a) => isRun(a) && a.km >= 3 && a.hr && runPace(a));
+  const A = runs.filter((a) => inR(a.date, cur)), B = runs.filter((a) => inR(a.date, prev));
+
+  try { renderHrZones(); } catch (e) { console.error(e); }
+  try { renderHrPace(); } catch (e) { console.error(e); }
+
+  // Laufökonomie über alle Daten, Zeitraum hervorgehoben
+  // ruhig = unter der eigenen Schwelle (Z4)
+  const lim = S.zoneCfg[2][0];
+  const effRuns = runs.filter((a) => a.hr < lim && inR(a.date, [prev[0], cur[1]])).map((a) => ({ d: a.date, v: (a.gap || a.spd) * 60 / a.hr, a }));
+  const en = $('#c-eff');
+  if (effRuns.length < 3) empty(en, 'Zu wenige ruhige Läufe mit Puls.');
+  else {
+    const f = frame(en, 220);
+    const y = d3.scaleLinear(d3.extent(effRuns, (r) => r.v), [f.h - 22, 8]).nice();
+    const ml = measure(f.svg, y.ticks(4).map((v) => num(v, 2))) + 10;
+    const x = d3.scaleUtc([parse(prev[0]), parse(cur[1])], [ml, f.w - 10]);
+    yAxis(f, y, ml, f.w - 10, 4, (v) => num(v, 2)); xTime(f, x, f.h - 22);
+    f.svg.append('rect').attr('x', x(parse(cur[0]))).attr('y', 8).attr('width', x(parse(cur[1])) - x(parse(cur[0]))).attr('height', f.h - 30).style('fill', css('--accent')).style('opacity', .06);
+    f.svg.append('g').selectAll('circle').data(effRuns).join('circle').attr('cx', (r) => x(parse(r.d))).attr('cy', (r) => y(r.v)).attr('r', 3.5).style('fill', (r) => inR(r.d, cur) ? css('--accent') : css('--prev'));
+    const roll = effRuns.map((r, i) => ({ d: r.d, v: i >= 4 ? mean(effRuns.slice(i - 4, i + 1).map((q) => q.v)) : null })).filter((r) => r.v != null);
+    glowLine(f, roll, { x: (r) => x(parse(r.d)), y: (r) => y(r.v), base: f.h - 22, top: .25 });
+    hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px, py) => {
+      const r = d3.least(effRuns, (q) => (x(parse(q.d)) - px) ** 2 + (y(q.v) - py) ** 2);
+      return { x: x(parse(r.d)), y: y(r.v), title: dayLabel(r.d), lines: [{ label: 'Meter pro Schlag', value: num(r.v, 2) }, { label: 'Pace', value: pace(runPace(r.a)) + ' /km' }, { label: 'Puls', value: r.a.hr + ' bpm' }] };
+    }, false);
+  }
+
+  // Pace-Entwicklung
+  const pn = $('#c-pace');
+  const pr = runs.filter((a) => inR(a.date, cur));
+  if (pr.length < 2) empty(pn, 'Zu wenige Läufe im Zeitraum.');
+  else {
+    const f = frame(pn, 220);
+    const y = d3.scaleLinear(d3.extent(pr, runPace), [8, f.h - 22]).nice();
+    const ml = measure(f.svg, paceTicks(y).map(pace)) + 10;
+    const x = d3.scaleUtc([parse(cur[0]), parse(cur[1])], [ml, f.w - 10]);
+    yAxis(f, y, ml, f.w - 10, paceTicks(y), pace); xTime(f, x, f.h - 22);
+    const calm = (a) => ['RECOVERY', 'AEROBIC_BASE'].includes(a.label);
+    f.svg.append('g').selectAll('circle').data(pr).join('circle').attr('cx', (a) => x(parse(a.date))).attr('cy', (a) => y(runPace(a))).attr('r', 4).style('fill', (a) => calm(a) ? css('--accent') : css('--accent-2'));
+    hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px, py) => {
+      const a = d3.least(pr, (q) => (x(parse(q.date)) - px) ** 2 + (y(runPace(q)) - py) ** 2);
+      return { x: x(parse(a.date)), y: y(runPace(a)), color: calm(a) ? css('--accent') : css('--accent-2'), title: dayLabel(a.date), lines: [{ label: 'Pace', value: pace(runPace(a)) + ' /km' }, { label: 'Puls', value: a.hr + ' bpm' }, { label: 'Distanz', value: num(a.km, 1) + ' km' }, { label: 'Art', value: catOf(a.label)[1] }] };
+    }, false);
+  }
+
+  // Bestzeiten
+  const tb = $('#t-best'); tb.replaceChildren();
+  const hr = el('tr'); hr.append(el('th', null, 'Strecke'), el('th', 'n', 'Davor'), el('th', 'n', 'Jetzt'), el('th', 'n', 'Bestes im Datensatz')); tb.append(hr);
+  const best = (arr, k) => { const v = arr.map((a) => a[k]).filter(Boolean); return v.length ? Math.min(...v) : null; };
+  const t = (s) => {
+    if (s == null) return '–';
+    const r = Math.round(s), h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60), sec = String(r % 60).padStart(2, '0');
+    return h ? h + ':' + String(m).padStart(2, '0') + ':' + sec : m + ':' + sec;
+  };
+  const allRuns = S.acts.filter(isRun);
+  for (const [label, k] of [['5 km', 'f5k'], ['10 km', 'f10k'], ['Halbmarathon', 'fHm'], ['Marathon', 'fM']]) {
+    const tr = el('tr');
+    tr.append(el('td', null, label), el('td', 'n', t(best(allRuns.filter((a) => inR(a.date, prev)), k))), el('td', 'n', t(best(allRuns.filter((a) => inR(a.date, cur)), k))), el('td', 'n', t(best(allRuns, k))));
+    tb.append(tr);
+  }
+
+  // Laufdynamik
+  const td = $('#t-dyn'); td.replaceChildren();
+  const h2 = el('tr'); h2.append(el('th', null, 'Wert'), el('th', 'n', 'Davor'), el('th', 'n', 'Jetzt')); td.append(h2);
+  for (const [label, k, dg, unit] of [['Schrittfrequenz', 'cad', 0, ' spm'], ['Bodenkontaktzeit', 'gct', 0, ' ms'], ['Vertikale Bewegung', 'vo', 1, ' cm'], ['Laufleistung', 'pw', 0, ' W'], ['Ø Puls', 'hr', 0, ' bpm']]) {
+    const a = mean(A.map((r) => r[k])), b = mean(B.map((r) => r[k]));
+    const tr = el('tr'); tr.append(el('td', null, label), el('td', 'n', b == null ? 'fehlt' : num(b, dg) + unit), el('td', 'n', a == null ? 'fehlt' : num(a, dg) + unit)); td.append(tr);
+  }
+
+  // Rad
+  const bn = $('#c-bike');
+  const rides = S.acts.filter((a) => sportOf(a.type).key === 'ride' && a.pw && a.hr && inR(a.date, [prev[0], cur[1]])).map((a) => ({ d: a.date, v: a.pw / a.hr, a }));
+  if (rides.length < 3) empty(bn, 'Keine oder zu wenige Radeinheiten mit Leistungsmesser. Ohne Wattmessung lässt sich die Radleistung nicht bewerten.');
+  else {
+    const f = frame(bn, 160);
+    const y = d3.scaleLinear(d3.extent(rides, (r) => r.v), [f.h - 22, 8]).nice();
+    const ml = measure(f.svg, y.ticks(3).map((v) => num(v, 2))) + 10;
+    const x = d3.scaleUtc([parse(prev[0]), parse(cur[1])], [ml, f.w - 10]);
+    yAxis(f, y, ml, f.w - 10, 3, (v) => num(v, 2)); xTime(f, x, f.h - 22);
+    f.svg.append('g').selectAll('circle').data(rides).join('circle').attr('cx', (r) => x(parse(r.d))).attr('cy', (r) => y(r.v)).attr('r', 3.5).style('fill', (r) => inR(r.d, cur) ? css('--accent-2') : css('--prev'));
+    hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px, py) => {
+      const r = d3.least(rides, (q) => (x(parse(q.d)) - px) ** 2 + (y(q.v) - py) ** 2);
+      return { x: x(parse(r.d)), y: y(r.v), color: css('--accent-2'), title: dayLabel(r.d), lines: [{ label: 'Watt pro Schlag', value: num(r.v, 2) }, { label: 'Leistung', value: r.a.pw + ' W' }, { label: 'Puls', value: r.a.hr + ' bpm' }] };
+    }, false);
+  }
+}
+
+// ---------- WETTKAMPFPROGNOSEN (#74) ----------
+// Garmin gibt seine Prognosen über die Personal API nicht heraus (kein Endpunkt in der Swagger-Doku).
+// Deshalb offengelegt berechnet: aus Garmins VO2max (bzw. eigenem Eintrag) nach Daniels und Gilbert
+// (Garmin schätzt ebenfalls aus der VO2max) und zum Vergleich aus den schnellsten Abschnitten
+// der letzten 8 Wochen nach Riegel (T2 = T1 · (D2/D1)^1,06).
+const RACES = [['5 km', 5000, 'f5k'], ['10 km', 10000, 'f10k'], ['Halbmarathon', 21097.5, 'fHm'], ['Marathon', 42195, 'fM']];
+// Sauerstoffbedarf bei v m/min und durchhaltbarer Anteil der VO2max über t Minuten (Daniels/Gilbert)
+const vo2Need = (v) => -4.6 + 0.182258 * v + 0.000104 * v * v;
+const vo2Share = (t) => 0.8 + 0.1894393 * Math.exp(-0.012778 * t) + 0.2989558 * Math.exp(-0.1932605 * t);
+/** Prognose in Sekunden für d Meter bei gegebener VO2max (Bisektion über die Zeit) */
+function raceFromVo2(vo2, d) {
+  let lo = 3, hi = 900;
+  for (let k = 0; k < 50; k++) { const t = (lo + hi) / 2; if (vo2Need(d / t) / vo2Share(t) > vo2) lo = t; else hi = t; }
+  return (lo + hi) / 2 * 60;
+}
+const raceTime = (s) => {
+  if (s == null) return '–';
+  const r = Math.round(s), h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60), sec = String(r % 60).padStart(2, '0');
+  return h ? h + ':' + String(m).padStart(2, '0') + ':' + sec : m + ':' + sec;
+};
+
+// Genauer mit dem eigenen Training (Wunsch von Eddie):
+//  1. Form aus deinen Läufen: Für jeden Lauf (ab 3 km) und jede Runde ab 6 Minuten (Tempoabschnitte) der
+//     letzten 6 Wochen wird aus Tempo (steigungsbereinigt) und Puls die VO2max geschätzt. Grundlage:
+//     Der Anteil an der Herzfrequenzreserve entspricht etwa dem Anteil an der VO2-Reserve (Swain).
+//     VO2max ≈ 3,5 + (Sauerstoffbedarf des Tempos − 3,5) / ((Puls − Ruhepuls) / (Maximalpuls − Ruhepuls)).
+//     Nur Einheiten zwischen 70 und 97 % der Reserve (darunter ist Puls zu ungenau), gewichteter Median.
+//     Kurze Intervalle zählen nicht: Der Puls hinkt dort hinterher, die Schätzung fiele viel zu hoch aus.
+//  2. Intervalle (über das Tempo, nicht den Puls): Einheiten mit mindestens 3 schnellen Runden von 600–2100 m
+//     (mind. 10 % schneller als der Median der Runden) und zusammen mindestens 3 km. 5-km-Zeit ≈ Tempo der
+//     schnellen Runden plus Aufschlag: 2,5 % Grundwert, bis 3,75 % mehr bei langen Pausen (Pause/Belastung bis 1,5)
+//     und bis 3 % mehr, wenn weniger als 5 km schnell gelaufen wurden. Daraus die VO2max nach Daniels.
+//     Es zählt die beste Einheit der letzten 6 Wochen.
+//  3. Verwendet wird ein gewichteter Mittelwert der vorhandenen Werte, je Strecke anders (PRED_WEIGHTS):
+//     Für 5 km zählen die Intervalle doppelt, für den Marathon die Form aus den ruhigeren Läufen doppelt.
+//     Form höchstens 10 %, Intervalle höchstens 15 % von Garmins Wert entfernt (schützt vor falsch erkannten Runden).
+//  4. Ausdauer (eigene, offengelegte Regel): Daniels setzt passendes Training voraus. Für Halbmarathon und
+//     Marathon wird die Zeit verlängert, wenn der längste Lauf oder der Wochenumfang der letzten 8 Wochen
+//     unter üblichen Werten liegt (Halbmarathon: 16 km bzw. 30 km/Woche, Marathon: 30 km bzw. 50 km/Woche).
+const FORM_DAYS = 42, VOL_DAYS = 56;
+// Gewichte je Strecke: [Garmins VO2max, Form aus Läufen, Intervalle]
+const PRED_WEIGHTS = { 5000: [1, 1, 2], 10000: [1, 1, 1.5], 21097.5: [1, 1.5, 1], 42195: [1, 2, 0.5] };
+const ENDURANCE = { 21097.5: { long: 16, week: 30, maxPen: 0.05 }, 42195: { long: 30, week: 50, maxPen: 0.12 } };
+
+/** Maximal- und Ruhepuls: Garmin-Zonen bzw. höchster Puls des letzten Jahres; Ruhepuls als Median der letzten 14 Tage */
+function hrBounds(end) {
+  const zr = (S.zones || []).find((z) => z && /RUN/i.test(z.sport || '')) || (S.zones || []).find((z) => z && z.max);
+  let max = zr && zr.max ? zr.max : null;
+  if (!max) for (const a of S.acts) if (isRun(a) && a.maxHr && a.date > addDays(end, -365) && a.date <= end) max = Math.max(max || 0, a.maxHr);
+  const rhrs = S.daily.filter((x) => x.rhr && x.d > addDays(end, -14) && x.d <= end).map((x) => x.rhr).sort((x, y) => x - y);
+  const rest = rhrs.length ? rhrs[Math.floor(rhrs.length / 2)] : null;
+  return max && rest && max - rest > 40 ? { max, rest } : null;
+}
+
+/** Form aus Läufen und Runden: geschätzte VO2max (gewichteter Median) oder null */
+function formFromRuns(end) {
+  const hb = hrBounds(end); if (!hb) return null;
+  const est = [];
+  let runs = 0, laps = 0;
+  const add = (v, hr, w) => {
+    const hrr = (hr - hb.rest) / (hb.max - hb.rest);
+    if (!(v > 2) || hrr < 0.7 || hrr > 0.97) return false;
+    const x = 3.5 + (vo2Need(v * 60) - 3.5) / hrr;
+    if (x > 25 && x < 90) { est.push([x, w]); return true; }
+    return false;
+  };
+  for (const a of S.acts) {
+    if (!isRun(a) || a.date <= addDays(end, -FORM_DAYS) || a.date > end) continue;
+    const v = a.gap || a.spd || (a.km && a.min ? a.km * 1000 / (a.min * 60) : null);
+    if (a.km >= 3 && a.hr && add(v, a.hr, a.min)) runs++;
+    for (const l of a.laps || []) if (l.s >= 360 && l.hr && add(l.v, l.hr, l.s / 60)) laps++;
+  }
+  if (est.length < 3) return null;
+  est.sort((x, y) => x[0] - y[0]);
+  const half = est.reduce((t, e) => t + e[1], 0) / 2;
+  let acc = 0, med = est[est.length - 1][0];
+  for (const [x, w] of est) { acc += w; if (acc >= half) { med = x; break; } }
+  return { v: med, runs, laps, ...hb };
+}
+
+/** VO2max, bei der Daniels genau diese Zeit über d Meter ergibt */
+function vo2FromRace(d, sec) {
+  let lo = 20, hi = 95;
+  for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (raceFromVo2(m, d) > sec) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
+/** Beste Intervalleinheit der letzten 6 Wochen → geschätzte 5-km-Zeit und VO2max, oder null */
+function intervalsFromLaps(end) {
+  let best = null;
+  for (const a of S.acts) {
+    if (!isRun(a) || a.date <= addDays(end, -FORM_DAYS) || a.date > end) continue;
+    const laps = (a.laps || []).filter((l) => l.v > 0 && l.s > 0);
+    if (laps.length < 5) continue;
+    const vs = laps.map((l) => l.v).sort((x, y) => x - y), med = vs[Math.floor(vs.length / 2)];
+    const len = (l) => l.m || l.v * l.s;
+    const isWork = (l) => l.v >= med * 1.1 && len(l) >= 600 && len(l) <= 2100;
+    const idx = laps.map((l, i) => (isWork(l) ? i : -1)).filter((i) => i >= 0);
+    if (idx.length < 3) continue;
+    let wm = 0, ws = 0, rest = 0;
+    for (let i = idx[0]; i <= idx[idx.length - 1]; i++) {
+      if (isWork(laps[i])) { wm += len(laps[i]); ws += laps[i].s; } else rest += laps[i].s;
+    }
+    if (wm < 3000) continue;
+    const vw = wm / ws, r = Math.min(1.5, rest / ws);
+    const k = 0.025 + 0.025 * r + Math.max(0, 5000 - wm) / 5000 * 0.03;
+    const t5 = 5000 / vw * (1 + k), v = vo2FromRace(5000, t5);
+    if (!best || v > best.v) best = { v, t5, n: idx.length, m: Math.round(wm / idx.length / 100) * 100, pace: 1000 / vw, d: a.date };
+  }
+  return best;
+}
+
+/** Längster Lauf und Wochenumfang (km) der letzten 8 Wochen */
+function volumeStats(end) {
+  let long = 0, sum = 0;
+  for (const a of S.acts) if (isRun(a) && a.date > addDays(end, -VOL_DAYS) && a.date <= end) { long = Math.max(long, a.km || 0); sum += a.km || 0; }
+  return { long, week: sum / (VOL_DAYS / 7) };
+}
+/** Aufschlag (Anteil) für fehlende Ausdauer auf dieser Distanz */
+function endurancePenalty(d, vol) {
+  const e = ENDURANCE[d]; if (!e) return 0;
+  // Fehlender Anteil am üblichen langen Lauf (zählt 60 %) und am Wochenumfang (40 %)
+  const gapLong = Math.max(0, e.long - vol.long) / e.long, gapWeek = Math.max(0, e.week - vol.week) / e.week;
+  return e.maxPen * (0.6 * gapLong + 0.4 * gapWeek);
+}
+
+function renderPredictions() {
+  const { cur } = ranges();
+  const end = cur[1];
+  const runsV = vo2All().filter((e) => e.sport === 'run' && e.d <= end);
+  const last = runsV[runsV.length - 1];
+  const tiles = $('#pred-tiles'); tiles.replaceChildren();
+  // Vergleich: schnellste Abschnitte der letzten 8 Wochen, auf jede Distanz umgerechnet, das beste Ergebnis zählt
+  const recent = S.acts.filter((a) => isRun(a) && a.date > addDays(end, -56) && a.date <= end);
+  const riegel = RACES.map(([, d]) => {
+    let best = null;
+    for (const a of recent) for (const [, d1, k] of RACES) if (a[k]) { const t = a[k] * (d / d1) ** 1.06; if (best == null || t < best) best = t; }
+    return best;
+  });
+  const form = formFromRuns(end);
+  const iv = intervalsFromLaps(end);
+  const vol = volumeStats(end);
+  const pace = (sk) => Math.floor(sk / 60) + ':' + String(Math.round(sk % 60)).padStart(2, '0');
+  const ivText = iv ? 'deinen Intervallen (' + iv.n + ' × ' + num(iv.m, 0) + ' m in ' + pace(iv.pace) + '/km am ' + dayLabel(iv.d).replace(/^[^,]+, /, '') + ', 5 km also etwa ' + raceTime(iv.t5) + ', geschätzt ' + num(iv.v, 1) + ')' : '';
+  // Verwendete VO2max je Strecke: gewichtetes Mittel aus Garmin, Form und Intervallen (was vorhanden ist)
+  let used = null, how = '';
+  const src = [null, null, null];
+  const clamp = (x, f = 0.1) => (last ? Math.min(last.v * (1 + f), Math.max(last.v * (1 - f), x)) : x);
+  const parts = [], vals = [];
+  if (last) { vals.push(last.v); src[0] = last.v; parts.push('Garmins VO2max (' + num(last.v) + ', ' + dayLabel(last.d).replace(/^[^,]+, /, '') + ')'); }
+  if (form) {
+    const f = clamp(form.v); vals.push(f); src[1] = f;
+    parts.push('deiner Form aus ' + form.runs + (form.runs === 1 ? ' Lauf' : ' Läufen') + (form.laps ? ' und ' + form.laps + (form.laps === 1 ? ' Tempoabschnitt' : ' Tempoabschnitten') : '') + ' (geschätzt ' + num(form.v, 1) + (f !== form.v ? ', weicht stark ab, deshalb höchstens 10 % von Garmins Wert entfernt angesetzt' : '') + ')');
+  }
+  if (iv) {
+    const f = clamp(iv.v, 0.15); vals.push(f); src[2] = f;
+    parts.push(ivText.replace(/\)$/, (f !== iv.v ? ', höchstens 15 % von Garmins Wert entfernt angesetzt' : '') + ')'));
+  }
+  if (vals.length) {
+    used = (d) => {
+      const w = PRED_WEIGHTS[d] || [1, 1, 1];
+      let sw = 0, sx = 0;
+      src.forEach((x, i) => { if (x != null) { sw += w[i]; sx += w[i] * x; } });
+      return sx / sw;
+    };
+    const us = RACES.map(([, d]) => used(d)), lo = Math.min(...us), hi = Math.max(...us);
+    how = 'Aus ' + (parts.length > 2 ? parts.slice(0, -1).join(', ') + ' und ' + parts[parts.length - 1] : parts.join(' und '))
+      + (vals.length > 1 ? '. Gewichtet je Strecke (5 km: Intervalle zählen doppelt, Marathon: ruhige Läufe zählen doppelt): VO2max ' + (hi - lo < 0.05 ? num(lo, 1) : num(lo, 1) + ' bis ' + num(hi, 1)) + '.' : '.')
+      + (!form && last ? ' Für die Form aus deinen Läufen fehlen Ruhepuls, Maximalpuls oder genug Läufe mit Puls.' : '')
+      + (!iv ? ' Keine Intervalleinheit mit sauberen Runden in den letzten 6 Wochen.' : '');
+  }
+  if (used != null) {
+    const pens = [];
+    RACES.forEach(([label, d]) => {
+      const base = raceFromVo2(used(d), d), pen = endurancePenalty(d, vol), t = base * (1 + pen);
+      const only = last ? raceFromVo2(last.v, d) : null;
+      let cmp = { text: 'gleich wie nur VO2max', cls: '' };
+      if (only != null && Math.abs(t - only) >= 1) {
+        const ds = Math.round(t - only);
+        cmp = { text: (Math.abs(ds) < 60 ? Math.abs(ds) + ' s' : raceTime(Math.abs(ds)) + ' min') + ' ' + (ds < 0 ? 'schneller' : 'langsamer') + ' als nur VO2max', cls: '' };
+      } else if (only == null) cmp = { text: 'aus deinem Training', cls: '' };
+      if (base * pen >= 1) pens.push(label + ' +' + (base * pen < 60 ? Math.round(base * pen) + ' s' : raceTime(base * pen) + ' min'));
+      tile(tiles, { label, value: raceTime(t), cmp });
+    });
+    $('#pred-note').textContent = how + ' Umgerechnet nach Daniels, für einen gut vorbereiteten Wettkampf auf flacher Strecke.'
+      + (pens.length ? ' Ausdauer: ' + pens.join(', ') + ', weil dein längster Lauf der letzten 8 Wochen ' + num(vol.long, 1) + ' km war und du im Schnitt ' + num(vol.week, 0) + ' km pro Woche gelaufen bist.' : '');
+  } else {
+    $('#pred-note').textContent = 'Noch keine VO2max Laufen, zu wenige Läufe mit Puls und keine Intervalle. Garmin liefert die VO2max mit deinen Läufen (im Freien, mit Puls); alternativ kannst du sie unter „Konto“ eintragen. Bis dahin eine Schätzung aus deinen schnellsten Abschnitten.';
+    if (riegel.some((t) => t != null)) RACES.forEach(([label], i) => tile(tiles, { label, value: raceTime(riegel[i]), cmp: { text: 'aus Abschnitten', cls: '' } }));
+  }
+  $('#pred-alt').textContent = riegel.some((t) => t != null)
+    ? (used != null ? 'Zum Vergleich aus deinen schnellsten Abschnitten der letzten 8 Wochen: ' + RACES.map(([l], i) => l + ' ' + raceTime(riegel[i])).join(' · ') + '. ' : 'Geschätzt aus deinen schnellsten Abschnitten der letzten 8 Wochen. ')
+      + 'Abschnitte aus Trainingsläufen sind meist langsamer als ein echter Wettkampf.'
+    : (used != null ? '' : 'Noch keine schnellen Abschnitte in den letzten 8 Wochen.');
+}

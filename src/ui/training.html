@@ -1,0 +1,33 @@
+  <!-- TRAINING (Belastung + Volumen) -->
+  <section data-tab="training" hidden>
+    <h2>Statistiken</h2>
+    <h3 class="sec">Belastung</h3>
+    <div class="tiles" id="load-tiles"></div>
+    <div class="card">
+      <h3>Akute und chronische Last</h3>
+      <p class="note">Garmin-Trainingslast pro Tag, gemittelt über 7 Tage (akut) und 28 Tage (chronisch). Liegt akut deutlich über chronisch, steigt das Risiko für Überlastung. Eigene Berechnung.</p>
+      <div class="legend"><span><i class="ln" style="background:var(--accent)"></i>Akut (7 Tage)</span><span><i class="ln" style="background:var(--prev)"></i>Chronisch (28 Tage)</span><span><i style="background:var(--bad);opacity:.35"></i>Akut über dem 1,5-Fachen</span></div>
+      <div class="chart" id="c-acwr"></div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3 id="h-cats">Art der Einheiten pro Woche</h3>
+        <p class="note">Garmins Einstufung jeder Einheit nach Trainingseffekt, in Stunden.</p>
+        <div class="legend" id="cat-legend"></div>
+        <div class="chart" id="c-cats"></div>
+      </div>
+      <div class="card">
+        <h3>Verteilung im Vergleich</h3>
+        <p class="note">Anteil der Trainingszeit je Kategorie, gewählter Zeitraum gegen den davor.</p>
+        <div class="tablewrap"><table id="t-cats"></table></div>
+      </div>
+    </div>
+      <h3 class="sec">Volumen</h3>
+    <div class="tiles" id="vol-tiles"></div>
+    <div class="card">
+      <h3 id="h-vol">Stunden pro Woche nach Sportart</h3>
+      <div class="legend" id="sport-legend"></div>
+      <div class="chart" id="c-vol"></div>
+    </div>
+    </section>
+

@@ -1,0 +1,29 @@
+// ---------- EINHEITEN (#59, früher „Trainings“) ----------
+// Absolvierte Einheiten, neueste zuerst. Eigene Trainings und Vorschläge folgen (#20, #33).
+// Sport-Symbole aus icons.js.txt (#90)
+const SPORT_ICONS = { run: 'laufen', ride: 'rad', swim: 'schwimmen', other: 'sonstiges' };
+function sportIcon(type) {
+  const sp = sportOf(type);
+  const ico = el('span', 'sp-ico');
+  // „Sonstiges“ ist in Diagrammen sehr dunkel; als Symbol etwas heller, damit es lesbar bleibt
+  ico.style.color = sp.key === 'other' ? css('--muted') : color(sp.color);
+  ico.innerHTML = icon(SPORT_ICONS[sp.key] || SPORT_ICONS.other);
+  ico.title = sp.label;
+  return ico;
+}
+
+function renderSessions() {
+  const ul = $('#sessions'); ul.replaceChildren();
+  for (const a of [...S.acts].reverse().slice(0, 40)) {
+    const li = el('li', 'tap with-icon'); const left = el('div'); const right = el('div', 'right');
+    li.tabIndex = 0; li.setAttribute('role', 'button');
+    li.addEventListener('click', () => openUnit(a.id));
+    li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openUnit(a.id); });
+    left.append(el('div', null, a.name || sportOf(a.type).label));
+    const meta = el('div', 'meta', dayLabel(a.date) + ' · ' + hm(a.min / 60) + ' h' + (a.km ? ' · ' + num(a.km, 1) + ' km' : '') + (a.hr ? ' · ' + a.hr + ' bpm' : ''));
+    left.append(meta);
+    const chip = el('span', 'chip', catOf(a.label)[1]); chip.style.background = catOf(a.label)[2]; chip.style.color = '#fff';
+    right.append(chip, el('div', 'meta', 'TE ' + num(a.te, 1) + ' / ' + num(a.teAn, 1) + ' · Last ' + num(a.load)));
+    li.append(sportIcon(a.type), left, right); ul.append(li);
+  }
+}

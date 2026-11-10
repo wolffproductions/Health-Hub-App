@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "health-hub",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+
+  // Adresse https://health-hub.<subdomain>.workers.dev – geschützt durch das App-Passwort
+  "workers_dev": true,
+
+  // App-Icons als Binärdaten einbinden (Teile der Oberfläche, .html und .txt, sind von Haus aus Text)
+  "rules": [{ "type": "Data", "globs": ["**/*.png"], "fallthrough": true }],
+
+  // Alle 30 Minuten: neueste Tage aktuell halten und ein Stück Historie nachladen
+  "triggers": { "crons": ["*/30 * * * *"] },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "health-hub",
+      // bleibt hier ein Platzhalter. Die echte ID steht pro Person in .d1-id; die Einrichtungsskripte
+      // erzeugen daraus wrangler.local.jsonc (beides nicht in git).
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Optional: Original-.fit-Dateien in R2 sichern. R2 muss im Cloudflare-Konto einmal
+  // aktiviert sein. Dann den Block einkommentieren und
+  //   npx wrangler r2 bucket create health-hub-files
+  // "r2_buckets": [{ "binding": "FILES", "bucket_name": "health-hub-files" }],
+
+  "vars": {
+    "TIMEZONE": "Europe/Berlin",
+    // Wie weit die Historie beim ersten Mal zurückgeladen wird. Später erhöhen geht jederzeit.
+    "BACKFILL_DAYS": "365"
+  },
+
+  "observability": { "enabled": false }
+
+  // Secrets (nie hier eintragen):
+  //   SESSION_SECRET  – zufällig, setzt das Einrichtungsskript
+  //   APP_PASSWORD    – tippst du selbst ein
+  //   API_TOKEN       – optional, für Skripte und später den MCP-Zugang
+  //   GARMIN_API_KEY  – optional, normalerweise trägst du den Schlüssel in der App ein
+}

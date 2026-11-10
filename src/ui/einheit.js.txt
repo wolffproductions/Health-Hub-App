@@ -1,0 +1,287 @@
+// ---------- EINHEIT (#60) ----------
+// Komplette Übersicht einer Einheit als eigene Seite: Karte, Kennzahlen, Trainingseffekt, Zeit in Zonen,
+// Runden, Bestzeiten, der Vergleich mit ähnlichen Einheiten und die Verläufe über die Strecke (#17). Verläufe (Pace, Puls,
+// Höhe) brauchen Messpunkte, die wir noch nicht speichern (#17, Strava #49).
+
+function openUnit(id) { openSub('einheit', id); }
+
+// Abschnitt mit Überschrift und Karte
+function uCard(parent, title, note) {
+  const c = el('div', 'card');
+  if (title) c.append(el('h3', null, title));
+  if (note) c.append(el('p', 'note', note));
+  parent.append(c);
+  return c;
+}
+
+function renderUnit() {
+  const body = $('#u-body');
+  const id = S.sub && S.sub.key;
+  const a = S.acts.find((x) => x.id === id);
+  // Gleiche Einheit nicht bei jedem Neuzeichnen neu aufbauen (Karte bliebe sonst nicht stehen)
+  // Kennung enthält auch die Zonen, damit neue Grenzen oder nachgeladene Pulsdaten neu zeichnen
+  const uid = a ? a.id + (a.rt ? 'r' : '') + (a.lp ? 'l' : '') + (a.hz ? 'z' + S.zoneCfg.flat().join('-') : '') : '';
+  if (a && body.dataset.id === uid && body.childElementCount) return;
+  body.replaceChildren(); body.dataset.id = uid;
+  if (!a) {
+    $('#u-title').textContent = 'Einheit'; $('#u-sub').textContent = '';
+    body.append(el('div', 'card empty', S.acts.length ? 'Diese Einheit ist nicht (mehr) in den geladenen Daten.' : 'Lade Daten …'));
+    return;
+  }
+  const sp = sportOf(a.type), cat = catOf(a.label);
+  $('#u-title').textContent = a.name || sp.label;
+  $('#navTitle').textContent = a.name || sp.label;
+  $('#u-sub').textContent = (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr · ' + sp.label;
+
+  // Karte groß, Antippen öffnet die zoombare Vollbild-Karte
+  const top = el('div', 'card actpost u-top');
+  if (a.rt) {
+    const m = el('div', 'ap-map u-map'); top.append(m); drawRoute(m, a.id);
+    m.addEventListener('click', () => openRouteFull(a, top));
+    m.setAttribute('role', 'button'); m.setAttribute('aria-label', 'Karte im Vollbild öffnen');
+  }
+  const head = el('div', 'ap-head');
+  const chip = el('span', 'chip', cat[1]); chip.style.background = cat[2]; chip.style.color = '#fff';
+  head.append(el('div', 'note', a.rt ? 'Karte antippen zum Zoomen' : 'Ohne GPS-Strecke'), chip);
+  top.append(head);
+  // Kennzahlen: dieselben wie im Post, ergänzt um Max-Puls, Kadenz, Leistung, Laufdynamik
+  const stats = el('div', 'ap-stats');
+  const add = (v, u, l) => { if (v == null || v === '–') return; const s = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u)); s.append(b, el('span', null, l)); stats.append(s); };
+  add(a.km ? num(a.km, a.km < 10 ? 2 : 1) : null, ' km', 'Distanz');
+  add(a.min ? duration(a.min) : null, '', 'Zeit');
+  if (sp.key === 'swim' && a.spd) add(pace(100 / a.spd), ' /100 m', 'Ø Pace');
+  else if (sp.key === 'run' && a.spd) add(pace(1000 / a.spd), ' /km', 'Ø Pace');
+  else if (a.spd) add(num(a.spd * 3.6, 1), ' km/h', 'Ø Tempo');
+  if (sp.key === 'run' && a.gap) add(pace(1000 / a.gap), ' /km', 'Pace (eben)');
+  add(a.hr ? String(a.hr) : null, ' bpm', 'Ø Puls');
+  add(a.maxHr ? String(a.maxHr) : null, ' bpm', 'Max. Puls');
+  add(a.elev != null && a.km ? num(a.elev) : null, ' m', 'Höhenmeter');
+  add(a.cad ? num(a.cad) : null, ' spm', 'Kadenz');
+  add(a.kcal ? num(a.kcal) : null, ' kcal', 'Kalorien');
+  add(a.pw ? String(a.pw) : null, ' W', 'Ø Leistung');
+  add(a.np ? String(a.np) : null, ' W', 'Normierte Leistung');
+  add(a.gct ? num(a.gct) : null, ' ms', 'Bodenkontakt');
+  add(a.vo ? num(a.vo, 1) : null, ' cm', 'Vert. Bewegung');
+  top.append(stats);
+  body.append(top);
+
+  // Trainingseffekt und Last (Garmin)
+  if (a.te != null || a.load != null) {
+    const c = uCard(body, 'Trainingseffekt', 'Von Garmin berechnet: aerob und anaerob auf einer Skala von 0 bis 5, dazu die Trainingslast der Einheit.');
+    const g = el('div', 'u-te');
+    for (const [l, v, max] of [['Aerob', a.te, 5], ['Anaerob', a.teAn, 5]]) {
+      if (v == null) continue;
+      const r = el('div', 'u-bar'); const fill = el('i'); fill.style.width = Math.min(100, v / max * 100) + '%';
+      const track = el('span', 'track'); track.append(fill);
+      r.append(el('span', 'name', l), track, el('b', null, num(v, 1)));
+      g.append(r);
+    }
+    c.append(g);
+    if (a.load != null) c.append(el('p', 'note', 'Trainingslast: ' + num(a.load) + (cat[0] ? ' · Einstufung: ' + cat[1] : '')));
+  }
+
+  // Zeit in Pulszonen: mit Uhr-Datei sekundengenau nach den eigenen Zonen (#19), sonst Garmins Zonen
+  const own = !!a.hz;
+  const zs = (own ? a.hz.map((z) => z[0]) : a.z || []).map((s) => s || 0), zt = sum(zs);
+  if (zt > 0) {
+    const rng = zoneRanges();
+    const c = uCard(body, 'Zeit in Pulszonen', own ? 'Nach deinen Zonen unter „Konto → Pulszonen“, aus dem Puls jeder Sekunde.' : 'Nach den Pulszonen deiner Uhr (die genaue Auswertung wird nachgeladen).');
+    const ZC = ['#8e8e93', '#30b0c7', '#34c759', '#ff9f0a', '#ff3b30'];
+    const stack = el('div', 'u-stack');
+    zs.forEach((s, i) => { if (!s) return; const p = el('i'); p.style.width = (s / zt * 100) + '%'; p.style.background = ZC[i]; stack.append(p); });
+    c.append(stack);
+    const ul = el('ul', 'u-zones');
+    zs.forEach((s, i) => {
+      const li = el('li'); const dot = el('i'); dot.style.background = ZC[i];
+      li.append(dot, el('span', null, own ? 'Z' + (i + 1) + ' ' + Z5NAMES[i] + ' · ' + rng[i] : 'Zone ' + (i + 1)), el('b', null, s ? hm(s / 3600) + ' h' : '–'), el('span', 'note', s ? num(s / zt * 100) + ' %' : ''));
+      ul.append(li);
+    });
+    c.append(ul);
+  }
+
+  // Runden aus der .fit-Datei
+  if (a.laps && a.laps.length) {
+    const c = uCard(body, sp.key === 'run' ? 'Runden' : 'Abschnitte', 'Aus der Originaldatei der Uhr. Der Balken zeigt das Tempo, die schnellste Runde ist hervorgehoben.');
+    const speeds = a.laps.map((l) => l.v || 0), vmax = Math.max(...speeds), vmin = Math.min(...speeds.filter((v) => v > 0));
+    const fastest = speeds.indexOf(vmax);
+    const tb = el('div', 'u-laps');
+    const hdr = el('div', 'u-lap head'); hdr.append(el('span', null, '#'), el('span', null, 'Länge'), el('span', null, sp.key === 'run' ? 'Pace' : 'Tempo'), el('span'), el('span', null, 'Puls'), el('span', null, 'Zeit'));
+    // Länge der Runde (#75): aus der Uhr-Datei, bei älteren Daten aus Tempo × Dauer.
+    // Unter 1 km in Metern (auf 10 m gerundet, z. B. „800 m“), sonst in Kilometern.
+    const lapLen = (l) => { const m = l.m ?? (l.v && l.s ? l.v * l.s : null); return m == null ? '–' : m < 995 ? Math.round(m / 10) * 10 + ' m' : num(m / 1000, 2) + ' km'; };
+    tb.append(hdr);
+    a.laps.forEach((l, i) => {
+      const r = el('div', 'u-lap' + (i === fastest ? ' best' : ''));
+      const bar = el('span', 'track'); const f = el('i');
+      // Balken: langsamste Runde 25 %, schnellste 100 %
+      f.style.width = (l.v ? 25 + 75 * ((l.v - vmin) / ((vmax - vmin) || 1)) : 0) + '%'; bar.append(f);
+      r.append(el('span', null, String(i + 1)), el('span', 'len', lapLen(l)), el('b', null, l.v ? (sp.key === 'run' ? pace(1000 / l.v) : num(l.v * 3.6, 1)) : '–'), bar, el('span', null, l.hr ? String(l.hr) : '–'), el('span', null, l.s ? duration(l.s / 60) : '–'));
+      tb.append(r);
+    });
+    c.append(tb);
+  }
+
+  // Schnellste Abschnitte in dieser Einheit (Garmin)
+  const bests = [['5 km', a.f5k], ['10 km', a.f10k], ['Halbmarathon', a.fHm], ['Marathon', a.fM]].filter(([, v]) => v);
+  if (bests.length) {
+    const c = uCard(body, 'Schnellste Abschnitte', 'Die schnellsten Teilstücke innerhalb dieser Einheit.');
+    const ul = el('ul', 'sessions');
+    for (const [l, v] of bests) { const li = el('li'); li.append(el('div', null, l), el('div', 'right', duration(v / 60))); ul.append(li); }
+    c.append(ul);
+  }
+
+  // Vergleich mit den letzten ähnlichen Einheiten (gleiche Sportart, ähnliche Dauer)
+  const sim = S.acts.filter((x) => x.id !== a.id && sportOf(x.type).key === sp.key && x.date <= a.date && x.min && a.min && Math.abs(x.min - a.min) / a.min < 0.35).slice(-8);
+  if (sim.length >= 2) {
+    const c = uCard(body, 'Im Vergleich', `Mit deinen letzten ${sim.length} ähnlichen Einheiten (${sp.label}, ähnliche Dauer).`);
+    const ul = el('ul', 'sessions');
+    const row = (label, mine, avg, fmt, betterUp) => {
+      if (mine == null || avg == null) return;
+      const d = mine - avg, good = betterUp ? d > 0 : d < 0;
+      // betterUp null: weder besser noch schlechter, nur Vergleich
+      const li = el('li'); const r = el('div', 'right');
+      r.append(el('div', null, fmt(mine)), el('div', 'meta ' + (betterUp == null || Math.abs(d) < 1e-9 ? '' : good ? 'good' : 'bad'), 'Ø ' + fmt(avg)));
+      li.append(el('div', null, label), r); ul.append(li);
+    };
+    if (sp.key === 'run') row('Pace', a.spd ? 1000 / a.spd : null, mean(sim.map((x) => x.spd ? 1000 / x.spd : null)), (v) => pace(v) + ' /km', false);
+    else row('Tempo', a.spd ? a.spd * 3.6 : null, mean(sim.map((x) => x.spd ? x.spd * 3.6 : null)), (v) => num(v, 1) + ' km/h', true);
+    row('Ø Puls', a.hr, mean(sim.map((x) => x.hr)), (v) => num(v) + ' bpm', false);
+    row('Trainingslast', a.load, mean(sim.map((x) => x.load)), (v) => num(v), null);
+    c.append(ul);
+  }
+
+  renderStravaExtras(body, a);
+  renderStreams(body, a, sp);
+}
+
+// ---------- Verläufe über die Strecke (#17) ----------
+// Pace bzw. Tempo, Puls, Höhe, Kadenz und Leistung übereinander, gemeinsame x-Achse (Strecke, sonst Zeit).
+// Antippen oder Ziehen zeigt in allen Diagrammen dieselbe Stelle und oben die Werte dort.
+const streamCache = {};
+async function loadStreams(id) {
+  if (!(id in streamCache)) streamCache[id] = await api('/api/streams?id=' + encodeURIComponent(id)).catch(() => null);
+  return streamCache[id];
+}
+function renderStreams(body, a, sp) {
+  const card = uCard(body, 'Verläufe über die Strecke');
+  if (!a.st) {
+    card.append(el('p', 'note', a.rt || a.lp ? 'Die Messpunkte dieser Einheit werden beim nächsten Abgleich aus der Originaldatei nachgeladen.' : 'Für diese Einheit gibt es keine Messpunkte.'));
+    return;
+  }
+  const box = el('div', 'st-box'); box.append(el('div', 'empty', 'Lade Verläufe …')); card.append(box);
+  loadStreams(a.id).then((s) => {
+    if (!box.isConnected) return;
+    if (!s || !s.t || s.t.length < 2) { box.replaceChildren(el('div', 'empty', 'Keine Messpunkte gespeichert.')); return; }
+    drawStreams(box, s, sp, a.type || '');
+  });
+}
+function drawStreams(box, s, sp, type) {
+  box.replaceChildren();
+  const n = s.t.length, byD = !!(s.d && s.d.some((v) => v != null));
+  const xs = byD ? s.d.map((v) => (v == null ? null : v / 1000)) : s.t.map((v) => v / 60);
+  // Pace und Schritte bei Laufen, Gehen, Wandern; sonst Tempo und Umdrehungen
+  const run = sp.key === 'run' || /walk|hik/.test(type);
+  // Pace nur bei sinnvollem Tempo (Stehen ergäbe riesige Werte); Kadenz beim Laufen in Schritten (×2)
+  const series = [];
+  if (s.v) {
+    if (run) series.push({ k: 'pace', label: 'Pace', unit: ' /km', color: css('--accent'), vals: s.v.map((v) => (v && v > 0.8 ? 1000 / v : null)), fmt: pace, invert: true });
+    else series.push({ k: 'spd', label: 'Tempo', unit: ' km/h', color: css('--accent'), vals: s.v.map((v) => (v == null ? null : v * 3.6)), fmt: (v) => num(v, 1) });
+  }
+  if (s.hr) series.push({ k: 'hr', label: 'Puls', unit: ' bpm', color: css('--bad'), vals: s.hr, fmt: (v) => num(v) });
+  if (s.alt) series.push({ k: 'alt', label: 'Höhe', unit: ' m', color: css('--ok'), vals: s.alt, fmt: (v) => num(v), area: true });
+  if (s.cad) series.push({ k: 'cad', label: 'Kadenz', unit: run ? ' spm' : ' rpm', color: '#bf5af2', vals: s.cad.map((v) => (v == null ? null : run ? v * 2 : v)), fmt: (v) => num(v) });
+  if (s.pw) series.push({ k: 'pw', label: 'Leistung', unit: ' W', color: css('--accent-2'), vals: s.pw, fmt: (v) => num(v) });
+  if (!series.length) { box.append(el('div', 'empty', 'Keine Messwerte gespeichert.')); return; }
+
+  // Kopfzeile mit den Werten an der gewählten Stelle (ohne Auswahl: Durchschnitt)
+  const head = el('div', 'st-head');
+  const pos = el('div', 'st-pos'); head.append(pos);
+  const cells = series.map((se) => { const c = el('div', 'st-cell'); const b = el('b'); b.style.color = se.color; c.append(b, el('span', null, se.label)); head.append(c); return b; });
+  box.append(head);
+  const showAvg = () => {
+    pos.textContent = 'Ø gesamt';
+    series.forEach((se, i) => { const v = se.vals.filter((x) => x != null); cells[i].textContent = v.length ? se.fmt(mean(v)) + se.unit : '–'; });
+  };
+  showAvg();
+
+  const xExt = d3.extent(xs.filter((v) => v != null));
+  const charts = [];
+  series.forEach((se, i) => {
+    const node = el('div', 'chart st-chart'); box.append(node);
+    const last = i === series.length - 1;
+    const f = frame(node, last ? 124 : 96);
+    const yb = f.h - (last ? 30 : 6);
+    const v = se.vals.filter((x) => x != null);
+    let [lo, hi] = d3.extent(v);
+    // Pace: Ausreißer (Ampel, GPS-Sprung) abschneiden, damit die Kurve lesbar bleibt
+    if (se.k === 'pace') { const q = v.slice().sort((p, q2) => p - q2); lo = q[Math.floor(q.length * 0.02)]; hi = q[Math.floor(q.length * 0.98)]; }
+    if (se.k === 'alt' && hi - lo < 20) { const m = (hi + lo) / 2; lo = m - 10; hi = m + 10; }
+    const pad = (hi - lo) * 0.08 || 1;
+    const y = d3.scaleLinear(se.invert ? [hi + pad, lo - pad] : [lo - pad, hi + pad], [yb, 8]);
+    const ticks = y.ticks(3);
+    const ml = 44;
+    const x = d3.scaleLinear(xExt, [ml, f.w - 8]);
+    yAxis(f, y, ml, f.w - 8, ticks, (t) => se.fmt(t));
+    if (last) {
+      const g = f.svg.append('g');
+      for (const t of x.ticks(5)) g.append('text').attr('x', x(t)).attr('y', f.h - 6).attr('text-anchor', 'middle').text(byD ? num(t, t < 10 && xExt[1] < 10 ? 1 : 0) + ' km' : num(t) + ' min');
+    }
+    const pts = xs.map((xv, j) => ({ x: xv, y: se.vals[j] })).filter((p) => p.x != null && p.y != null).map((p) => ({ x: p.x, y: se.k === 'pace' ? Math.min(Math.max(p.y, lo - pad), hi + pad) : p.y }));
+    glowLine(f, pts, { x: (p) => x(p.x), y: (p) => y(p.y), base: yb, color: se.color, width: 2, top: se.area ? .35 : .22 });
+    const rule = f.svg.append('line').attr('y1', 4).attr('y2', yb).style('stroke', css('--muted')).style('display', 'none');
+    const dot = f.svg.append('circle').attr('r', 4).style('fill', se.color).style('stroke', css('--panel')).style('stroke-width', 2).style('display', 'none');
+    charts.push({ f, x, y, rule, dot, se });
+  });
+
+  // Gemeinsamer Zeiger: nächster Punkt nach x, in allen Diagrammen gleichzeitig
+  const valid = xs.map((v, j) => (v == null ? null : j)).filter((j) => j != null);
+  const show = (px) => {
+    const c0 = charts[0], xv = c0.x.invert(px);
+    let j = valid[0], best = Infinity;
+    for (const k of valid) { const dd = Math.abs(xs[k] - xv); if (dd < best) { best = dd; j = k; } }
+    pos.textContent = (byD ? num(xs[j], 2) + ' km' : num(xs[j], 0) + ' min') + ' · ' + duration(s.t[j] / 60);
+    charts.forEach((c, i) => {
+      const val = c.se.vals[j];
+      c.rule.attr('x1', c.x(xs[j])).attr('x2', c.x(xs[j])).style('display', null);
+      if (val != null) {
+        const yy = c.se.k === 'pace' ? Math.min(Math.max(c.y(val), 8), c.y.range()[0]) : c.y(val);
+        c.dot.attr('cx', c.x(xs[j])).attr('cy', yy).style('display', null);
+      } else c.dot.style('display', 'none');
+      cells[i].textContent = val != null ? c.se.fmt(val) + c.se.unit : '–';
+    });
+  };
+  const hide = () => { charts.forEach((c) => { c.rule.style('display', 'none'); c.dot.style('display', 'none'); }); showAvg(); };
+  for (const c of charts) {
+    const svg = c.f.svg.node();
+    const handler = (ev) => { const [px] = d3.pointer(ev.touches ? ev.touches[0] : ev, svg); show(Math.max(c.x.range()[0], Math.min(c.x.range()[1], px))); };
+    svg.addEventListener('pointerdown', handler); svg.addEventListener('pointermove', handler);
+    svg.addEventListener('touchmove', (ev) => { handler(ev); }, { passive: true });
+    svg.addEventListener('pointerleave', (ev) => { if (ev.pointerType === 'mouse') hide(); });
+  }
+  box.append(el('p', 'note', 'Antippen oder ziehen zeigt die Werte an einer Stelle. ' + (byD ? 'Gemittelt über kurze Abschnitte der Strecke, Pausen fallen heraus.' : 'Ohne GPS über die Zeit.')));
+}
+
+// ---------- Strava-Extras (#44) ----------
+// Bei doppelten Einheiten hängen sie als a.strava an der Garmin-Einheit, bei reinen Strava-Einheiten direkt dran.
+function renderStravaExtras(body, a) {
+  const x = a.strava || (a.src === 'strava' ? a : null);
+  if (!x) return;
+  const c = uCard(body, 'Strava', a.src === 'strava' ? 'Diese Einheit kommt nur von Strava.' : 'Dieselbe Einheit auf Strava. Die Messwerte oben stammen von Garmin.');
+  const stats = el('div', 'ap-stats');
+  const add = (v, l) => { if (v == null) return; const s = el('div'); s.append(el('b', null, String(v)), el('span', null, l)); stats.append(s); };
+  add(x.re, 'Relative Effort');
+  // Nullen weglassen (außer Kudos), sonst wirkt die Karte leer
+  add(x.kudos, 'Kudos');
+  add(x.comments || null, 'Kommentare');
+  add(x.prs || null, 'Bestzeiten');
+  add(x.ach || null, 'Erfolge');
+  add(x.photos || null, 'Fotos');
+  if (x.rpe) add(x.rpe + ' / 10', 'Gefühlte Anstrengung');
+  if (stats.childElementCount) c.append(stats);
+  const tags = [x.commute && 'Pendeln', x.wt === 1 && 'Rennen', x.wt === 2 && 'Langer Lauf', x.wt === 3 && 'Workout', x.wt === 11 && 'Rennen', x.wt === 12 && 'Workout'].filter(Boolean);
+  if (tags.length) c.append(el('p', 'note', tags.join(' · ')));
+  if (x.sid) {
+    const link = el('a', null, 'In Strava öffnen ↗'); link.href = 'https://www.strava.com/activities/' + encodeURIComponent(x.sid); link.target = '_blank'; link.rel = 'noopener';
+    const p = el('p', 'note'); p.append(link); c.append(p);
+  }
+}

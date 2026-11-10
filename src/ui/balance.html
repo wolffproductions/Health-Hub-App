@@ -1,0 +1,54 @@
+  <!-- BALANCE: Anspannung, Erholung und Stimmung. Keine Diagnose, nur eigene Werte im Vergleich mit dir selbst -->
+  <section data-tab="balance" hidden>
+    <h2>Balance</h2>
+    <p class="subtitle">Anspannung, Erholung und Stimmung</p>
+    <div class="card mood-card" id="b-checkin">
+      <h3 id="b-q">Wie geht’s dir heute?</h3>
+      <div class="mood-row" id="b-moods" role="radiogroup" aria-label="Stimmung"></div>
+      <div class="mood-more" id="b-more" hidden>
+        <p class="note">Was spielt heute mit? (optional)</p>
+        <div class="tagrow" id="b-tags"></div>
+        <textarea id="b-note" rows="2" maxlength="280" placeholder="Notiz für dich (optional)"></textarea>
+        <div class="row"><button class="btn" type="button" id="b-save">Speichern</button><button class="btn ghost small" type="button" id="b-day">Für gestern</button></div>
+      </div>
+      <p class="msg" id="b-msg" role="status"></p>
+    </div>
+    <div class="card" id="b-state">
+      <h3>Dein Körper gerade</h3>
+      <div class="b-verdict"><i class="light" id="b-light"></i><span id="b-verdict">–</span></div>
+      <ul class="factors" id="b-factors"></ul>
+      <p class="note">Letzte 7 Tage im Vergleich mit deinem eigenen Schnitt der 30 Tage davor. Garmins „Stress“ misst Anspannung im Körper: Sport, Koffein, Alkohol oder ein Infekt treiben ihn genauso hoch wie Sorgen.</p>
+    </div>
+    <div class="card">
+      <h3>Anspannung und Stimmung</h3>
+      <p class="note">Balken: Garmin-Stress pro Tag (ruhig bis hoch). Linie: deine Stimmung (1–5).</p>
+      <div class="legend"><span><i style="background:var(--b-rest)"></i>ruhig</span><span><i style="background:var(--b-low)"></i>leicht</span><span><i style="background:var(--b-med)"></i>mittel</span><span><i style="background:var(--b-high)"></i>hoch</span><span><i class="ln"></i>Stimmung</span></div>
+      <div class="chart" id="c-balance"></div>
+    </div>
+    <div class="card" id="b-split-card">
+      <h3>Zeit nach Stressstufe</h3>
+      <p class="note">Wie viel des Tages du im Schnitt ruhig, leicht, mittel oder hoch angespannt warst (gemessene Wachzeit).</p>
+      <div class="u-stack b-stack" id="b-split"></div>
+      <ul class="u-zones" id="b-split-list"></ul>
+    </div>
+    <div class="card">
+      <h3>Schlafrhythmus</h3>
+      <p class="note">Regelmäßige Schlafenszeiten hängen eng mit Stimmung und Erholung zusammen.</p>
+      <div class="ap-stats" id="b-rhythm"></div>
+    </div>
+    <div class="card">
+      <h3>Was dir guttut</h3>
+      <p class="note">Aus deinen eigenen Daten berechnet, nur wo genug Tage zusammenkommen. Zusammenhänge, keine Ursachen.</p>
+      <ul class="factors" id="b-insights"></ul>
+    </div>
+    <div class="card">
+      <h3>Kurz durchatmen</h3>
+      <p class="note">Langsames Ausatmen beruhigt den Puls. Eine Minute: 4 Sekunden ein, 6 Sekunden aus.</p>
+      <div class="row"><button class="btn" type="button" id="b-breathe">1 Minute atmen</button></div>
+    </div>
+    <div class="card">
+      <h3>Wichtig</h3>
+      <p class="note">Die App stellt keine Diagnosen. Wenn es dir über längere Zeit schlecht geht, sprich mit jemandem, dem du vertraust, mit deiner Hausärztin oder deinem Hausarzt oder einer Psychotherapeutin. In einer akuten Krise erreichst du die Telefonseelsorge rund um die Uhr kostenlos unter <a href="tel:08001110111">0800 111 0 111</a> oder <a href="tel:08001110222">0800 111 0 222</a>.</p>
+      <p class="note">Deine Stimmungseinträge liegen nur in deiner eigenen Datenbank und werden nirgends geteilt.</p>
+    </div>
+  </section>

@@ -1,0 +1,189 @@
+  <!-- KONTO (#28): Übersicht im Stil der iOS-Einstellungen, Quellen als Unterseiten -->
+  <section data-tab="konto" hidden>
+    <h2 id="konto-title">Konto</h2>
+    <div id="konto-main">
+      <h3 class="sec">Datenquellen</h3>
+      <ul class="srclist" id="sources" aria-label="Datenquellen"></ul>
+      <p class="note">Jede Quelle verbindest du mit deinem eigenen Zugang. Deine Daten bleiben in deinem Cloudflare-Konto.</p>
+      <h3 class="sec">Benachrichtigungen</h3>
+      <div class="card form" id="push-card">
+        <h3>Morgen-Push</h3>
+        <p class="note">Jeden Morgen die Erholungs-Ampel aufs iPhone, z. B. „🟢 Training normal möglich · HRV 62 ms · Ruhepuls 47 · Schlaf 7:12 h“. Sind die Schlafdaten noch nicht bei Garmin, wartet die App bis zu drei Stunden darauf.</p>
+        <p class="note" id="push-state">Wird geprüft …</p>
+        <label class="push-time">Uhrzeit<select id="push-time"></select></label>
+        <div class="row"><button class="btn" id="push-on" type="button">Push aktivieren</button><button class="btn ghost" id="push-test" type="button" hidden>Test senden</button></div>
+        <p class="msg" id="push-msg" role="status"></p>
+      </div>
+      <!-- Claude-Zugang (#5): eigene Daten als Connector in Claude -->
+      <h3 class="sec">Claude</h3>
+      <div class="card form" id="mcp-card">
+        <h3>Claude-Zugang</h3>
+        <p class="note">Verbinde deine Daten mit Claude und frag einfach drauflos, z. B. „Wie habe ich diese Woche geschlafen?“ oder „Wie liefen meine 1200er im Vergleich zum letzten Monat?“. Claude kann nur lesen, nichts ändern.</p>
+        <label>Adresse für Claude<input id="mcp-url" readonly></label>
+        <div class="row"><button class="btn" id="mcp-copy" type="button">Adresse kopieren</button></div>
+        <p class="note">In Claude unter Einstellungen → Connectors einen eigenen Connector mit dieser Adresse hinzufügen und dann mit deinem App-Passwort erlauben.</p>
+        <label class="mcp-mood"><input type="checkbox" id="mcp-mood"><span>Stimmung (Balance) für Claude freigeben</span></label>
+        <p class="note">Was Claude abruft, wird Teil des Gesprächs und damit an Anthropic übertragen.</p>
+        <ul class="mcp-list" id="mcp-clients" aria-label="Verbundene Apps"></ul>
+        <p class="msg" id="mcp-msg" role="status"></p>
+      </div>
+      <h3 class="sec">Eigene Werte</h3>
+    <!-- VO2max eintragen (#27), Anzeige bleibt unter Statistiken → Leistung -->
+    <div class="card form" id="vo2-entry">
+      <h3>VO2max eintragen</h3>
+      <p class="note">Die App übernimmt die VO2max automatisch aus deinen Läufen und Radfahrten. Eintragen musst du nur, wenn ein Wert fehlt oder du ihn korrigieren willst; dein Eintrag gilt dann für diesen Tag. Verlauf und Einschätzung siehst du unter Statistiken → Leistung.</p>
+      <form class="form" id="vo2-form" novalidate>
+        <div class="fields">
+          <label>Datum<input type="date" id="vo2-date" required></label>
+          <label>Sportart<select id="vo2-sport"><option value="run">Laufen</option><option value="ride">Rad</option></select></label>
+          <label>VO2max<input type="number" id="vo2-val" inputmode="numeric" min="20" max="95" step="1" placeholder="z. B. 58" required></label>
+        </div>
+        <div class="row"><button class="btn" type="submit">Eintragen</button></div>
+        <p class="msg" id="vo2-msg" role="status"></p>
+      </form>
+      <details>
+        <summary class="note">Alle Einträge (<span id="vo2-count">0</span>)</summary>
+        <ul class="sessions" id="vo2-list"></ul>
+      </details>
+    </div>
+    <div class="card form">
+      <h3>Pulszonen</h3>
+      <p class="note">Für „Zeit in Herzfrequenzzonen“ und „Pace je Zone“ unter „Leistung“. Die drei Bereiche sind Z2–Z4, Z1 liegt darunter, Z5 darüber (wie bei Strava). Vorbelegt mit Beispielwerten, trag deine eigenen ein (z. B. aus Strava oder vom Leistungstest). Ganze Werte, aufsteigend, ohne Überschneidung.</p>
+      <div class="zgrid" id="zone-form"></div>
+      <div class="row"><button class="btn" id="zone-save" type="button">Speichern</button><button class="btn ghost" id="zone-reset" type="button">Beispielwerte einsetzen</button></div>
+      <p class="msg" id="zone-msg" role="status"></p>
+    </div>
+    <!-- Anmeldung mit Passkey (#95) -->
+    <h3 class="sec">Anmeldung</h3>
+    <div class="card form" id="pk-card">
+      <h3>Passkeys</h3>
+      <p class="note">Mit einem Passkey meldest du dich per Face ID oder Touch ID an, ohne Passwort. Er liegt in deinem iCloud-Schlüsselbund und ist damit auch auf Mac und iPad da. Die App speichert nur einen öffentlichen Schlüssel.</p>
+      <p class="note" id="pk-state">Wird geladen …</p>
+      <ul class="sessions" id="pk-list" hidden></ul>
+      <div class="row"><button class="btn" id="pk-add" type="button">Passkey hinzufügen</button></div>
+      <p class="msg" id="pk-msg" role="status"></p>
+      <p class="note">Das App-Passwort bleibt als Reserve, z. B. für ein Gerät ohne Passkey.</p>
+    </div>
+    <div class="card form" id="pw-card">
+      <h3>App-Passwort ändern</h3>
+      <p class="note" id="pw-note">Mit diesem Passwort meldest du dich in der App an.</p>
+      <div id="pw-fields" class="form">
+        <label>Bisheriges Passwort<input id="pw-old" type="password" autocomplete="current-password"></label>
+        <label>Neues Passwort (mind. 10 Zeichen)<input id="pw-new" type="password" autocomplete="new-password" minlength="10"></label>
+        <label>Neues Passwort wiederholen<input id="pw-rep" type="password" autocomplete="new-password" minlength="10"></label>
+        <div class="row"><button class="btn" id="pw-save" type="button">Passwort ändern</button></div>
+      </div>
+      <p class="msg" id="pw-msg" role="status"></p>
+    </div>
+    <div class="card">
+      <a class="btn ghost" href="/logout">Abmelden</a>
+      <p class="note" id="app-version"></p>
+      <button class="btn small ghost" id="neu-open" type="button">Was ist neu?</button>
+    </div>
+    </div>
+
+    <!-- Unterseite Strava (#44) -->
+    <div id="konto-strava" hidden>
+    <div class="card form">
+      <h3>Verbindung</h3>
+      <p class="note" id="sv-state">Status wird geladen …</p>
+      <div class="row" id="sv-actions"><a class="btn" id="sv-connect" href="/strava/connect">Mit Strava verbinden</a><button class="btn ghost" id="sv-sync" type="button">Jetzt aktualisieren</button></div>
+      <p class="msg" id="sv-msg" role="status"></p>
+      <p class="note">Die App holt neue Einheiten alle 30 Minuten. Beim ersten Mal kommt die Historie des letzten Jahres, in Etappen. Läuft deine Uhr über Garmin und Strava, erkennt die App doppelte Einheiten und zeigt sie nur einmal, mit den Strava-Extras (Relative Effort, Kudos, Bestzeiten).</p>
+    </div>
+    <div class="card form" id="sv-hook-card" hidden>
+      <h3>Sofort aktualisieren</h3>
+      <p class="note" id="sv-hook-state">Mit einem Webhook meldet Strava jede neue oder geänderte Einheit sofort, statt dass die App bis zu 30 Minuten wartet.</p>
+      <div class="row"><button class="btn ghost" id="sv-hook" type="button">Webhook einrichten</button></div>
+      <p class="msg" id="sv-hook-msg" role="status"></p>
+    </div>
+    <div class="card form">
+      <h3>Eigene Strava-App</h3>
+      <p class="note">Strava gibt Daten nur an registrierte Apps heraus. Das richtest du einmal ein, kostenlos, in etwa fünf Minuten:</p>
+      <ol class="wi-steps">
+        <li>Auf <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api ↗</a> eine App anlegen (Name z. B. „Mein Health Hub“, Kategorie „Data Importer“, Website deine App-Adresse).</li>
+        <li>Als „Authorization Callback Domain“ genau diese Adresse eintragen (ohne https://):<br><code id="sv-cb"></code> <button class="btn small ghost" id="sv-copy" type="button">Kopieren</button></li>
+        <li>Client-ID und Client-Secret von dort hier eintragen, speichern, dann oben „Mit Strava verbinden“. Bei Strava alle Haken für den Zugriff aktiviert lassen.</li>
+      </ol>
+      <label class="note" for="sv-id">Client-ID</label>
+      <input id="sv-id" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="z. B. 123456">
+      <label class="note" for="sv-secret">Client-Secret (wird verschlüsselt gespeichert und nie wieder angezeigt)</label>
+      <input id="sv-secret" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Client-Secret einfügen">
+      <div class="row"><button class="btn" id="sv-save" type="button">Speichern</button><button class="btn danger" id="sv-del" type="button">Verbindung löschen</button></div>
+      <p class="msg" id="sv-app-msg" role="status"></p>
+      <p class="note">„Verbindung löschen“ widerruft den Zugriff bei Strava und entfernt App-Daten und Zugang. Bereits geladene Einheiten bleiben erhalten.</p>
+      <p class="note">Strava-Daten siehst nur du. Die Nutzungsbedingungen von Strava schränken die Weitergabe an KI-Dienste ein, deshalb bleiben Strava-Daten beim geplanten Claude-Zugang (#5) vorerst außen vor.</p>
+    </div>
+    </div>
+
+    <!-- Unterseite Withings (#3) -->
+    <div id="konto-withings" hidden>
+    <div class="card form">
+      <h3>Verbindung</h3>
+      <p class="note" id="wi-state">Status wird geladen …</p>
+      <div class="row" id="wi-actions"><a class="btn" id="wi-connect" href="/withings/connect">Mit Withings verbinden</a><button class="btn ghost" id="wi-sync" type="button">Jetzt aktualisieren</button></div>
+      <p class="msg" id="wi-msg" role="status"></p>
+      <p class="note">Die App holt neue Messungen alle 30 Minuten. Beim ersten Mal kommt die ganze Historie deiner Waage.</p>
+    </div>
+    <div class="card form">
+      <h3>Eigene Withings-App</h3>
+      <p class="note">Withings gibt Messwerte nur an registrierte Apps heraus. Das richtest du einmal ein, kostenlos, in etwa fünf Minuten:</p>
+      <ol class="wi-steps">
+        <li>Auf <a href="https://developer.withings.com/dashboard/" target="_blank" rel="noopener">developer.withings.com ↗</a> mit deinem Withings-Konto anmelden und eine Anwendung anlegen (Public API, Zweck z. B. „Persönliches Dashboard“).</li>
+        <li>Als Callback-URL genau diese Adresse eintragen:<br><code id="wi-cb"></code> <button class="btn small ghost" id="wi-copy" type="button">Kopieren</button></li>
+        <li>Client-ID und Client-Secret von dort hier eintragen, speichern, dann oben „Mit Withings verbinden“.</li>
+      </ol>
+      <label class="note" for="wi-id">Client-ID</label>
+      <input id="wi-id" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Client-ID einfügen">
+      <label class="note" for="wi-secret">Client-Secret (wird verschlüsselt gespeichert und nie wieder angezeigt)</label>
+      <input id="wi-secret" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Client-Secret einfügen">
+      <div class="row"><button class="btn" id="wi-save" type="button">Speichern</button><button class="btn danger" id="wi-del" type="button">Verbindung löschen</button></div>
+      <p class="msg" id="wi-app-msg" role="status"></p>
+      <p class="note">„Verbindung löschen“ entfernt App-Daten und Zugang. Bereits geladene Messwerte bleiben erhalten.</p>
+    </div>
+    </div>
+
+    <!-- Unterseite Garmin Connect -->
+    <div id="konto-garmin" hidden>
+    <div class="card form">
+      <h3>Garmin-Schlüssel</h3>
+      <p class="note" id="key-state">Status wird geladen …</p>
+      <label class="note" for="key-input">Neuer Schlüssel (wird verschlüsselt gespeichert und nie wieder angezeigt)</label>
+      <input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Schlüssel einfügen">
+      <div class="fields">
+        <label>Laufzeit bei Garmin
+          <select id="key-term">
+            <option value="">Bitte wählen</option>
+            <option value="30">30 Tage</option>
+            <option value="90">90 Tage</option>
+            <option value="180">180 Tage</option>
+            <option value="360">360 Tage</option>
+            <option value="none">Weiß ich nicht</option>
+          </select>
+        </label>
+        <label>Läuft ab am<input type="date" id="key-expires"></label>
+      </div>
+      <p class="note">Die App kennt das Ablaufdatum nicht von selbst. Mit dieser Angabe erinnert dich die App zwei Wochen vorher. Gerechnet ab heute – hast du den Schlüssel früher erstellt, passe das Datum an.</p>
+      <div class="row"><button class="btn" id="key-save" type="button">Speichern und prüfen</button><button class="btn ghost" id="key-exp-save" type="button" hidden>Nur Datum speichern</button><button class="btn danger" id="key-del" type="button">Schlüssel löschen</button></div>
+      <p class="msg" id="key-msg" role="status"></p>
+      <p class="note"><a href="https://connect.garmin.com/app/settings/personalApiToken" target="_blank" rel="noopener">Schlüssel bei Garmin verwalten ↗</a></p>
+    </div>
+    <div class="card form">
+      <h3>Daten</h3>
+      <p class="note" id="sync-state"></p>
+      <div class="progress" aria-hidden="true"><i id="sync-bar"></i></div>
+      <div class="row"><button class="btn" id="sync-btn" type="button">Jetzt aktualisieren</button></div>
+      <p class="msg" id="sync-msg" role="status"></p>
+      <p class="note">Die App aktualisiert sich alle 30 Minuten selbst. Beim ersten Mal lädt sie ein Jahr Historie in Etappen nach.</p>
+    </div>
+    <div class="card missing">
+      <h3>Nicht über die Personal API verfügbar</h3>
+      <ul>
+        <li>Training Readiness</li>
+        <li>Training Status und akute Last (Garmin-Berechnung)</li>
+        <li>Wettkampfprognosen (die App rechnet sie aus Garmins VO2max)</li>
+      </ul>
+      <p class="note">Diese Endpunkte antworten mit „nicht gefunden“. Die App zeigt deshalb eigene, offen erklärte Berechnungen aus den verfügbaren Daten, z. B. die Erholungs-Ampel.</p>
+    </div>
+    </div>
+  </section>

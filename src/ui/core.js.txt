@@ -1,0 +1,227 @@
+'use strict';
+// ---------- Zustand und Grundfunktionen ----------
+const S = { days: 28, weekOffset: 0, tab: 'heute', daily: [], acts: [], zones: [], vo2: [], zoneCfg: [[129, 160], [161, 175], [176, 191]], zSel: 0, today: null, status: null };
+const $ = (s) => document.querySelector(s);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const MONTHS = ['Jan.', 'Feb.', 'März', 'Apr.', 'Mai', 'Juni', 'Juli', 'Aug.', 'Sep.', 'Okt.', 'Nov.', 'Dez.'];
+const WD = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const NF = [0, 1, 2].map((d) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d }));
+const num = (x, d = 0) => (x == null || !isFinite(x)) ? '–' : NF[d].format(x);
+const pace = (sec) => { if (!sec || !isFinite(sec)) return '–'; const s = Math.round(sec); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const hm = (h) => { if (h == null) return '–'; const m = Math.round(h * 60); return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); };
+const clock = (h) => { if (h == null) return '–'; const m = Math.round(h * 60) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+const parse = (d) => new Date(d + 'T00:00:00Z');
+const iso = (t) => t.toISOString().slice(0, 10);
+const addDays = (d, n) => { const t = parse(d); t.setUTCDate(t.getUTCDate() + n); return iso(t); };
+const dayLabel = (d) => { const t = parse(d); return WD[t.getUTCDay()] + ', ' + t.getUTCDate() + '. ' + MONTHS[t.getUTCMonth()]; };
+const mean = (a) => { const v = a.filter((x) => x != null && isFinite(x)); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+const median = (a) => { const v = a.filter((x) => x != null && isFinite(x)).sort((x, y) => x - y); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+const sum = (a) => a.reduce((s, x) => s + (x || 0), 0);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+const SPORTS = [
+  { key: 'run', label: 'Laufen', re: /running/, color: '--accent' },
+  { key: 'ride', label: 'Rad', re: /cycl|biking|cyclocross|bike|_ride/, color: '--accent-2' },
+  { key: 'swim', label: 'Schwimmen', re: /swim/, color: '#4a8fd8' },
+  { key: 'other', label: 'Sonstiges', re: /.*/, color: '--prev' }
+];
+const sportOf = (type) => SPORTS.find((s) => s.re.test(type));
+const CATS = [
+  ['RECOVERY', 'Erholung', '#93b5ac'], ['AEROBIC_BASE', 'Grundlage', '#2f9a7f'], ['TEMPO', 'Tempo', '#c9a227'],
+  ['LACTATE_THRESHOLD', 'Schwelle', '#e07b39'], ['VO2MAX', 'VO2max', '#d14b4b'], ['ANAEROBIC_CAPACITY', 'Anaerob', '#9b3d8f'],
+  ['SPRINT', 'Sprint', '#5b4bb7'], [null, 'Ohne Einstufung', '#8a908e']
+];
+const catOf = (label) => CATS.find((c) => c[0] === label) || CATS[CATS.length - 1];
+const color = (c) => c.startsWith('--') ? css(c) : c;
+const isRun = (a) => /running/.test(a.type);
+const runPace = (a) => { const v = a.gap || a.spd; return v ? 1000 / v : null; };
+
+// Montag der Woche, in der der Tag liegt
+const weekStart = (d) => addDays(d, -((parse(d).getUTCDay() + 6) % 7));
+// Kalenderwoche nach ISO 8601
+function isoWeek(d) {
+  const t = parse(addDays(d, 3 - (parse(d).getUTCDay() + 6) % 7));
+  const jan4 = parse(t.getUTCFullYear() + '-01-04');
+  return 1 + Math.round(((t - jan4) / 864e5 - 3 + (jan4.getUTCDay() + 6) % 7) / 7);
+}
+
+// Zeitraum und Vergleichszeitraum. „1 W“ ist die Kalenderwoche Mo–So (S.weekOffset 0 = aktuelle,
+// -1 = letzte …). Läuft die Woche noch, endet sie heute, und verglichen wird mit demselben Stück
+// der Vorwoche (Mi gegen Mi). Abgeschlossene Wochen werden komplett mit der Woche davor verglichen.
+function ranges() {
+  const end = S.today;
+  if (S.days !== 7) return { cur: [addDays(end, -S.days + 1), end], prev: [addDays(end, -2 * S.days + 1), addDays(end, -S.days)] };
+  const mon = addDays(weekStart(end), 7 * S.weekOffset), sun = addDays(mon, 6);
+  const last = sun < end ? sun : end;
+  return { cur: [mon, last], prev: [addDays(mon, -7), addDays(last, -7)], running: last < sun };
+}
+const inR = (d, r) => d >= r[0] && d <= r[1];
+const PERIODS = [7, 28, 182, 364];
+const periodName = () => ({ 7: 'Woche', 28: '4 Wochen', 182: '6 Monate', 364: '1 Jahr' })[S.days];
+// Beschriftung des Vergleichs, z. B. „ggü. Vorwoche (Mo–Mi)“
+function cmpName() {
+  if (S.days !== 7) return 'ggü. davor';
+  const r = ranges();
+  return r.running ? 'ggü. Vorwoche (Mo–' + WD[parse(r.cur[1]).getUTCDay()] + ')' : 'ggü. Vorwoche';
+}
+
+// Vergleichszeile: Wert gegen Vorperiode, Farbe je nachdem ob höher besser ist
+function cmpLine(cur, prev, digits, betterUp, unit = '') {
+  if (cur == null || prev == null) return { text: 'kein Vergleich', cls: '' };
+  const d = cur - prev;
+  const r = Number(d.toFixed(digits));
+  const sign = r > 0 ? '+' : r < 0 ? '−' : '±';
+  const cls = r === 0 || betterUp == null ? '' : (r > 0) === betterUp ? 'good' : 'bad';
+  return { text: sign + num(Math.abs(d), digits) + unit + ' ' + cmpName(), cls };
+}
+
+function tile(parent, { label, value, unit, cmp, spark, open }) {
+  const t = el('div', 'tile');
+  // Antippbare Kachel (#61): öffnet den Wert im Vollbild
+  if (open) { t.classList.add('tap'); t.tabIndex = 0; t.setAttribute('role', 'button'); t.addEventListener('click', open); t.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); }); }
+  t.append(el('span', 'lbl', label));
+  const v = el('span', 'val', value);
+  if (unit) v.append(el('small', null, unit));
+  t.append(v);
+  if (cmp) { const c = el('span', 'cmp ' + (cmp.cls || ''), cmp.text); t.append(c); }
+  if (spark) { const s = el('div', 'spark'); t.append(s); parent.append(t); sparkline(s, spark.data, spark.band); return; }
+  parent.append(t);
+}
+
+// ---------- Diagramm-Bausteine ----------
+function frame(node, h) {
+  node.replaceChildren();
+  // Im Vollbild (#61) deutlich höher, aber nie höher als gut die Hälfte des Bildschirms
+  if (node.closest('#dg-body')) h = Math.round(Math.max(h, Math.min(h * 1.8, window.innerHeight * 0.55)));
+  const w = Math.max(260, Math.round(node.clientWidth || 320));
+  const svg = d3.select(node).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${w} ${h}`);
+  const tip = d3.select(node).append('div').attr('class', 'tip');
+  return { svg, w, h, tip, node };
+}
+function empty(node, text) { node.replaceChildren(el('div', 'empty', text)); }
+function measure(svg, labels) {
+  const t = svg.append('text'); let m = 0;
+  for (const s of labels) { t.text(s); m = Math.max(m, t.node().getComputedTextLength()); }
+  t.remove(); return m;
+}
+// Pace-Ticks auf runde halbe Minuten
+const paceTicks = (y) => { const [a, b] = d3.extent(y.domain()); const step = b - a > 240 ? 60 : 30; return d3.range(Math.ceil(a / step) * step, b + 1, step); };
+function yAxis(f, y, x0, x1, ticks, fmt) {
+  const g = f.svg.append('g');
+  for (const v of Array.isArray(ticks) ? ticks : y.ticks(ticks)) {
+    g.append('line').attr('x1', x0).attr('x2', x1).attr('y1', y(v)).attr('y2', y(v)).style('stroke', css('--grid'));
+    g.append('text').attr('x', x0 - 6).attr('y', y(v)).attr('dy', '0.32em').attr('text-anchor', 'end').text(fmt(v));
+  }
+}
+function xTime(f, x, yPos) {
+  const [a, b] = x.domain(); const days = (b - a) / 864e5;
+  let ticks, fmt;
+  if (days <= 10) { ticks = x.ticks(d3.utcDay.every(1)); fmt = (t) => WD[t.getUTCDay()]; }
+  else if (days <= 35) { ticks = x.ticks(d3.utcMonday.every(1)); fmt = (t) => t.getUTCDate() + '.' + (t.getUTCMonth() + 1) + '.'; }
+  else if (days <= 130) { ticks = x.ticks(d3.utcMonday.every(f.w < 420 ? 3 : 2)); fmt = (t) => t.getUTCDate() + '.' + (t.getUTCMonth() + 1) + '.'; }
+  else { ticks = x.ticks(d3.utcMonth.every(f.w < 420 && days > 200 ? 2 : 1)); fmt = (t) => MONTHS[t.getUTCMonth()]; }
+  const [r0, r1] = x.range();
+  f.svg.append('line').attr('x1', r0).attr('x2', r1).attr('y1', yPos).attr('y2', yPos).style('stroke', css('--line'));
+  for (const t of ticks) {
+    const px = x(t); if (px < r0 + 10 || px > r1 - 10) continue;
+    f.svg.append('text').attr('x', px).attr('y', yPos + 15).attr('text-anchor', 'middle').text(fmt(t));
+  }
+}
+function showTip(f, px, py, title, lines) {
+  f.tip.selectAll('*').remove();
+  f.tip.append('div').attr('class', 't').text(title);
+  for (const l of lines) {
+    const r = f.tip.append('div').attr('class', 'r');
+    if (l.color) r.append('span').attr('class', 'sw').style('background', l.color);
+    r.append('span').text(l.label); r.append('b').text(l.value);
+  }
+  const s = f.node.clientWidth / f.w, n = f.tip.node();
+  let left = px * s + 12; if (left + n.offsetWidth > f.node.clientWidth) left = px * s - n.offsetWidth - 12;
+  f.tip.style('left', Math.max(0, left) + 'px').style('top', Math.max(0, py * s - n.offsetHeight - 10) + 'px').style('opacity', 1);
+}
+function hoverLayer(f, box, find, withRule = true) {
+  const g = f.svg.append('g').style('display', 'none').style('pointer-events', 'none');
+  const rule = withRule ? g.append('line').attr('y1', box.y0).attr('y2', box.y1).style('stroke', css('--muted')).style('stroke-dasharray', '3 3') : null;
+  const dot = g.append('circle').attr('r', 4.5).style('stroke', css('--panel')).style('stroke-width', 2);
+  const move = (ev) => {
+    const [px, py] = d3.pointer(ev, f.svg.node());
+    const p = find(px, py); if (!p) return;
+    g.style('display', null);
+    if (rule) rule.attr('x1', p.x).attr('x2', p.x);
+    dot.attr('cx', p.x).attr('cy', p.y).style('fill', p.color || css('--accent'));
+    showTip(f, p.x, p.y, p.title, p.lines);
+  };
+  f.svg.append('rect').attr('x', box.x0).attr('y', box.y0).attr('width', box.x1 - box.x0).attr('height', box.y1 - box.y0)
+    .style('fill', 'transparent').style('pointer-events', 'all')
+    .on('pointermove', move).on('pointerdown', move)
+    .on('pointerleave', () => { g.style('display', 'none'); f.tip.style('opacity', 0); });
+}
+function fit(points) {
+  const n = points.length; if (n < 4) return null;
+  const mx = d3.mean(points, (p) => p[0]), my = d3.mean(points, (p) => p[1]);
+  let sxy = 0, sxx = 0; for (const [x, y] of points) { sxy += (x - mx) * (y - my); sxx += (x - mx) ** 2; }
+  if (!sxx) return null; const b = sxy / sxx; return { f: (x) => my + b * (x - mx), b };
+}
+// Linie mit Verlauf darunter: 30 % Deckkraft direkt unter der Linie, nach unten auf 0 %.
+// Weich gezeichnet (monotone Kurve, keine Überschwinger). opts: x, y (Funktionen je Punkt), base (y-Pixel der Grundlinie),
+// color, width, defined, area (false = nur Linie), dot (letzten Punkt hervorheben)
+let gradSeq = 0;
+function glowLine(f, data, { x, y, base, color = css('--accent'), width = 2.5, defined = () => true, area = true, dot = false, top = .3 }) {
+  const pts = data.filter(defined);
+  if (!pts.length) return;
+  const curve = d3.curveMonotoneX;
+  if (area && base != null) {
+    const id = 'gl' + (++gradSeq);
+    const g = f.svg.append('defs').append('linearGradient').attr('id', id).attr('x1', 0).attr('x2', 0).attr('y1', 0).attr('y2', 1);
+    g.append('stop').attr('offset', '0%').attr('stop-color', color).attr('stop-opacity', top);
+    g.append('stop').attr('offset', '100%').attr('stop-color', color).attr('stop-opacity', 0);
+    f.svg.append('path').datum(data).attr('fill', `url(#${id})`)
+      .attr('d', d3.area().defined(defined).curve(curve).x(x).y0(base).y1(y));
+  }
+  f.svg.append('path').datum(data).style('fill', 'none').style('stroke', color).style('stroke-width', width)
+    .style('stroke-linejoin', 'round').style('stroke-linecap', 'round')
+    .attr('d', d3.line().defined(defined).curve(curve).x(x).y(y));
+  if (dot) {
+    const last = pts[pts.length - 1];
+    f.svg.append('circle').attr('cx', x(last)).attr('cy', y(last)).attr('r', 7).style('fill', color).style('opacity', .25);
+    f.svg.append('circle').attr('cx', x(last)).attr('cy', y(last)).attr('r', 3.5).style('fill', color).style('stroke', css('--panel')).style('stroke-width', 1.5);
+  }
+}
+function sparkline(node, data, band) {
+  const v = data.filter((d) => d.v != null);
+  if (v.length < 2) return;
+  const f = frame(node, 42);
+  const vals = v.map((d) => d.v).concat(band ? band.flatMap((b) => [b.lo, b.hi]).filter((x) => x != null) : []);
+  const y = d3.scaleLinear(d3.extent(vals), [34, 7]);
+  // rechts Platz für den hervorgehobenen letzten Punkt
+  const x = d3.scaleUtc(d3.extent(data, (d) => parse(d.d)), [2, f.w - 9]);
+  if (band) f.svg.append('path').datum(band.filter((b) => b.lo != null)).style('fill', css('--prev')).style('opacity', .25)
+    .attr('d', d3.area().x((b) => x(parse(b.d))).y0((b) => y(b.lo)).y1((b) => y(b.hi)));
+  glowLine(f, v, { x: (d) => x(parse(d.d)), y: (d) => y(d.v), base: f.h, width: 2, dot: true });
+}
+
+// ---------- Berechnungen ----------
+function dailyLoad() {
+  const m = new Map();
+  for (const a of S.acts) m.set(a.date, (m.get(a.date) || 0) + (a.load || 0));
+  return m;
+}
+function loadSeries(from, to) {
+  const m = dailyLoad(), out = [];
+  for (let d = addDays(from, -27); d <= to; d = addDays(d, 1)) out.push({ d, v: m.get(d) || 0 });
+  return out.map((r, i) => ({
+    ...r,
+    acute: i >= 6 ? mean(out.slice(i - 6, i + 1).map((x) => x.v)) : null,
+    chronic: i >= 27 ? mean(out.slice(i - 27, i + 1).map((x) => x.v)) : null
+  })).filter((r) => r.d >= from);
+}
+// Balken-Abschnitte: bei 1 Woche einzelne Tage, sonst Wochen ab Montag
+const bucketDays = () => (S.days <= 7 ? 1 : 7);
+function weeksIn(r) {
+  if (bucketDays() === 1) { const days = []; for (let d = r[0]; d <= r[1]; d = addDays(d, 1)) days.push(d); return days; }
+  const weeks = []; let d = r[0];
+  const dow = (parse(d).getUTCDay() + 6) % 7; d = addDays(d, -dow);
+  for (; d <= r[1]; d = addDays(d, 7)) weeks.push(d);
+  return weeks;
+}
+

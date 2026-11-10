@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Health">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<title>Anmelden · Health Hub</title>
+<style>
+  :root { --bg: #f2f2f7; --panel: #fff; --fg: #000; --muted: rgba(60,60,67,.6); --fill: rgba(120,120,128,.12); --tint: #ff2d55; --bad: #ff3b30; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #000; --panel: #1c1c1e; --fg: #fff; --muted: rgba(235,235,245,.6); --fill: rgba(118,118,128,.24); --tint: #ff375f; --bad: #ff453a; color-scheme: dark; } }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+    font: 17px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; letter-spacing: -0.41px; -webkit-font-smoothing: antialiased;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  form { width: min(100%, 22rem); display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  img { width: 88px; height: 88px; border-radius: 20px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+  h1 { margin: 8px 0 0; font-size: 28px; font-weight: 700; letter-spacing: .36px; }
+  .sub { margin: -8px 0 10px; color: var(--muted); font-size: 15px; }
+  input { width: 100%; font: inherit; padding: 13px 14px; border: 0; border-radius: 12px; background: var(--panel); color: var(--fg); min-height: 50px; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--tint); outline-offset: 2px; }
+  button { width: 100%; font: inherit; font-weight: 600; padding: 14px; min-height: 50px; border: 0; border-radius: 12px; background: var(--tint); color: #fff; cursor: pointer; }
+  .msg { color: var(--bad); font-size: 15px; margin: 0; text-align: center; }
+  .msg:empty { display: none; }
+  /* Passkey (#95): nur sichtbar, wenn Passkeys eingetragen sind und der Browser sie kann */
+  .pkbox { display: none; width: 100%; flex-direction: column; gap: 14px; }
+  .pk.can .pkbox { display: flex; }
+  .pk.can .pw-btn { background: var(--fill); color: var(--tint); }
+  .or { margin: 4px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+  button:disabled { opacity: .6; }
+  label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <img src="/apple-touch-icon.png" alt="">
+  <h1>Health Hub</h1>
+  <p class="sub">Deine Garmin-Daten, nur für dich.</p>
+  <div class="pkbox">
+    <button type="button" id="pk">Mit Passkey anmelden</button>
+    <p class="or">oder mit Passwort</p>
+  </div>
+  <label for="password">Passwort</label>
+  <input id="password" name="password" type="password" placeholder="Passwort" autocomplete="current-password" required autofocus>
+  <p class="msg"><!--MSG--></p>
+  <button type="submit" class="pw-btn">Anmelden</button>
+</form>
+<script>
+// Anmeldung mit Passkey (#95): Challenge holen, Face ID / Touch ID, Antwort an den Server
+(() => {
+  const b = document.body, btn = document.getElementById('pk'), msg = document.querySelector('.msg');
+  if (!b.classList.contains('pk') || !window.PublicKeyCredential || !navigator.credentials) return;
+  b.classList.add('can');
+  const enc = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const dec = (s) => { const x = s.replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(x + '==='.slice((x.length + 3) % 4)), (c) => c.charCodeAt(0)); };
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; msg.textContent = '';
+    try {
+      const o = await fetch('/login/passkey/options', { method: 'POST' }).then((r) => r.json());
+      const cred = await navigator.credentials.get({ publicKey: { challenge: dec(o.challenge), rpId: location.hostname, timeout: o.timeout, userVerification: o.userVerification } });
+      const r = cred.response;
+      const res = await fetch('/login/passkey', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        challenge: o.challenge, id: cred.id, authenticatorData: enc(r.authenticatorData), clientDataJSON: enc(r.clientDataJSON), signature: enc(r.signature) }) });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) { location.replace('/'); return; }
+      msg.textContent = j.error || 'Anmeldung fehlgeschlagen.';
+    } catch (e) {
+      msg.textContent = e && e.name === 'NotAllowedError' ? 'Abgebrochen.' : 'Passkey-Anmeldung fehlgeschlagen.';
+    }
+    btn.disabled = false;
+  });
+})();
+</script>
+</body>
+</html>

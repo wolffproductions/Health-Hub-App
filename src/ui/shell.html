@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Health">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<title>Health Hub</title>
+<style>
+<!-- ui:styles.css -->
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <!-- Kompakte Leiste, nur sichtbar beim Scrollen. Zurück hier nur im Konto -->
+    <button type="button" class="navbtn back js-back" id="nav-back-mini" aria-label="Zurück"><span aria-hidden="true">‹</span> Zurück</button>
+    <h1 id="navTitle">Heute</h1>
+    <span class="updated" id="updated"></span>
+  </div>
+</header>
+<!-- Diese beiden wandern per JS in die Titelzeile des sichtbaren Bereichs (wie App Store / Fitness) -->
+<div hidden>
+    <button type="button" class="navbtn back js-back" id="nav-back" aria-label="Zurück"><i data-icon="zurueck"></i>Zurück</button>
+    <button type="button" class="navbtn account" id="nav-account" aria-label="Konto"><i data-icon="konto"></i></button>
+</div>
+
+<main class="wrap">
+  <div id="banner" hidden></div>
+  <!-- Bereiche unter „Statistiken“ (#18) -->
+  <div class="seg statseg" id="statseg" role="group" aria-label="Bereich">
+    <button type="button" data-stat="training" aria-pressed="true">Training</button>
+    <button type="button" data-stat="leistung" aria-pressed="false">Leistung</button>
+    <button type="button" data-stat="schlaf" aria-pressed="false">Schlaf</button>
+  </div>
+  <div class="seg" id="seg" role="group" aria-label="Zeitraum">
+      <button type="button" data-days="7" aria-pressed="false">1 W</button>
+      <button type="button" data-days="28" aria-pressed="true">4 W</button>
+      <button type="button" data-days="182" aria-pressed="false">6 M</button>
+      <button type="button" data-days="364" aria-pressed="false">1 J</button>
+    </div>
+  <div class="weeknav" id="weeknav" hidden>
+    <button type="button" id="wk-prev" aria-label="Vorherige Woche">‹</button>
+    <div class="wk" aria-live="polite"><span id="wk-label"></span><small id="wk-sub"></small></div>
+    <button type="button" id="wk-next" aria-label="Nächste Woche">›</button>
+  </div>
+
+<!-- ui:heute.html -->
+<!-- ui:training.html -->
+<!-- ui:leistung.html -->
+<!-- ui:schlaf.html -->
+<!-- ui:einheiten.html -->
+<!-- ui:einheit.html -->
+<!-- ui:diagramm.html -->
+<!-- ui:balance.html -->
+<!-- ui:konto.html -->
+</main>
+
+<nav class="tabs" aria-label="Bereiche">
+  <div class="wrap" role="tablist">
+    <button role="tab" data-go="heute" aria-selected="true"><i data-icon="heute"></i>Heute</button>
+    <button role="tab" data-go="stats" aria-selected="false"><i data-icon="statistiken"></i>Statistiken</button>
+    <button role="tab" data-go="einheiten" aria-selected="false"><i data-icon="einheiten"></i>Einheiten</button>
+    <button role="tab" data-go="balance" aria-selected="false"><i data-icon="balance"></i>Balance</button>
+  </div>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+<!-- ui:core.js -->
+<!-- ui:icons.js -->
+<!-- ui:karte.js -->
+<!-- ui:heute.js -->
+<!-- ui:training.js -->
+<!-- ui:leistung.js -->
+<!-- ui:koerper.js -->
+<!-- ui:schlaf.js -->
+<!-- ui:einheiten.js -->
+<!-- ui:einheit.js -->
+<!-- ui:diagramm.js -->
+<!-- ui:balance.js -->
+<!-- ui:neu.js -->
+<!-- ui:konto.js -->
+<!-- ui:ablauf.js -->
+<!-- ui:daten.js -->
+<!-- ui:start.js -->
+</script>
+</body>
+</html>

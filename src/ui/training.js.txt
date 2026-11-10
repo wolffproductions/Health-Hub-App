@@ -1,0 +1,121 @@
+// ---------- BELASTUNG ----------
+function renderLoad() {
+  const { cur, prev } = ranges();
+  const series = loadSeries(cur[0], cur[1]);
+  const last = series[series.length - 1];
+  const actsCur = S.acts.filter((a) => inR(a.date, cur)), actsPrev = S.acts.filter((a) => inR(a.date, prev));
+  const tiles = $('#load-tiles'); tiles.replaceChildren();
+  const ratio = last && last.chronic ? last.acute / last.chronic : null;
+  tile(tiles, { label: 'Akut zu chronisch · heute', value: num(ratio, 2), cmp: { text: ratio == null ? '' : ratio > 1.5 ? 'deutlicher Sprung' : ratio > 1.3 ? 'erhöht' : ratio < 0.8 ? 'Entlastung' : 'im grünen Bereich', cls: ratio > 1.5 ? 'bad' : ratio > 1.3 ? 'warn' : 'good' } });
+  const w = S.days / 7;
+  tile(tiles, { label: 'Last pro Woche', value: num(sum(actsCur.map((a) => a.load)) / w), cmp: cmpLine(sum(actsCur.map((a) => a.load)) / w, sum(actsPrev.map((a) => a.load)) / w, 0, null) });
+  const hard = (arr) => arr.filter((a) => (a.te || 0) >= 4 || (a.teAn || 0) >= 3).length / w;
+  tile(tiles, { label: 'Harte Einheiten pro Woche', value: num(hard(actsCur), 1), cmp: cmpLine(hard(actsCur), hard(actsPrev), 1, null) });
+  const share = (arr) => { const t = sum(arr.map((a) => a.min)); return t ? sum(arr.filter((a) => ['RECOVERY', 'AEROBIC_BASE'].includes(a.label)).map((a) => a.min)) / t * 100 : null; };
+  tile(tiles, { label: 'Anteil ruhiger Einheiten', value: num(share(actsCur)), unit: ' %', cmp: cmpLine(share(actsCur), share(actsPrev), 0, null, ' %-Pkt.') });
+
+  // Akut/chronisch
+  const node = $('#c-acwr');
+  if (!series.some((s) => s.v)) empty(node, 'Keine Einheiten im Zeitraum.');
+  else {
+    const f = frame(node, 230);
+    const y = d3.scaleLinear([0, d3.max(series, (s) => Math.max(s.acute || 0, s.chronic || 0)) * 1.1], [f.h - 22, 8]).nice();
+    const ml = measure(f.svg, y.ticks(4).map((v) => num(v))) + 10;
+    const x = d3.scaleUtc([parse(cur[0]), parse(cur[1])], [ml, f.w - 10]);
+    yAxis(f, y, ml, f.w - 10, 4, (v) => num(v)); xTime(f, x, f.h - 22);
+    // Zone, in der akut mehr als das 1,5-Fache von chronisch beträgt
+    const risk = series.filter((s) => s.chronic && s.acute > 1.5 * s.chronic);
+    f.svg.append('g').selectAll('rect').data(risk).join('rect')
+      .attr('x', (s) => x(parse(s.d)) - 2).attr('width', 4).attr('y', 8).attr('height', f.h - 30).style('fill', css('--bad')).style('opacity', .18);
+    glowLine(f, series.filter((s) => s.chronic != null), { x: (s) => x(parse(s.d)), y: (s) => y(s.chronic), color: css('--prev'), width: 2, area: false });
+    glowLine(f, series.filter((s) => s.acute != null), { x: (s) => x(parse(s.d)), y: (s) => y(s.acute), base: f.h - 22, dot: true });
+    const bis = d3.bisector((s) => parse(s.d)).center;
+    hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px) => {
+      const s = series[bis(series, x.invert(px))]; if (!s) return null;
+      return { x: x(parse(s.d)), y: y(s.acute || 0), title: dayLabel(s.d), lines: [
+        { color: css('--accent'), label: 'Akut (Ø 7 Tage)', value: num(s.acute) },
+        { color: css('--prev'), label: 'Chronisch (Ø 28 Tage)', value: num(s.chronic) },
+        { label: 'Verhältnis', value: s.chronic ? num(s.acute / s.chronic, 2) : '–' },
+        { label: 'Last an diesem Tag', value: num(s.v) }] };
+    });
+  }
+
+  // Kategorien pro Woche
+  const lg = $('#cat-legend'); lg.replaceChildren();
+  for (const c of CATS) { const s = el('span'); const i = el('i'); i.style.background = c[2]; s.append(i, c[1]); lg.append(s); }
+  $('#h-cats').textContent = 'Art der Einheiten pro ' + (bucketDays() === 1 ? 'Tag' : 'Woche');
+  const weeks = weeksIn(cur);
+  const rows = weeks.map((wk) => {
+    const r = { wk };
+    for (const c of CATS) r[c[1]] = sum(S.acts.filter((a) => a.date >= wk && a.date <= addDays(wk, bucketDays() - 1) && catOf(a.label) === c).map((a) => a.min)) / 60;
+    return r;
+  });
+  stackedWeeks($('#c-cats'), rows, CATS.map((c) => ({ key: c[1], color: c[2] })), (v) => num(v, 1) + ' h');
+
+  // Tabelle Verteilung
+  const t = $('#t-cats'); t.replaceChildren();
+  const head = el('tr'); head.append(el('th', null, 'Kategorie'), el('th', 'n', 'Davor'), el('th', 'n', 'Jetzt'), el('th', 'n', 'Einheiten'));
+  t.append(head);
+  const tot = (arr) => sum(arr.map((a) => a.min)) || 1;
+  for (const c of CATS) {
+    const a = actsCur.filter((x) => catOf(x.label) === c), b = actsPrev.filter((x) => catOf(x.label) === c);
+    if (!a.length && !b.length) continue;
+    const tr = el('tr');
+    const name = el('td'); const sw = el('i'); sw.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;background:${c[2]}`; name.append(sw, c[1]);
+    tr.append(name, el('td', 'n', num(sum(b.map((x) => x.min)) / tot(actsPrev) * 100) + ' %'), el('td', 'n', num(sum(a.map((x) => x.min)) / tot(actsCur) * 100) + ' %'), el('td', 'n', String(a.length)));
+    t.append(tr);
+  }
+
+}
+
+function stackedWeeks(node, rows, keys, fmt) {
+  if (!rows.some((r) => keys.some((k) => r[k.key] > 0))) { empty(node, 'Keine Einheiten im Zeitraum.'); return; }
+  const f = frame(node, 230);
+  const tickFmt = (v) => num(v, Number.isInteger(v) ? 0 : 1); // halbe Stunden nicht als doppelte Ganzzahl zeigen
+  const stack = d3.stack().keys(keys.map((k) => k.key))(rows);
+  const y = d3.scaleLinear([0, d3.max(stack[stack.length - 1], (d) => d[1])], [f.h - 22, 8]).nice();
+  const ml = measure(f.svg, y.ticks(4).map(tickFmt)) + 10;
+  const x = d3.scaleBand(rows.map((r) => r.wk), [ml, f.w - 6]).padding(0.25);
+  yAxis(f, y, ml, f.w - 6, 4, tickFmt);
+  f.svg.append('line').attr('x1', ml).attr('x2', f.w - 6).attr('y1', f.h - 22).attr('y2', f.h - 22).style('stroke', css('--line'));
+  const bw = Math.min(28, x.bandwidth()), off = (x.bandwidth() - bw) / 2;
+  stack.forEach((layer, i) => {
+    f.svg.append('g').selectAll('rect').data(layer).join('rect')
+      .attr('x', (d) => x(d.data.wk) + off).attr('width', bw).attr('y', (d) => y(d[1])).attr('height', (d) => Math.max(0, y(d[0]) - y(d[1])))
+      .style('fill', keys[i].color);
+  });
+  const every = Math.ceil(rows.length / Math.max(1, Math.floor((f.w - ml) / (bucketDays() === 1 ? 32 : 48))));
+  rows.forEach((r, i) => { if (i % every) return; const t = parse(r.wk); f.svg.append('text').attr('x', x(r.wk) + x.bandwidth() / 2).attr('y', f.h - 7).attr('text-anchor', 'middle').text(bucketDays() === 1 ? WD[t.getUTCDay()] : t.getUTCDate() + '.' + (t.getUTCMonth() + 1) + '.'); });
+  hoverLayer(f, { x0: ml, x1: f.w - 6, y0: 8, y1: f.h - 22 }, (px) => {
+    const i = Math.max(0, Math.min(rows.length - 1, Math.floor((px - ml - x.step() * x.paddingOuter()) / x.step())));
+    const r = rows[i]; const total = sum(keys.map((k) => r[k.key]));
+    return { x: x(r.wk) + x.bandwidth() / 2, y: y(total), title: (bucketDays() === 1 ? '' : 'Woche ab ') + dayLabel(r.wk),
+      lines: [{ label: 'Gesamt', value: fmt(total) }, ...keys.filter((k) => r[k.key] > 0).map((k) => ({ color: k.color, label: k.key, value: fmt(r[k.key]) }))] };
+  }, false);
+}
+
+// ---------- VOLUMEN ----------
+function renderVolume() {
+  const { cur, prev } = ranges();
+  const A = S.acts.filter((a) => inR(a.date, cur)), B = S.acts.filter((a) => inR(a.date, prev));
+  const tiles = $('#vol-tiles'); tiles.replaceChildren();
+  const h = (arr) => sum(arr.map((a) => a.min)) / 60;
+  tile(tiles, { label: 'Stunden gesamt', value: num(h(A), 1), unit: ' h', cmp: cmpLine(h(A), h(B), 1, null, ' h') });
+  tile(tiles, { label: 'Einheiten', value: String(A.length), cmp: cmpLine(A.length, B.length, 0, null) });
+  const km = (arr, key) => sum(arr.filter((a) => sportOf(a.type).key === key).map((a) => a.km));
+  tile(tiles, { label: 'Laufen', value: num(km(A, 'run'), 0), unit: ' km', cmp: cmpLine(km(A, 'run'), km(B, 'run'), 0, null, ' km') });
+  tile(tiles, { label: 'Rad', value: num(km(A, 'ride'), 0), unit: ' km', cmp: cmpLine(km(A, 'ride'), km(B, 'ride'), 0, null, ' km') });
+  tile(tiles, { label: 'Höhenmeter', value: num(sum(A.map((a) => a.elev)), 0), unit: ' m', cmp: cmpLine(sum(A.map((a) => a.elev)), sum(B.map((a) => a.elev)), 0, null, ' m') });
+  tile(tiles, { label: 'Schritte pro Tag', value: num(mean(S.daily.filter((d) => inR(d.d, cur)).map((d) => d.steps)), 0), cmp: cmpLine(mean(S.daily.filter((d) => inR(d.d, cur)).map((d) => d.steps)), mean(S.daily.filter((d) => inR(d.d, prev)).map((d) => d.steps)), 0, null) });
+
+  const lg = $('#sport-legend'); lg.replaceChildren();
+  for (const s of SPORTS) { const sp = el('span'); const i = el('i'); i.style.background = color(s.color); sp.append(i, s.label); lg.append(sp); }
+  $('#h-vol').textContent = 'Stunden pro ' + (bucketDays() === 1 ? 'Tag' : 'Woche') + ' nach Sportart';
+  const rows = weeksIn(cur).map((wk) => {
+    const r = { wk };
+    for (const s of SPORTS) r[s.label] = sum(S.acts.filter((a) => a.date >= wk && a.date <= addDays(wk, bucketDays() - 1) && sportOf(a.type) === s).map((a) => a.min)) / 60;
+    return r;
+  });
+  stackedWeeks($('#c-vol'), rows, SPORTS.map((s) => ({ key: s.label, color: color(s.color) })), (v) => num(v, 1) + ' h');
+}
+

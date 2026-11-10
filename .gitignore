@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+scripts/.demo-seed.sql
+.DS_Store
+.d1-id
+wrangler.local.jsonc

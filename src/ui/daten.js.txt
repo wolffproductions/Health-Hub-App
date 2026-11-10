@@ -1,0 +1,62 @@
+// ---------- Ablauf des Garmin-Schlüssels ----------
+const KEY_WARN_DAYS = 14;
+const GARMIN_KEY_LINK = { text: 'Neuen Schlüssel erstellen ↗', href: 'https://connect.garmin.com/app/settings/personalApiToken' };
+function keyExpiry(st) {
+  if (!st || !st.keyExpires) return null;
+  const left = Math.round((parse(st.keyExpires) - parse(new Date().toLocaleDateString('en-CA'))) / 864e5);
+  return { left, label: dayLabel(st.keyExpires).replace(/^\w+, /, '') + ' ' + st.keyExpires.slice(0, 4) };
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { credentials: 'same-origin', ...opts });
+  if (r.status === 401) { location.href = '/login'; throw new Error('Nicht angemeldet'); }
+  return r.json();
+}
+
+async function loadData() {
+  const [status, data, vo2, zones, mood] = await Promise.all([api('/api/status'), api('/api/data'), api('/api/vo2').catch(() => []), api('/api/zones').catch(() => null), api('/api/mood').catch(() => [])]);
+  S.status = status;
+  S.mood = Array.isArray(mood) ? mood : [];
+  S.vo2 = Array.isArray(vo2) ? vo2 : [];
+  S.fitAge = data.fitAge || null;
+  S.ampel = data.ampel || null;
+  if (Array.isArray(zones) && zones.length === 3) S.zoneCfg = zones;
+  S.daily = Object.values(data.daily || {}).sort((a, b) => a.d < b.d ? -1 : 1);
+  S.acts = Object.values(data.acts || {}).sort((a, b) => (a.date + a.start) < (b.date + b.start) ? -1 : 1);
+  S.zones = data.zones || [];
+  S.bb = data.bb || null;
+  S.today = S.daily.length ? S.daily[S.daily.length - 1].d : null;
+  $('#updated').textContent = data.updated ? 'Stand ' + new Date(data.updated).toLocaleString('de-DE', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const exp = keyExpiry(status);
+  if (status.key === 'none') { banner('Hinterlege zuerst deinen Garmin-Schlüssel.', false, GARMIN_KEY_LINK); }
+  else if (status.lastError && /abgelehnt|401|403/.test(status.lastError)) banner('Garmin lehnt deinen Schlüssel ab – vermutlich ist er abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.', true, GARMIN_KEY_LINK);
+  else if (exp && exp.left < 0) banner(`Dein Garmin-Schlüssel ist am ${exp.label} abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.`, true, GARMIN_KEY_LINK);
+  else if (exp && exp.left <= KEY_WARN_DAYS) banner(`Dein Garmin-Schlüssel läuft ${exp.left === 0 ? 'heute' : exp.left === 1 ? 'morgen' : 'in ' + exp.left + ' Tagen'} ab (${exp.label}). Erstelle rechtzeitig einen neuen und trag ihn unter „Konto“ ein.`, false, GARMIN_KEY_LINK);
+  else if (status.lastError) banner('Letzte Aktualisierung fehlgeschlagen: ' + status.lastError, true);
+  else if (!status.complete) banner('Die Historie wird noch geladen. Unter „Konto“ kannst du das beschleunigen.');
+  else banner('');
+  // Schlüssel-Hinweise: zusätzlich ein Sprung direkt zur Garmin-Seite im Konto (#28)
+  if (status.key === 'none' || (status.lastError && /abgelehnt|401|403/.test(status.lastError)) || (exp && exp.left <= KEY_WARN_DAYS)) {
+    const go = el('button', 'btn small ghost', 'Zum Schlüssel ›'); go.type = 'button'; go.dataset.goto = 'key-input';
+    const row = el('div', 'row'); row.style.marginTop = '8px'; row.append(go); $('#banner').append(row);
+  }
+  renderAll(); renderAccount();
+  checkNews();
+}
+
+async function syncLoop(force) {
+  const btn = $('#sync-btn'), msg = $('#sync-msg');
+  btn.disabled = true; msg.textContent = 'Lade Daten von Garmin …';
+  try {
+    let st = await api('/api/sync' + (force ? '?force=1' : ''), { method: 'POST' });
+    for (let i = 0; i < 60 && (!st.complete || st.lapsPending) && !st.lastError && !st.lapsPaused; i++) {
+      S.status = st; renderAccount();
+      await new Promise((r) => setTimeout(r, 1500)); // Garmin nicht mit Anfragen überhäufen
+      st = await api('/api/sync', { method: 'POST' });
+    }
+    msg.textContent = st.lastError ? 'Fehler: ' + st.lastError : 'Fertig.';
+    await loadData();
+  } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+  btn.disabled = false;
+}
+

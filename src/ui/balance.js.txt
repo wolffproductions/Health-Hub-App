@@ -1,0 +1,242 @@
+// ---------- BALANCE ----------
+// Anspannung (Garmin-Stress, HRV, Ruhepuls), Erholung (Schlaf, Body Battery) und die eigene Stimmung.
+// Alles im Vergleich mit dir selbst. Keine Diagnosen, sanfte Hinweise statt Alarm.
+
+const MOODS = [
+  null,
+  { label: 'Sehr schlecht', color: '#ff453a' },
+  { label: 'Schlecht', color: '#ff9f0a' },
+  { label: 'Okay', color: '#ffd60a' },
+  { label: 'Gut', color: '#30d158' },
+  { label: 'Sehr gut', color: '#64d2ff' },
+];
+const MOOD_TAGS = [
+  ['arbeit', 'Arbeit'], ['familie', 'Familie'], ['freunde', 'Freunde'], ['beziehung', 'Beziehung'], ['sport', 'Sport'],
+  ['draussen', 'Draußen'], ['erholt', 'Erholt'], ['muede', 'Müde'], ['krank', 'Krank'], ['alkohol', 'Alkohol'],
+  ['koffein', 'Koffein spät'], ['bildschirm', 'Viel Bildschirm'], ['sorgen', 'Sorgen'], ['stress', 'Stress'],
+];
+const tagName = (t) => (MOOD_TAGS.find((x) => x[0] === t) || [t, t])[1];
+// Gesicht für Stimmung 1–5 (Symbole aus icons.js.txt, #90) auf farbigem Kreis
+function moodFace(v, size = 40) {
+  const face = ICONS['stimmung' + v].replace('<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/>', '');
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"><circle cx="12" cy="12" r="11.5" fill="${MOODS[v].color}"/>`
+    + `<g transform="translate(1.2 1.2) scale(.9)" fill="none" stroke="#1c1c1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${face}</g></svg>`;
+}
+// Garmin-Stressstufen: 0–25 ruhig, 26–50 leicht, 51–75 mittel, 76–100 hoch
+const stressLevel = (v) => (v <= 25 ? 'rest' : v <= 50 ? 'low' : v <= 75 ? 'med' : 'high');
+
+const B = { day: null, v: null, tags: new Set() };
+
+function moodOf(d) { return (S.mood || []).find((m) => m.d === d) || null; }
+
+function renderCheckin() {
+  const day = B.day || S.today || todayLocal();
+  const cur = moodOf(day);
+  if (B.v == null && cur) { B.v = cur.v; B.tags = new Set(cur.tags); $('#b-note').value = cur.note || ''; }
+  const isToday = day === (S.today || todayLocal());
+  $('#b-q').textContent = isToday ? (cur ? 'Deine Stimmung heute' : 'Wie geht’s dir heute?') : 'Wie ging’s dir gestern?';
+  $('#b-day').textContent = isToday ? 'Für gestern' : 'Für heute';
+  const row = $('#b-moods'); row.replaceChildren();
+  for (let v = 1; v <= 5; v++) {
+    const b = el('button', 'mood' + (B.v === v ? ' on' : '')); b.type = 'button';
+    b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(B.v === v)); b.setAttribute('aria-label', MOODS[v].label);
+    b.innerHTML = moodFace(v); b.append(el('span', null, MOODS[v].label));
+    b.addEventListener('click', () => { B.v = v; renderCheckin(); });
+    row.append(b);
+  }
+  $('#b-more').hidden = B.v == null;
+  const tags = $('#b-tags'); tags.replaceChildren();
+  for (const [k, l] of MOOD_TAGS) {
+    const t = el('button', 'tagchip' + (B.tags.has(k) ? ' on' : ''), l); t.type = 'button'; t.setAttribute('aria-pressed', String(B.tags.has(k)));
+    t.addEventListener('click', () => { B.tags.has(k) ? B.tags.delete(k) : B.tags.add(k); renderCheckin(); });
+    tags.append(t);
+  }
+  $('#b-save').textContent = cur ? 'Aktualisieren' : 'Speichern';
+}
+
+async function saveMood() {
+  const msg = $('#b-msg'), d = B.day || S.today || todayLocal();
+  if (B.v == null) { msg.textContent = 'Bitte zuerst eine Stimmung wählen.'; return; }
+  msg.textContent = 'Speichere …';
+  try {
+    const r = await api('/api/mood', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d, v: B.v, tags: [...B.tags], note: $('#b-note').value }) });
+    if (r.ok) { S.mood = r.list; msg.textContent = 'Gespeichert.'; renderBalance(); }
+    else msg.textContent = r.error || 'Speichern fehlgeschlagen.';
+  } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+}
+
+function renderBalance() {
+  renderCheckin();
+  const D = S.daily; if (!D.length || !S.today) return;
+  const last7 = D.filter((d) => d.d > addDays(S.today, -7));
+  const base = D.filter((d) => d.d <= addDays(S.today, -7) && d.d > addDays(S.today, -37));
+  const m7 = (k) => mean(last7.map((d) => d[k])), mb = (k) => mean(base.map((d) => d[k]));
+
+  // --- Dein Körper gerade: vier Signale, jeweils gegen den eigenen Schnitt ---
+  const items = [];
+  const st7 = m7('stress'), stB = mb('stress');
+  if (st7 != null && stB != null) {
+    const rel = (st7 - stB) / stB;
+    const daysUp = last7.filter((d) => d.stress != null && d.stress > stB * 1.15).length;
+    items.push({ st: rel > 0.25 ? 'r' : rel > 0.1 ? 'y' : 'g', name: 'Stress Ø', val: num(st7), why: `Dein Schnitt davor: ${num(stB)}. ${daysUp ? daysUp + ' von 7 Tagen deutlich darüber.' : 'Kein Tag deutlich darüber.'}` });
+  }
+  const hrvN = last7.filter((d) => d.hrv != null && d.hrvLo != null);
+  if (hrvN.length >= 3) {
+    const below = hrvN.filter((d) => d.hrv < d.hrvLo).length;
+    items.push({ st: below >= 3 ? 'r' : below >= 1 ? 'y' : 'g', name: 'HRV unter Normalbereich', val: below + ' von ' + hrvN.length, why: 'Nächte der letzten Woche unter deinem Normalbereich. Mehrere hintereinander deuten auf Überlastung hin, egal woher.' });
+  }
+  const r7 = m7('rhr'), rB = mb('rhr');
+  if (r7 != null && rB != null) {
+    const diff = r7 - rB;
+    items.push({ st: diff >= 4 ? 'r' : diff >= 2 ? 'y' : 'g', name: 'Ruhepuls Ø', val: num(r7) + ' bpm', why: `Dein Schnitt davor: ${num(rB)} bpm.` });
+  }
+  const s7 = m7('slp');
+  if (s7 != null) items.push({ st: s7 < 6 ? 'r' : s7 < 7 ? 'y' : 'g', name: 'Schlaf Ø', val: hm(s7) + ' h', why: 'Gelb unter 7 Stunden, rot unter 6.' });
+  const moods7 = (S.mood || []).filter((m) => m.d > addDays(S.today, -7));
+  if (moods7.length >= 3) {
+    const mm = mean(moods7.map((m) => m.v));
+    items.push({ st: mm < 2.5 ? 'r' : mm < 3.2 ? 'y' : 'g', name: 'Deine Stimmung Ø', val: num(mm, 1) + ' / 5', why: moods7.length + ' Einträge in der letzten Woche.' });
+  }
+  const fl = $('#b-factors'); fl.replaceChildren();
+  for (const it of items) {
+    const li = el('li'); const mid = el('div');
+    mid.append(el('span', null, it.name), el('span', 'why', it.why));
+    li.append(el('i', 'light ' + it.st), mid, el('b', null, it.val)); fl.append(li);
+  }
+  const reds = items.filter((i) => i.st === 'r').length, yel = items.filter((i) => i.st === 'y').length;
+  let verdict, light;
+  if (items.length < 2) { verdict = 'Noch zu wenig Daten'; light = ''; }
+  else if (reds >= 2 || (reds && yel >= 2)) { verdict = 'Viel Anspannung, gönn dir Ruhe'; light = 'r'; }
+  else if (reds || yel >= 2) { verdict = 'Etwas angespannt'; light = 'y'; }
+  else { verdict = 'Im Gleichgewicht'; light = 'g'; }
+  $('#b-verdict').textContent = verdict; $('#b-light').className = 'light ' + light;
+  // Sanfter Hinweis, wenn mehrere Signale zusammenkommen oder die Stimmung länger niedrig ist
+  const hint = [];
+  if (light === 'r') hint.push('Mehrere Werte zeigen seit Tagen Anspannung. Vielleicht heute früher ins Bett, ein ruhiger Spaziergang statt harter Einheit, oder kurz durchatmen (unten).');
+  const lowStreak = (() => { let n = 0; for (let i = 0; i < 14; i++) { const m = moodOf(addDays(S.today, -i)); if (!m) continue; if (m.v <= 2) n++; else break; } return n; })();
+  if (lowStreak >= 5) hint.push('Du hast dich mehrere Einträge hintereinander schlecht gefühlt. Wenn das anhält, sprich mit jemandem darüber, Hilfe findest du ganz unten.');
+  for (const h of hint) { const li = el('li', 'hint'); li.append(el('i', 'light'), el('span', null, h), el('b')); fl.append(li); }
+
+  // --- Diagramm: Stress-Balken je Tag, Stimmung als Linie ---
+  const { cur } = ranges();
+  const R = D.filter((d) => inR(d.d, cur));
+  const node = $('#c-balance');
+  const M = (S.mood || []).filter((m) => inR(m.d, cur));
+  if (R.filter((d) => d.stress != null).length < 2 && M.length < 2) empty(node, 'Keine Stress- oder Stimmungswerte im Zeitraum.');
+  else {
+    const f = frame(node, 220);
+    const y = d3.scaleLinear([0, 100], [f.h - 22, 8]);
+    const ym = d3.scaleLinear([1, 5], [f.h - 30, 16]);
+    const ml = measure(f.svg, ['100']) + 10;
+    const x = d3.scaleUtc([parse(addDays(cur[0], -1)), parse(addDays(cur[1], 1))], [ml, f.w - 28]);
+    yAxis(f, y, ml, f.w - 28, [0, 25, 50, 75, 100], (v) => String(v)); xTime(f, x, f.h - 22);
+    for (let v = 1; v <= 5; v += 2) f.svg.append('text').attr('x', f.w - 22).attr('y', ym(v)).attr('dy', '0.32em').text(v);
+    const bw = Math.max(1.5, (f.w - ml - 28) / ((parse(cur[1]) - parse(cur[0])) / 864e5 + 3) - 1.5);
+    f.svg.append('g').selectAll('rect').data(R.filter((d) => d.stress != null)).join('rect')
+      .attr('x', (d) => x(parse(d.d)) - bw / 2).attr('width', bw).attr('y', (d) => y(d.stress)).attr('height', (d) => y(0) - y(d.stress))
+      .attr('rx', Math.min(3, bw / 2)).style('fill', (d) => css('--b-' + stressLevel(d.stress))).style('opacity', .85);
+    if (M.length) {
+      glowLine(f, M, { x: (m) => x(parse(m.d)), y: (m) => ym(m.v), base: f.h - 22, color: css('--fg'), width: 2, area: false });
+      f.svg.append('g').selectAll('circle').data(M).join('circle').attr('cx', (m) => x(parse(m.d))).attr('cy', (m) => ym(m.v)).attr('r', 3.5)
+        .style('fill', (m) => MOODS[m.v].color).style('stroke', css('--panel')).style('stroke-width', 1.5);
+    }
+    const bis = d3.bisector((d) => parse(d.d)).center;
+    hoverLayer(f, { x0: ml, x1: f.w - 28, y0: 8, y1: f.h - 22 }, (px) => {
+      const d = R[bis(R, x.invert(px))]; if (!d) return null;
+      const m = moodOf(d.d);
+      const lines = [{ label: 'Stress Ø', value: d.stress != null ? String(d.stress) : '–' }, { label: 'Stimmung', value: m ? MOODS[m.v].label : '–' }];
+      if (m && m.tags.length) lines.push({ label: 'Stichworte', value: m.tags.map(tagName).join(', ') });
+      if (d.slp != null) lines.push({ label: 'Schlaf davor', value: hm(d.slp) + ' h' });
+      return { x: x(parse(d.d)), y: m ? ym(m.v) : y(d.stress || 0), color: m ? MOODS[m.v].color : null, title: dayLabel(d.d), lines };
+    });
+  }
+
+  // --- Zeit nach Stressstufe (wenn Garmin die Dauern liefert) ---
+  const parts = [['stRest', 'ruhig', '--b-rest'], ['stLow', 'leicht', '--b-low'], ['stMed', 'mittel', '--b-med'], ['stHi', 'hoch', '--b-high']];
+  const avgs = parts.map(([k]) => mean(R.map((d) => d[k])));
+  const card = $('#b-split-card');
+  card.hidden = avgs.every((v) => v == null);
+  if (!card.hidden) {
+    const tot = sum(avgs);
+    const stack = $('#b-split'), list = $('#b-split-list'); stack.replaceChildren(); list.replaceChildren();
+    parts.forEach(([, l, c], i) => {
+      const v = avgs[i] || 0;
+      const p = el('i'); p.style.width = (tot ? v / tot * 100 : 0) + '%'; p.style.background = css(c); stack.append(p);
+      const li = el('li'); const dot = el('i'); dot.style.background = css(c);
+      li.append(dot, el('span', null, l[0].toUpperCase() + l.slice(1)), el('b', null, hm(v / 60) + ' h'), el('span', 'note', tot ? num(v / tot * 100) + ' %' : ''));
+      list.append(li);
+    });
+  }
+
+  // --- Schlafrhythmus ---
+  const beds = R.map((d) => d.bed).filter((v) => v != null), wakes = R.map((d) => d.wake).filter((v) => v != null);
+  const sd = (a) => { const m = mean(a); return a.length > 2 ? Math.sqrt(mean(a.map((v) => (v - m) ** 2))) : null; };
+  const rh = $('#b-rhythm'); rh.replaceChildren();
+  const add = (v, u, l) => { const s = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u)); s.append(b, el('span', null, l)); rh.append(s); };
+  add(beds.length ? clock(mean(beds)) : '–', '', 'Ø Einschlafen');
+  add(wakes.length ? clock(mean(wakes)) : '–', '', 'Ø Aufwachen');
+  const sdB = sd(beds);
+  add(sdB != null ? '±' + num(sdB * 60) : '–', ' min', 'Schwankung');
+  if (sdB != null) rh.append(Object.assign(el('p', 'note b-rh-note'), { textContent: sdB * 60 <= 30 ? 'Sehr regelmäßig.' : sdB * 60 <= 60 ? 'Recht regelmäßig.' : 'Deine Schlafenszeiten schwanken stark. Ein fester Rhythmus hilft oft mehr als zusätzliche Stunden.' }));
+
+  // --- Was dir guttut: Vergleiche aus den eigenen Daten (mindestens 3 Tage je Gruppe) ---
+  const ins = $('#b-insights'); ins.replaceChildren();
+  const span = D.filter((d) => d.d > addDays(S.today, -120));
+  const trained = new Set(S.acts.map((a) => a.date));
+  const prevNight = (d) => D.find((x) => x.d === d); // Schlaf ist dem Morgen zugeordnet
+  const cmp = (label, a, b, fmt, lowerBetter, why) => {
+    if (a.length < 3 || b.length < 3) return;
+    const ma = mean(a), mbb = mean(b); if (ma == null || mbb == null) return;
+    const d = ma - mbb; if (Math.abs(d) < (fmt === 'mood' ? 0.15 : 1)) return;
+    const better = lowerBetter ? d < 0 : d > 0;
+    const li = el('li'); const mid = el('div');
+    const val = fmt === 'mood' ? (d > 0 ? '+' : '−') + num(Math.abs(d), 1) : (d > 0 ? '+' : '−') + num(Math.abs(d));
+    mid.append(el('span', null, label), el('span', 'why', why(ma, mbb, a.length, b.length)));
+    li.append(el('i', 'light ' + (better ? 'g' : 'y')), mid, el('b', null, val)); ins.append(li);
+  };
+  const sD = (f) => span.filter(f).map((d) => d.stress).filter((v) => v != null);
+  cmp('Stress an Trainingstagen', sD((d) => trained.has(d.d)), sD((d) => !trained.has(d.d)), 'n', true,
+    (a, b, na, nb) => `Ø ${num(a)} an ${na} Tagen mit Training, Ø ${num(b)} an ${nb} Tagen ohne. Sport hebt den Stress kurz, senkt ihn aber oft über den Tag.`);
+  cmp('Stress nach 7+ Stunden Schlaf', sD((d) => d.slp >= 7), sD((d) => d.slp != null && d.slp < 6.5), 'n', true,
+    (a, b, na, nb) => `Ø ${num(a)} nach langen Nächten (${na}), Ø ${num(b)} nach Nächten unter 6,5 h (${nb}).`);
+  const moods = (S.mood || []).filter((m) => m.d > addDays(S.today, -120));
+  if (moods.length >= 10) {
+    const mv = (f) => moods.filter(f).map((m) => m.v);
+    cmp('Stimmung nach 7+ Stunden Schlaf', mv((m) => (prevNight(m.d) || {}).slp >= 7), mv((m) => { const n = prevNight(m.d); return n && n.slp != null && n.slp < 6.5; }), 'mood', false,
+      (a, b, na, nb) => `Ø ${num(a, 1)} nach langen Nächten (${na}), Ø ${num(b, 1)} nach kurzen (${nb}).`);
+    cmp('Stimmung an Trainingstagen', mv((m) => trained.has(m.d)), mv((m) => !trained.has(m.d)), 'mood', false,
+      (a, b, na, nb) => `Ø ${num(a, 1)} mit Training (${na}), Ø ${num(b, 1)} ohne (${nb}).`);
+    // Stichworte: welche gehen mit besserer oder schlechterer Stimmung einher?
+    const tagRows = MOOD_TAGS.map(([k, l]) => ({ k, l, a: mv((m) => m.tags.includes(k)), b: mv((m) => !m.tags.includes(k)) }))
+      .filter((t) => t.a.length >= 3 && t.b.length >= 3).map((t) => ({ ...t, d: mean(t.a) - mean(t.b) }))
+      .sort((p, q) => Math.abs(q.d) - Math.abs(p.d)).slice(0, 3);
+    for (const t of tagRows) cmp('Stimmung mit „' + t.l + '“', t.a, t.b, 'mood', false, (a, b, na, nb) => `Ø ${num(a, 1)} an ${na} Tagen mit diesem Stichwort, Ø ${num(b, 1)} ohne.`);
+  }
+  if (!ins.childElementCount) {
+    const li = el('li'); const mid = el('div');
+    mid.append(el('span', null, 'Noch nicht genug Daten'), el('span', 'why', moods.length < 10 ? `Trag deine Stimmung ein paar Tage lang ein (bisher ${moods.length}, ab 10 wird es spannend).` : 'Es zeigen sich noch keine deutlichen Unterschiede.'));
+    li.append(el('i', 'light'), mid, el('b')); ins.append(li);
+  }
+}
+
+// --- Atemübung: 6 Runden à 10 Sekunden (4 ein, 6 aus), Vollbild-Ebene ---
+function openBreathing() {
+  if (document.querySelector('.breathe')) return;
+  const view = el('div', 'breathe'); view.setAttribute('role', 'dialog'); view.setAttribute('aria-modal', 'true');
+  const circle = el('div', 'br-circle'), label = el('div', 'br-label', 'Bereit'), count = el('div', 'note br-count', '');
+  const done = el('button', 'btn small', 'Fertig'); done.type = 'button';
+  view.append(circle, label, count, done);
+  document.body.append(view); document.body.classList.add('mapfull-open');
+  let round = 0, timers = [];
+  const close = () => { timers.forEach(clearTimeout); view.remove(); document.body.classList.remove('mapfull-open'); };
+  done.addEventListener('click', close);
+  const cycle = () => {
+    if (round >= 6) { label.textContent = 'Gut gemacht.'; count.textContent = ''; circle.className = 'br-circle'; return; }
+    round++; count.textContent = 'Runde ' + round + ' von 6';
+    label.textContent = 'Einatmen'; circle.className = 'br-circle in';
+    timers.push(setTimeout(() => { label.textContent = 'Ausatmen'; circle.className = 'br-circle out'; }, 4000));
+    timers.push(setTimeout(cycle, 10000));
+  };
+  timers.push(setTimeout(cycle, 800));
+  done.focus();
+}

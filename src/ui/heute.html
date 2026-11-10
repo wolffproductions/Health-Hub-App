@@ -1,0 +1,19 @@
+  <!-- HEUTE -->
+  <section data-tab="heute">
+    <h2>Heute</h2>
+    <p class="subtitle" id="todayDate"></p>
+    <!-- Erholungs-Ampel als schmale Zeile, Begründung zum Aufklappen (#15) -->
+    <details class="card readiness" id="readiness">
+      <summary><i class="light" id="r-light"></i><span class="verdict" id="r-verdict">Lade Daten …</span><span class="more">Details</span></summary>
+      <p class="note" id="r-date"></p>
+      <ul class="factors" id="r-factors"></ul>
+      <p class="note">Eigene Einschätzung aus vier Garmin-Werten, keine Garmin Training Readiness. Die Regeln stehen neben jedem Punkt.</p>
+      <p class="note">Was Garmin über die Personal API nicht herausgibt, steht unter „Konto“.</p>
+    </details>
+    <div class="tiles" id="today-tiles"></div>
+    <p class="note">Vergleich jeweils mit deinem eigenen Schnitt der 30 Tage davor. Verlauf: letzte 14 Tage, bei der Body Battery der heutige Tag (aktualisiert sich alle 30 Minuten, sobald deine Uhr mit Garmin Connect synchronisiert hat).</p>
+    <!-- Aktivitäten des Tages als Mini-Post mit Karte (#16) -->
+    <h3 class="sec" id="acts-title">Heute trainiert</h3>
+    <div class="actposts" id="today-acts"></div>
+  </section>
+

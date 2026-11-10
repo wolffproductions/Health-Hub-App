@@ -1,0 +1,46 @@
+// ---------- WAS IST NEU? (#91) ----------
+// Nach einem Update einmal beim Öffnen ein Blatt mit den Neuerungen. Gemerkt wird pro Gerät, was schon gesehen wurde.
+// Beim allerersten Öffnen (neue Einrichtung) kommt nichts, dann gilt einfach der aktuelle Stand als gesehen.
+const NEU_KEY = 'neuGesehen';
+let neuGeprueft = false;
+function neuGesehen() { try { return localStorage.getItem(NEU_KEY); } catch { return 'unbekannt'; } }
+function neuMerken(id) { try { localStorage.setItem(NEU_KEY, id); } catch {} }
+
+function checkNews() {
+  if (neuGeprueft) return;
+  const news = (S.status && S.status.news) || [];
+  if (!news.length) return;
+  neuGeprueft = true;
+  const seen = neuGesehen();
+  if (seen === 'unbekannt') return; // kein Speicher (z. B. privater Modus): lieber nichts zeigen als bei jedem Start
+  if (!seen) { neuMerken(news[0].id); return; }
+  const idx = news.findIndex((n) => n.id === seen);
+  const fresh = idx === -1 ? news.slice(0, 1) : news.slice(0, idx);
+  if (fresh.length) openNews(fresh);
+}
+
+function openNews(entries, all) {
+  if (document.querySelector('.neu-sheet')) return;
+  const news = (S.status && S.status.news) || [];
+  entries = entries || news;
+  const wrap = el('div', 'neu-sheet'); wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-labelledby', 'neu-title');
+  const panel = el('div', 'neu-panel');
+  const head = el('div', 'neu-head');
+  head.append(el('span', 'neu-badge', 'Neu'), Object.assign(el('h2', null, all ? 'Was ist neu?' : 'Neue Version ist da'), { id: 'neu-title' }));
+  panel.append(head);
+  for (const e of entries) {
+    const sec = el('section', 'neu-entry');
+    sec.append(el('h3', null, e.titel), el('p', 'note', dayLabel(e.id.slice(0, 10)) + ' ' + e.id.slice(0, 4)));
+    const ul = el('ul');
+    for (const p of e.punkte) ul.append(el('li', null, p));
+    sec.append(ul); panel.append(sec);
+  }
+  const ok = el('button', 'btn', 'Weiter'); ok.type = 'button';
+  const close = () => { neuMerken(news[0] ? news[0].id : ''); wrap.classList.add('zu'); setTimeout(() => wrap.remove(), 220); document.body.classList.remove('mapfull-open'); };
+  ok.addEventListener('click', close);
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  panel.append(ok);
+  wrap.append(panel);
+  document.body.append(wrap); document.body.classList.add('mapfull-open');
+  ok.focus({ preventScroll: true });
+}

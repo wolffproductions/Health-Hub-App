@@ -1,0 +1,68 @@
+// ---------- SCHLAF ----------
+function renderSleep() {
+  const { cur, prev } = ranges();
+  const D = S.daily.filter((d) => inR(d.d, cur)), P = S.daily.filter((d) => inR(d.d, prev));
+  const tiles = $('#sleep-tiles'); tiles.replaceChildren();
+  const m = (arr, k) => mean(arr.map((d) => d[k]));
+  tile(tiles, { label: 'Schlafdauer Ø', value: hm(m(D, 'slp')), unit: ' h', cmp: cmpLine(m(D, 'slp') * 60, m(P, 'slp') * 60, 0, true, ' min') });
+  tile(tiles, { label: 'Schlafscore Ø', value: num(m(D, 'score')), cmp: cmpLine(m(D, 'score'), m(P, 'score'), 0, true) });
+  tile(tiles, { label: 'Einschlafen (Median)', value: clock(median(D.map((d) => d.bed))), cmp: (() => { const a = median(D.map((d) => d.bed)), b = median(P.map((d) => d.bed)); if (a == null || b == null) return { text: '' }; const dm = Math.round((a - b) * 60); return { text: (dm > 0 ? dm + ' min später' : dm < 0 ? -dm + ' min früher' : 'gleich') + ' als davor', cls: dm > 10 ? 'bad' : dm < -10 ? 'good' : '' }; })() });
+  const deepShare = (arr) => mean(arr.map((d) => d.slp ? d.deep / d.slp * 100 : null));
+  tile(tiles, { label: 'Tiefschlaf-Anteil', value: num(deepShare(D)), unit: ' %', cmp: cmpLine(deepShare(D), deepShare(P), 0, true, ' %-Pkt.') });
+  tile(tiles, { label: 'HRV Ø', value: num(m(D, 'hrv')), unit: ' ms', cmp: cmpLine(m(D, 'hrv'), m(P, 'hrv'), 0, true, ' ms') });
+  tile(tiles, { label: 'Puls im Schlaf Ø', value: num(m(D, 'shr')), unit: ' bpm', cmp: cmpLine(m(D, 'shr'), m(P, 'shr'), 0, false, ' bpm') });
+
+  // HRV
+  const hn = $('#c-hrv'); const H = D.filter((d) => d.hrv != null);
+  if (H.length < 2) empty(hn, 'Keine HRV-Daten im Zeitraum.');
+  else {
+    const f = frame(hn, 220);
+    const vals = H.flatMap((d) => [d.hrv, d.hrvLo, d.hrvHi]).filter((v) => v != null);
+    const y = d3.scaleLinear(d3.extent(vals), [f.h - 22, 8]).nice();
+    const ml = measure(f.svg, y.ticks(4).map((v) => num(v))) + 10;
+    const x = d3.scaleUtc([parse(cur[0]), parse(cur[1])], [ml, f.w - 10]);
+    yAxis(f, y, ml, f.w - 10, 4, (v) => num(v)); xTime(f, x, f.h - 22);
+    f.svg.append('path').datum(H.filter((d) => d.hrvLo != null)).style('fill', css('--prev')).style('opacity', .25).attr('d', d3.area().x((d) => x(parse(d.d))).y0((d) => y(d.hrvLo)).y1((d) => y(d.hrvHi)));
+    f.svg.append('g').selectAll('circle').data(H).join('circle').attr('cx', (d) => x(parse(d.d))).attr('cy', (d) => y(d.hrv)).attr('r', 2.5).style('fill', (d) => d.hrvLo != null && d.hrv < d.hrvLo ? css('--bad') : css('--muted'));
+    glowLine(f, H.filter((d) => d.hrvWk != null), { x: (d) => x(parse(d.d)), y: (d) => y(d.hrvWk), base: f.h - 22, dot: true });
+    const bis = d3.bisector((d) => parse(d.d)).center;
+    hoverLayer(f, { x0: ml, x1: f.w - 10, y0: 8, y1: f.h - 22 }, (px) => {
+      const d = H[bis(H, x.invert(px))];
+      return { x: x(parse(d.d)), y: y(d.hrv), title: dayLabel(d.d), lines: [{ label: 'HRV', value: d.hrv + ' ms' }, { color: css('--accent'), label: 'Wochenschnitt', value: num(d.hrvWk) + ' ms' }, { label: 'Normalbereich', value: d.hrvLo != null ? d.hrvLo + '–' + d.hrvHi + ' ms' : '–' }] };
+    });
+  }
+
+  // Schlafdauer + Score
+  const sn = $('#c-sleep'); const Z = D.filter((d) => d.slp != null);
+  if (Z.length < 2) empty(sn, 'Keine Schlafdaten im Zeitraum.');
+  else {
+    const f = frame(sn, 220);
+    const y = d3.scaleLinear([0, Math.max(10, d3.max(Z, (d) => d.slp))], [f.h - 22, 8]);
+    const y2 = d3.scaleLinear([0, 100], [f.h - 22, 8]);
+    const ml = measure(f.svg, y.ticks(5).map((v) => v + ' h')) + 10;
+    const x = d3.scaleUtc([parse(addDays(cur[0], -1)), parse(addDays(cur[1], 1))], [ml, f.w - 28]);
+    yAxis(f, y, ml, f.w - 28, 5, (v) => v + ' h'); xTime(f, x, f.h - 22);
+    for (const v of [50, 100]) f.svg.append('text').attr('x', f.w - 24).attr('y', y2(v)).attr('dy', '0.32em').text(v);
+    const bw = Math.max(1.5, (f.w - ml - 28) / (S.days + 2) - 1);
+    f.svg.append('g').selectAll('rect').data(Z).join('rect').attr('x', (d) => x(parse(d.d)) - bw / 2).attr('width', bw).attr('y', (d) => y(d.slp)).attr('height', (d) => y(0) - y(d.slp)).attr('rx', Math.min(2, bw / 2)).style('fill', css('--accent')).style('opacity', .45);
+    glowLine(f, Z.filter((d) => d.score != null), { x: (d) => x(parse(d.d)), y: (d) => y2(d.score), color: css('--accent-2'), area: false, dot: true });
+    const bis = d3.bisector((d) => parse(d.d)).center;
+    hoverLayer(f, { x0: ml, x1: f.w - 28, y0: 8, y1: f.h - 22 }, (px) => {
+      const d = Z[bis(Z, x.invert(px))];
+      return { x: x(parse(d.d)), y: y(d.slp), title: 'Nacht auf ' + dayLabel(d.d), lines: [{ label: 'Schlafdauer', value: hm(d.slp) + ' h' }, { color: css('--accent-2'), label: 'Schlafscore', value: d.score == null ? '–' : String(d.score) }, { label: 'Eingeschlafen', value: clock(d.bed) }, { label: 'Tief / REM', value: hm(d.deep) + ' / ' + hm(d.rem) + ' h' }] };
+    });
+  }
+
+  // Wochentage
+  const tw = $('#t-weekday'); tw.replaceChildren();
+  const hh = el('tr'); hh.append(el('th', null, 'Nacht'), el('th', 'n', 'Dauer'), el('th', 'n', 'Score'), el('th', 'n', 'Einschlafen'), el('th', 'n', 'HRV')); tw.append(hh);
+  const names = ['Sa→So', 'So→Mo', 'Mo→Di', 'Di→Mi', 'Mi→Do', 'Do→Fr', 'Fr→Sa'];
+  const rows = [1, 2, 3, 4, 5, 6, 0].map((w) => { const g = D.filter((d) => parse(d.d).getUTCDay() === w); return { w, slp: m(g, 'slp'), score: m(g, 'score'), bed: median(g.map((d) => d.bed)), hrv: m(g, 'hrv') }; });
+  const worst = d3.least(rows.filter((r) => r.score != null), (r) => r.score);
+  for (const r of rows) {
+    const tr = el('tr'); if (worst && r === worst) tr.style.color = css('--bad');
+    tr.append(el('td', null, names[r.w]), el('td', 'n', hm(r.slp) + ' h'), el('td', 'n', num(r.score)), el('td', 'n', clock(r.bed)), el('td', 'n', num(r.hrv) + ' ms'));
+    tw.append(tr);
+  }
+}
+

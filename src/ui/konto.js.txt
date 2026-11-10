@@ -1,0 +1,393 @@
+// ---------- KONTO ----------
+// Datenquellen (#28). Neue Quelle: hier eintragen; `detail` = id einer Unterseite in konto.html (konto-<id>).
+// Symbol je Quelle (Namen aus icons.js.txt, #90)
+const SOURCE_ICONS = { watch: 'uhr', route: 'route', scale: 'waage', band: 'uhrStats' };
+const SOURCES = [
+  { id: 'garmin', name: 'Garmin', icon: 'watch', color: '--accent', detail: 'garmin', status: garminSourceStatus },
+  { id: 'strava', name: 'Strava', icon: 'route', color: '--accent-2', detail: 'strava', status: stravaSourceStatus },
+  { id: 'withings', name: 'Withings', icon: 'scale', color: '--ok', detail: 'withings', status: withingsSourceStatus },
+  { id: 'google', name: 'Google Health / Fitbit', icon: 'band', color: '--muted', status: () => ({ light: '', text: 'In Prüfung', sub: 'z. B. Fitbit Air' }) },
+  { id: 'coros', name: 'COROS', icon: 'watch', color: '--muted', status: () => ({ light: '', text: 'In Prüfung', sub: 'Uhren von COROS' }) },
+];
+
+// Status der Garmin-Verbindung für die Übersicht: Ampel-Punkt, kurzer Text, zweite Zeile
+function garminSourceStatus() {
+  const st = S.status;
+  if (!st) return { light: '', text: 'Lädt …', sub: '' };
+  if (st.key === 'none') return { light: 'r', text: 'Nicht verbunden', sub: 'Schlüssel eintragen' };
+  const exp = keyExpiry(st);
+  const last = st.lastRecent ? 'Aktualisiert ' + relTime(st.lastRecent) : 'Noch nicht aktualisiert';
+  const hist = st.complete ? '' : ' · Historie wird geladen';
+  if (st.lastError && /abgelehnt|401|403/.test(st.lastError)) return { light: 'r', text: 'Schlüssel abgelehnt', sub: 'Neuen Schlüssel eintragen' };
+  if (exp && exp.left < 0) return { light: 'r', text: 'Schlüssel abgelaufen', sub: 'Seit ' + exp.label };
+  if (exp && exp.left <= KEY_WARN_DAYS) return { light: 'y', text: exp.left === 0 ? 'Läuft heute ab' : 'Läuft in ' + exp.left + (exp.left === 1 ? ' Tag' : ' Tagen') + ' ab', sub: last + hist };
+  if (st.lastError) return { light: 'y', text: 'Verbunden, letzter Abruf mit Fehler', sub: last };
+  return { light: 'g', text: 'Verbunden', sub: last + hist + (exp ? ' · Schlüssel bis ' + exp.label : '') };
+}
+function relTime(iso) {
+  const t = new Date(iso), d = t.toLocaleDateString('en-CA'), today = new Date().toLocaleDateString('en-CA');
+  const time = t.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return d === today ? 'heute ' + time : d === addDays(today, -1) ? 'gestern ' + time : dayLabel(d) + ' ' + time;
+}
+
+function renderSources() {
+  const ul = $('#sources'); ul.replaceChildren();
+  for (const src of SOURCES) {
+    const st = src.status();
+    const li = el('li');
+    const row = el(src.detail ? 'button' : 'div', 'srcrow' + (src.detail ? '' : ' off'));
+    if (src.detail) { row.type = 'button'; row.addEventListener('click', () => showKontoView(src.detail)); }
+    const ic = el('span', 'srcicon'); ic.innerHTML = icon(SOURCE_ICONS[src.icon]); ic.style.background = css(src.color);
+    const txt = el('span', 'srctext'); txt.append(el('span', 'srcname', src.name)); if (st.sub) txt.append(el('span', 'srcsub', st.sub));
+    const right = el('span', 'srcstate');
+    if (st.light) right.append(el('i', 'light ' + st.light));
+    right.append(el('span', null, st.text));
+    row.append(ic, txt, right);
+    if (src.detail) { const ch = el('span', 'chev'); ch.innerHTML = icon('weiter'); row.append(ch); }
+    li.append(row); ul.append(li);
+  }
+}
+
+// Unterseiten im Konto (iOS-artig „hineinnavigieren“); 'main' = Übersicht
+const KONTO_TITLES = { main: 'Konto', garmin: 'Garmin Connect', strava: 'Strava', withings: 'Withings' };
+function showKontoView(view) {
+  S.kontoView = KONTO_TITLES[view] ? view : 'main';
+  $('#konto-main').hidden = S.kontoView !== 'main';
+  document.querySelectorAll('#konto-garmin, #konto-strava, #konto-withings').forEach((n) => { n.hidden = n.id !== 'konto-' + S.kontoView; });
+  $('#konto-title').textContent = KONTO_TITLES[S.kontoView];
+  document.body.dataset.konto = S.kontoView;
+  if (S.tab === 'konto') $('#navTitle').textContent = KONTO_TITLES[S.kontoView];
+  window.scrollTo(0, 0);
+}
+
+function renderAccount() {
+  renderZoneForm();
+  renderVo2List();
+  renderSources();
+  renderWithings();
+  renderStrava();
+  renderPush();
+  renderSecurity();
+  renderClaude();
+  const st = S.status; if (!st) return;
+  const exp = keyExpiry(st);
+  $('#key-state').textContent = (st.key === 'app' ? 'Ein Schlüssel ist in der App hinterlegt (verschlüsselt).' : st.key === 'secret' ? 'Ein Schlüssel ist als Cloudflare-Secret hinterlegt.' : 'Noch kein Schlüssel hinterlegt.')
+    + (st.key === 'none' ? '' : !exp ? ' Ablaufdatum unbekannt.' : exp.left < 0 ? ` Abgelaufen am ${exp.label}.` : ` Läuft am ${exp.label} ab (noch ${exp.left} ${exp.left === 1 ? 'Tag' : 'Tage'}).`);
+  $('#key-state').className = 'note' + (exp && exp.left < 0 ? ' bad' : exp && exp.left <= KEY_WARN_DAYS ? ' warn' : '');
+  $('#key-exp-save').hidden = st.key === 'none';
+  if (st.keyExpires && !$('#key-expires').value) $('#key-expires').value = st.keyExpires;
+  const days = st.oldest ? Math.round((Date.now() - Date.parse(st.oldest)) / 864e5) : 0;
+  const pct = st.complete ? 100 : Math.min(99, Math.round(days / st.backfillDays * 100));
+  $('#sync-bar').style.width = pct + '%';
+  $('#sync-state').textContent = (st.lastRecent ? 'Zuletzt aktualisiert: ' + new Date(st.lastRecent).toLocaleString('de-DE') + '. ' : 'Noch nicht aktualisiert. ') + (st.complete ? 'Historie vollständig.' : `Historie: ${pct} % von einem Jahr geladen.`) + (st.lapsPending ? ` Runden werden ausgewertet: noch ${st.lapsPending} Läufe.` + (st.lapsPaused ? ' Garmin bittet gerade um eine Pause, die App macht später von selbst weiter.' : '') : st.lapsPending === 0 ? ' Runden aller Läufe ausgewertet.' : '') + (st.lastError ? ' Letzter Fehler: ' + st.lastError : '');
+}
+
+// ---------- Withings verbinden (#3) ----------
+function withingsSourceStatus() {
+  const w = S.status && S.status.withings;
+  if (!w) return { light: '', text: S.status ? 'Nicht eingerichtet' : 'Lädt …', sub: 'Gewicht und Körperzusammensetzung' };
+  if (!w.app) return { light: '', text: 'Nicht eingerichtet', sub: 'Gewicht und Körperzusammensetzung' };
+  if (!w.connected) return { light: 'r', text: 'Nicht verbunden', sub: 'Mit Withings verbinden' };
+  const last = w.lastMeas ? 'Letzte Messung ' + relTime(w.lastMeas) : 'Noch keine Messung';
+  if (w.lastError) return { light: 'y', text: 'Verbunden, letzter Abruf mit Fehler', sub: last };
+  return { light: 'g', text: 'Verbunden', sub: last + (w.loading ? ' · Historie wird geladen' : '') };
+}
+function renderWithings() {
+  $('#wi-cb').textContent = location.origin + '/withings/callback';
+  const w = S.status && S.status.withings; if (!w) return;
+  $('#wi-state').textContent = !w.app ? 'Noch nicht eingerichtet. Lege zuerst unten deine eigene Withings-App an.'
+    : !w.connected ? 'App eingetragen, aber noch nicht mit deinem Withings-Konto verbunden.'
+    : 'Verbunden.' + (w.lastOk ? ' Zuletzt abgerufen: ' + new Date(w.lastOk).toLocaleString('de-DE') + '.' : '') + (w.lastMeas ? ' Letzte Messung: ' + relTime(w.lastMeas) + '.' : '') + (w.lastError ? ' Letzter Fehler: ' + w.lastError : '');
+  $('#wi-connect').textContent = w.connected ? 'Neu verbinden' : 'Mit Withings verbinden';
+  $('#wi-connect').classList.toggle('ghost', w.connected);
+  $('#wi-connect').hidden = !w.app;
+  $('#wi-sync').hidden = !w.connected;
+  $('#wi-actions').hidden = !w.app;
+  $('#wi-del').hidden = !w.app;
+}
+const WI_RETURN = {
+  ok: 'Verbunden. Die Messungen deiner Waage werden geladen.',
+  abgebrochen: 'Die Verbindung wurde bei Withings abgebrochen.',
+  abgelaufen: 'Die Anmeldung bei Withings ist abgelaufen. Bitte noch einmal verbinden.',
+  fehler: 'Withings hat die Verbindung abgelehnt. Stimmen Client-ID, Client-Secret und Callback-URL?',
+  app: 'Bitte zuerst Client-ID und Client-Secret eintragen.',
+};
+function initWithings() {
+  $('#wi-copy').addEventListener('click', () => { navigator.clipboard?.writeText($('#wi-cb').textContent).then(() => { $('#wi-app-msg').textContent = 'Adresse kopiert.'; }).catch(() => {}); });
+  $('#wi-save').addEventListener('click', async () => {
+    const b = $('#wi-save'); b.disabled = true; $('#wi-app-msg').textContent = '';
+    try {
+      const r = await api('/api/withings/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: $('#wi-id').value, secret: $('#wi-secret').value }) });
+      if (r.ok) { $('#wi-id').value = ''; $('#wi-secret').value = ''; $('#wi-app-msg').textContent = 'Gespeichert. Jetzt oben „Mit Withings verbinden“.'; await loadData(); }
+      else $('#wi-app-msg').textContent = r.error || 'Speichern fehlgeschlagen.';
+    } finally { b.disabled = false; }
+  });
+  $('#wi-del').addEventListener('click', async () => {
+    if (!confirm('Withings-Verbindung löschen? Geladene Messwerte bleiben erhalten.')) return;
+    await api('/api/withings/app', { method: 'DELETE' });
+    $('#wi-app-msg').textContent = 'Verbindung gelöscht.'; await loadData();
+  });
+  $('#wi-sync').addEventListener('click', async () => {
+    const b = $('#wi-sync'); b.disabled = true; $('#wi-msg').textContent = 'Wird aktualisiert …';
+    try { await api('/api/withings/sync', { method: 'POST' }); await loadData(); $('#wi-msg').textContent = 'Aktualisiert.'; }
+    catch { $('#wi-msg').textContent = 'Aktualisieren fehlgeschlagen.'; } finally { b.disabled = false; }
+  });
+  // Rückkehr von Withings (/?withings=…): direkt die Withings-Seite im Profil zeigen
+  const res = new URLSearchParams(location.search).get('withings');
+  if (res) {
+    history.replaceState(null, '', location.pathname);
+    showTab('konto'); showKontoView('withings');
+    $('#wi-msg').textContent = WI_RETURN[res] || '';
+  }
+}
+
+// ---------- Strava verbinden (#44) ----------
+function stravaSourceStatus() {
+  const v = S.status && S.status.strava;
+  const sub = 'Einheiten, Relative Effort, Kudos';
+  if (!v) return { light: '', text: S.status ? 'Nicht eingerichtet' : 'Lädt …', sub };
+  if (!v.app) return { light: '', text: 'Nicht eingerichtet', sub };
+  if (!v.connected) return { light: 'r', text: 'Nicht verbunden', sub: 'Mit Strava verbinden' };
+  const last = v.newest ? 'Neueste Einheit ' + relTime(v.newest) : 'Noch keine Einheit';
+  if (v.paused) return { light: 'y', text: 'Pause (Strava-Limit)', sub: last };
+  if (v.lastError) return { light: 'y', text: 'Verbunden, letzter Abruf mit Fehler', sub: last };
+  return { light: 'g', text: 'Verbunden', sub: last + (v.complete ? '' : ' · Historie wird geladen') };
+}
+function renderStrava() {
+  $('#sv-cb').textContent = location.host;
+  const v = S.status && S.status.strava; if (!v) return;
+  $('#sv-state').textContent = !v.app ? 'Noch nicht eingerichtet. Lege zuerst unten deine eigene Strava-App an.'
+    : !v.connected ? 'App eingetragen, aber noch nicht mit deinem Strava-Konto verbunden.'
+    : 'Verbunden' + (v.name ? ' als ' + v.name : '') + '. ' + v.count + (v.count === 1 ? ' Einheit' : ' Einheiten') + ' geladen' + (v.complete ? '.' : ', die Historie lädt noch.')
+      + (v.lastOk ? ' Zuletzt abgerufen: ' + new Date(v.lastOk).toLocaleString('de-DE') + '.' : '')
+      + (v.paused ? ' Strava bittet um eine Pause, die App macht später von selbst weiter.' : v.lastError ? ' Letzter Fehler: ' + v.lastError : '');
+  $('#sv-connect').textContent = v.connected ? 'Neu verbinden' : 'Mit Strava verbinden';
+  $('#sv-connect').classList.toggle('ghost', v.connected);
+  $('#sv-connect').hidden = !v.app;
+  $('#sv-sync').hidden = !v.connected;
+  $('#sv-actions').hidden = !v.app;
+  $('#sv-del').hidden = !v.app;
+  $('#sv-hook-card').hidden = !v.connected;
+  $('#sv-hook').textContent = v.webhook ? 'Webhook entfernen' : 'Webhook einrichten';
+  $('#sv-hook-state').textContent = v.webhook ? 'Aktiv: Strava meldet neue und geänderte Einheiten sofort.' : 'Mit einem Webhook meldet Strava jede neue oder geänderte Einheit sofort, statt dass die App bis zu 30 Minuten wartet.';
+}
+const SV_RETURN = {
+  ok: 'Verbunden. Deine Einheiten werden geladen.',
+  abgebrochen: 'Die Verbindung wurde bei Strava abgebrochen.',
+  abgelaufen: 'Die Anmeldung bei Strava ist abgelaufen. Bitte noch einmal verbinden.',
+  rechte: 'Strava hat den Zugriff auf deine Aktivitäten nicht erlaubt. Bitte neu verbinden und alle Haken aktiviert lassen.',
+  fehler: 'Strava hat die Verbindung abgelehnt. Stimmen Client-ID, Client-Secret und Callback-Domain?',
+  app: 'Bitte zuerst Client-ID und Client-Secret eintragen.',
+};
+function initStrava() {
+  $('#sv-copy').addEventListener('click', () => { navigator.clipboard?.writeText($('#sv-cb').textContent).then(() => { $('#sv-app-msg').textContent = 'Adresse kopiert.'; }).catch(() => {}); });
+  $('#sv-save').addEventListener('click', async () => {
+    const b = $('#sv-save'); b.disabled = true; $('#sv-app-msg').textContent = '';
+    try {
+      const r = await api('/api/strava/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: $('#sv-id').value, secret: $('#sv-secret').value }) });
+      if (r.ok) { $('#sv-id').value = ''; $('#sv-secret').value = ''; $('#sv-app-msg').textContent = 'Gespeichert. Jetzt oben „Mit Strava verbinden“.'; await loadData(); }
+      else $('#sv-app-msg').textContent = r.error || 'Speichern fehlgeschlagen.';
+    } finally { b.disabled = false; }
+  });
+  $('#sv-del').addEventListener('click', async () => {
+    if (!confirm('Strava-Verbindung löschen? Geladene Einheiten bleiben erhalten.')) return;
+    await api('/api/strava/app', { method: 'DELETE' });
+    $('#sv-app-msg').textContent = 'Verbindung gelöscht.'; await loadData();
+  });
+  $('#sv-sync').addEventListener('click', async () => {
+    const b = $('#sv-sync'); b.disabled = true; $('#sv-msg').textContent = 'Wird aktualisiert …';
+    try { await api('/api/strava/sync', { method: 'POST' }); await loadData(); $('#sv-msg').textContent = 'Aktualisiert.'; }
+    catch { $('#sv-msg').textContent = 'Aktualisieren fehlgeschlagen.'; } finally { b.disabled = false; }
+  });
+  $('#sv-hook').addEventListener('click', async () => {
+    const on = S.status && S.status.strava && S.status.strava.webhook;
+    const b = $('#sv-hook'); b.disabled = true; $('#sv-hook-msg').textContent = on ? 'Wird entfernt …' : 'Wird eingerichtet …';
+    try {
+      const r = await api('/api/strava/webhook', { method: on ? 'DELETE' : 'POST' });
+      $('#sv-hook-msg').textContent = r.ok ? (on ? 'Entfernt.' : 'Eingerichtet.') : (r.error || 'Fehlgeschlagen.');
+      await loadData();
+    } catch { $('#sv-hook-msg').textContent = 'Fehlgeschlagen.'; } finally { b.disabled = false; }
+  });
+  // Rückkehr von Strava (/?strava=…): direkt die Strava-Seite im Konto zeigen
+  const res = new URLSearchParams(location.search).get('strava');
+  if (res) {
+    history.replaceState(null, '', location.pathname);
+    showTab('konto'); showKontoView('strava');
+    $('#sv-msg').textContent = SV_RETURN[res] || '';
+  }
+}
+
+// ---------- Morgen-Push (#13) ----------
+// Web Push an die Homescreen-App. Auf dem iPhone nur, wenn die App über „Zum Home-Bildschirm“ geöffnet wurde (ab iOS 16.4).
+const PUSH = { info: null };
+const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function b64uToBytes(s) { const b = s.replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(b + '==='.slice((b.length + 3) % 4)), (c) => c.charCodeAt(0)); }
+async function currentSub() { try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch { return null; } }
+
+async function renderPush() {
+  const sel = $('#push-time');
+  if (!sel.options.length) for (let m = 5 * 60; m <= 12 * 60; m += 30) { const t = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); sel.append(new Option(t + ' Uhr', t)); }
+  try { PUSH.info = await api('/api/push'); } catch { PUSH.info = null; }
+  const i = PUSH.info || { on: false, time: '09:00', devices: 0 };
+  sel.value = i.time;
+  const sub = pushSupported() ? await currentSub() : null;
+  const on = !!(i.on && sub);
+  let state;
+  if (!pushSupported()) state = standalone() ? 'Dieses Gerät unterstützt keine Push-Meldungen (auf dem iPhone ab iOS 16.4).' : 'Auf dem iPhone: in Safari „Teilen → Zum Home-Bildschirm“ wählen und die App von dort öffnen. Erst dann sind Push-Meldungen möglich.';
+  else if (Notification.permission === 'denied') state = 'Mitteilungen sind für die App ausgeschaltet. Erlaube sie in den iPhone-Einstellungen unter „Mitteilungen → Health“.';
+  else if (on) state = `Aktiv: jeden Morgen um ${i.time} Uhr${i.devices > 1 ? ' an ' + i.devices + ' Geräte' : ''}.` + (i.lastSent ? ' Zuletzt gesendet: ' + dayLabel(i.lastSent) + '.' : '') + (i.lastResult && !/^Gesendet/.test(i.lastResult) ? ' ' + i.lastResult + '.' : '');
+  else state = i.devices ? 'Auf einem anderen Gerät aktiv. Hier noch nicht eingeschaltet.' : 'Aus.';
+  $('#push-state').textContent = state;
+  $('#push-on').textContent = on ? 'Ausschalten' : 'Push aktivieren';
+  $('#push-on').classList.toggle('ghost', on);
+  $('#push-on').hidden = !pushSupported() || Notification.permission === 'denied';
+  $('#push-test').hidden = !on;
+}
+
+function initPush() {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  $('#push-on').addEventListener('click', async () => {
+    const b = $('#push-on'), msg = $('#push-msg'); b.disabled = true; msg.textContent = '';
+    try {
+      const sub = await currentSub();
+      if (sub && PUSH.info && PUSH.info.on) {
+        await api('/api/push/unsubscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+        await sub.unsubscribe().catch(() => {});
+        msg.textContent = 'Ausgeschaltet.';
+      } else {
+        // Erlaubnis muss direkt aus dem Antippen heraus angefragt werden (iOS)
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') { msg.textContent = 'Ohne Erlaubnis keine Meldungen.'; return; }
+        const reg = await navigator.serviceWorker.ready;
+        const key = (PUSH.info && PUSH.info.key) || (await api('/api/push')).key;
+        const s = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+        const r = await api('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sub: s.toJSON(), time: $('#push-time').value }) });
+        msg.textContent = r.ok ? 'Eingeschaltet. Tipp: „Test senden“ zeigt dir die Meldung sofort.' : (r.error || 'Fehlgeschlagen.');
+      }
+    } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+    finally { b.disabled = false; renderPush(); }
+  });
+  $('#push-time').addEventListener('change', async () => {
+    await api('/api/push/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ time: $('#push-time').value }) }).catch(() => {});
+    $('#push-msg').textContent = 'Uhrzeit gespeichert.'; renderPush();
+  });
+  $('#push-test').addEventListener('click', async () => {
+    const b = $('#push-test'); b.disabled = true; $('#push-msg').textContent = 'Wird gesendet …';
+    try { const r = await api('/api/push/test', { method: 'POST' }); $('#push-msg').textContent = r.result || 'Gesendet.'; }
+    catch (e) { $('#push-msg').textContent = 'Fehler: ' + e.message; } finally { b.disabled = false; }
+  });
+}
+
+// ---------- App-Passwort und Version (#12) ----------
+function renderSecurity() {
+  const st = S.status; if (!st) return;
+  $('#pw-fields').hidden = !!st.passwordSecret;
+  $('#pw-note').textContent = st.passwordSecret ? 'Dein Passwort ist als Cloudflare-Secret hinterlegt (Einrichtung per Terminal) und lässt sich nur dort ändern: npx wrangler secret put APP_PASSWORD -c wrangler.local.jsonc' : 'Mit diesem Passwort meldest du dich in der App an.';
+  $('#app-version').textContent = 'Version: ' + (st.version || 'unbekannt');
+}
+function initSecurity() {
+  $('#neu-open').addEventListener('click', () => openNews(null, true));
+  $('#pw-save').addEventListener('click', async () => {
+    const b = $('#pw-save'), msg = $('#pw-msg'); b.disabled = true; msg.textContent = '';
+    try {
+      const r = await api('/api/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ old: $('#pw-old').value, new: $('#pw-new').value, repeat: $('#pw-rep').value }) });
+      msg.textContent = r.ok ? 'Passwort geändert.' : (r.error || 'Ändern fehlgeschlagen.');
+      if (r.ok) { $('#pw-old').value = ''; $('#pw-new').value = ''; $('#pw-rep').value = ''; }
+    } catch (e) { msg.textContent = 'Fehler: ' + e.message; } finally { b.disabled = false; }
+  });
+}
+
+// ---------- Claude-Zugang (#5) ----------
+async function renderClaude() {
+  let i; try { i = await api('/api/mcp'); } catch { return; }
+  $('#mcp-url').value = i.url;
+  $('#mcp-mood').checked = !!i.mood;
+  const ul = $('#mcp-clients'); ul.replaceChildren();
+  ul.hidden = !i.clients.length;
+  for (const c of i.clients) {
+    const li = el('li'), txt = el('span', 'mcp-txt');
+    txt.append(el('span', null, c.name), el('span', 'mcp-sub', c.lastUsed ? 'Zuletzt ' + relTime(c.lastUsed) : 'Verbunden ' + relTime(c.created)));
+    const b = el('button', 'btn small ghost', 'Entfernen'); b.type = 'button';
+    b.addEventListener('click', async () => {
+      if (!confirm(c.name + ' den Zugriff entziehen?')) return;
+      await fetch('/api/mcp?client=' + encodeURIComponent(c.id), { method: 'DELETE', credentials: 'same-origin' });
+      $('#mcp-msg').textContent = 'Zugriff entzogen.'; renderClaude();
+    });
+    li.append(txt, b); ul.append(li);
+  }
+}
+function initClaude() {
+  $('#mcp-copy').addEventListener('click', () => {
+    navigator.clipboard?.writeText($('#mcp-url').value).then(() => { $('#mcp-msg').textContent = 'Adresse kopiert.'; }).catch(() => { $('#mcp-url').select(); });
+  });
+  $('#mcp-mood').addEventListener('change', async (e) => {
+    try {
+      await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mood: e.target.checked }) });
+      $('#mcp-msg').textContent = e.target.checked ? 'Claude darf jetzt deine Stimmung lesen.' : 'Stimmung ist für Claude wieder gesperrt.';
+    } catch { $('#mcp-msg').textContent = 'Speichern fehlgeschlagen.'; }
+  });
+}
+
+// ---------- Passkeys (#95) ----------
+function bytesToB64u(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+// Gerätename für die Liste, aus dem Browser abgeleitet
+function deviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Windows/.test(ua)) return 'Windows';
+  return 'Gerät';
+}
+async function loadPasskeys() {
+  let keys;
+  try { keys = await api('/api/passkeys'); } catch { $('#pk-state').textContent = 'Passkeys konnten nicht geladen werden.'; return; }
+  if (!Array.isArray(keys)) keys = [];
+  const ul = $('#pk-list'); ul.replaceChildren();
+  ul.hidden = !keys.length;
+  const can = !!(window.PublicKeyCredential && navigator.credentials);
+  $('#pk-add').disabled = !can;
+  $('#pk-state').textContent = !can ? 'Dieser Browser unterstützt keine Passkeys.'
+    : keys.length ? `${keys.length} ${keys.length === 1 ? 'Passkey' : 'Passkeys'} eingetragen. Auf der Login-Seite erscheint „Mit Passkey anmelden“.`
+    : 'Noch kein Passkey eingetragen.';
+  for (const k of keys) {
+    const li = el('li');
+    const left = el('div');
+    left.append(el('div', null, k.name));
+    left.append(el('div', 'meta', 'Angelegt ' + new Date(k.created).toLocaleDateString('de-DE') + ' · ' + (k.used ? 'zuletzt ' + relTime(k.used) : 'noch nicht benutzt')));
+    const del = el('button', 'btn small danger', 'Entfernen'); del.type = 'button';
+    del.addEventListener('click', async () => {
+      if (!confirm(`Passkey „${k.name}“ entfernen? Auf dem Gerät bleibt er im Schlüsselbund, hier funktioniert er dann nicht mehr.`)) return;
+      del.disabled = true;
+      const r = await api('/api/passkeys?id=' + encodeURIComponent(k.id), { method: 'DELETE' }).catch(() => ({}));
+      $('#pk-msg').textContent = r.ok ? 'Passkey entfernt.' : (r.error || 'Entfernen fehlgeschlagen.');
+      loadPasskeys();
+    });
+    li.append(left, del); ul.append(li);
+  }
+}
+function initPasskeys() {
+  $('#pk-add').addEventListener('click', async () => {
+    const b = $('#pk-add'); b.disabled = true; $('#pk-msg').textContent = '';
+    try {
+      const o = await api('/api/passkeys/options', { method: 'POST' });
+      if (o.error) { $('#pk-msg').textContent = o.error; return; }
+      const cred = await navigator.credentials.create({ publicKey: {
+        ...o,
+        challenge: b64uToBytes(o.challenge),
+        user: { ...o.user, id: b64uToBytes(o.user.id) },
+        excludeCredentials: o.excludeCredentials.map((c) => ({ ...c, id: b64uToBytes(c.id) })),
+      } });
+      const r = await api('/api/passkeys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        challenge: o.challenge, id: cred.id, name: deviceName(),
+        attestationObject: bytesToB64u(cred.response.attestationObject), clientDataJSON: bytesToB64u(cred.response.clientDataJSON) }) });
+      $('#pk-msg').textContent = r.ok ? 'Passkey angelegt. Ab jetzt kannst du dich mit Face ID anmelden.' : (r.error || 'Anlegen fehlgeschlagen.');
+    } catch (e) {
+      $('#pk-msg').textContent = e && e.name === 'InvalidStateError' ? 'Auf diesem Gerät ist schon ein Passkey für die App eingetragen.'
+        : e && e.name === 'NotAllowedError' ? 'Abgebrochen.' : 'Anlegen fehlgeschlagen.';
+    } finally { b.disabled = false; loadPasskeys(); }
+  });
+  loadPasskeys();
+}

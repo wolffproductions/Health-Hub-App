@@ -1,0 +1,32 @@
+{
+  "name": "health-hub",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Persönliches Gesundheits- und Trainings-Dashboard auf Cloudflare Workers (Garmin, später Strava und Withings)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "db:local": "wrangler d1 migrations apply health-hub --local",
+    "seed:demo": "node scripts/seed-demo.mjs && wrangler d1 execute health-hub --local --file=scripts/.demo-seed.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.158.0"
+  },
+  "cloudflare": {
+    "label": "Health Hub",
+    "products": [
+      "Workers",
+      "D1"
+    ],
+    "bindings": {
+      "DB": {
+        "description": "Deine eigene Datenbank für Gesundheitsdaten. Einfach den vorgeschlagenen Namen lassen."
+      }
+    }
+  }
+}

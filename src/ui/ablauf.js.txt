@@ -1,0 +1,110 @@
+// ---------- Ablauf ----------
+// Wochen-Navigation unter dem Segmented Control: nur bei „1 W“ sichtbar
+function renderWeekNav() {
+  const nav = $('#weeknav');
+  nav.hidden = S.days !== 7 || $('#seg').hidden || !S.today;
+  if (nav.hidden) return;
+  const r = ranges(), mon = r.cur[0], sun = addDays(mon, 6), a = parse(mon), b = parse(sun);
+  const span = a.getUTCMonth() === b.getUTCMonth() ? a.getUTCDate() + '.–' + b.getUTCDate() + '. ' + MONTHS[b.getUTCMonth()]
+    : a.getUTCDate() + '. ' + MONTHS[a.getUTCMonth()] + ' – ' + b.getUTCDate() + '. ' + MONTHS[b.getUTCMonth()];
+  $('#wk-label').textContent = 'KW ' + isoWeek(mon) + ' · ' + span;
+  const day = Math.round((parse(r.cur[1]) - a) / 864e5) + 1;
+  $('#wk-sub').textContent = r.running
+    ? 'läuft noch, Tag ' + day + ' von 7 · Vergleich mit Mo–' + WD[parse(r.cur[1]).getUTCDay()] + ' der Vorwoche'
+    : S.weekOffset === 0 ? 'diese Woche' : S.weekOffset === -1 ? 'letzte Woche · Vergleich mit der Woche davor' : 'Vergleich mit der Woche davor';
+  $('#wk-next').disabled = S.weekOffset >= 0;
+  $('#wk-prev').disabled = !S.daily.length || addDays(mon, -7) < S.daily[0].d;
+}
+
+function renderAll() {
+  if (!S.today) return;
+  renderWeekNav();
+  const fns = { heute: renderToday, training: () => { renderLoad(); renderVolume(); }, leistung: () => { renderPerf(); renderFitAge(); renderBody(); }, schlaf: renderSleep, einheiten: renderSessions, konto: renderAccount, einheit: renderUnit, diagramm: renderDiagram, balance: renderBalance };
+  try { fns[S.tab](); } catch (e) { console.error(e); }
+}
+
+// Navigation (#18, #59): unten Heute · Statistiken · Einheiten, Konto rechts neben dem Titel.
+// „Statistiken“ fasst die Bereiche Training, Leistung und Schlaf zusammen (umschaltbar oben).
+const STAT_TABS = ['training', 'leistung', 'schlaf'];
+const TAB_TITLES = { heute: 'Heute', training: 'Statistiken', leistung: 'Statistiken', schlaf: 'Statistiken', einheiten: 'Einheiten', balance: 'Balance', konto: 'Konto', einheit: 'Einheit', diagramm: 'Diagramm' };
+// Unterseiten: eigene Seite mit „‹ Zurück“ statt Konto-Symbol; zählen nicht als „letzter Reiter“
+const SUB_TABS = ['konto', 'einheit', 'diagramm'];
+const tabGroup = (name) => (SUB_TABS.includes(name) && name !== 'konto' ? tabGroup(S.lastTab || 'heute') : STAT_TABS.includes(name) ? 'stats' : name);
+// Großer Titel jedes Bereichs bekommt eine Titelzeile; Konto-Symbol rechts daneben, im Konto „Zurück“ darüber
+function placeNavButtons(name) {
+  const sec = document.querySelector(`section[data-tab="${name}"]`); if (!sec) return;
+  const h2 = sec.querySelector(':scope > h2, :scope > .titlerow > h2'); if (!h2) return;
+  let row = h2.parentElement.classList.contains('titlerow') ? h2.parentElement : null;
+  if (!row) { row = el('div', 'titlerow'); h2.before(row); row.append(h2); }
+  if (SUB_TABS.includes(name)) row.before($('#nav-back'));
+  else row.append($('#nav-account'));
+}
+function showTab(name) {
+  if (!TAB_TITLES[name]) name = 'heute';
+  // Verschobene Diagramm-Karte zurück an ihren Platz, sobald die Vollbild-Seite verlassen wird (#61)
+  if (name !== 'diagramm') restoreChartCard();
+  if (!SUB_TABS.includes(name)) S.lastTab = name;
+  if (STAT_TABS.includes(name)) { S.statTab = name; try { localStorage.setItem('statTab', name); } catch {} }
+  S.tab = name;
+  document.querySelectorAll('section[data-tab]').forEach((s) => { s.hidden = s.dataset.tab !== name; });
+  document.querySelectorAll('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.go === tabGroup(name))));
+  document.querySelectorAll('#statseg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stat === name)));
+  if (!SUB_TABS.includes(name)) try { localStorage.setItem('tab', name); } catch {}
+  $('#navTitle').textContent = TAB_TITLES[name];
+  if (name === 'konto') showKontoView(S.kontoView || 'main');
+  // Unterseiten: Zurück-Pfeil links statt Konto-Symbol rechts
+  document.body.classList.toggle('in-konto', name === 'konto');
+  document.body.classList.toggle('in-sub', SUB_TABS.includes(name));
+  placeNavButtons(name);
+  // Unter den großen Titel: Bereichsumschalter (nur Statistiken), Zeitraum, Wochen-Navigation, Hinweis
+  const sec = document.querySelector(`section[data-tab="${name}"]`), seg = $('#seg'), statseg = $('#statseg');
+  statseg.hidden = !STAT_TABS.includes(name);
+  // Zeitraum nur unter Statistiken (#14: nicht unter „Heute“) und im Diagramm-Vollbild (#61)
+  seg.hidden = !STAT_TABS.includes(name) && name !== 'diagramm' && name !== 'balance';
+  const head = sec.querySelector('.subtitle') || sec.querySelector('.titlerow') || sec.querySelector('h2');
+  head.after(statseg);
+  statseg.after(seg);
+  seg.after($('#weeknav'));
+  (seg.hidden ? head : $('#weeknav')).after($('#banner'));
+  window.scrollTo(0, 0);
+  renderAll();
+}
+
+// ---------- Unterseiten (#60, #61) ----------
+// Eigene Seite mit eigener Adresse (#einheit/<id>), damit Zurück-Taste, Wischen und Neuladen funktionieren.
+// Beim Zurückgehen steht man wieder an derselben Stelle im Reiter, von dem man kam.
+function openSub(name, key) {
+  if (!SUB_TABS.includes(S.tab)) S.backScroll = window.scrollY;
+  S.sub = { name, key };
+  const hash = '#' + name + '/' + encodeURIComponent(key);
+  if (location.hash !== hash) history.pushState({ sub: name }, '', hash);
+  showTab(name);
+}
+function leaveSub() {
+  const back = S.lastTab && !SUB_TABS.includes(S.lastTab) ? S.lastTab : 'heute';
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  S.sub = null;
+  showTab(back);
+  const y = S.backScroll || 0; S.backScroll = 0;
+  requestAnimationFrame(() => window.scrollTo(0, y));
+}
+// Zurück: über den Browserverlauf, wenn die Seite dort einen Eintrag hat (dann folgt popstate)
+function goBack() {
+  if (S.tab === 'konto') { if (S.kontoView && S.kontoView !== 'main') showKontoView('main'); else showTab(S.lastTab && !SUB_TABS.includes(S.lastTab) ? S.lastTab : 'heute'); return; }
+  if (history.state && history.state.sub === S.tab) history.back(); else leaveSub();
+}
+window.addEventListener('popstate', () => {
+  if (S.tab !== 'konto' && SUB_TABS.includes(S.tab) && !location.hash.startsWith('#' + S.tab + '/')) leaveSub();
+});
+function subFromHash() {
+  const m = /^#(\w+)\/(.+)$/.exec(location.hash);
+  return m && SUB_TABS.includes(m[1]) && m[1] !== 'konto' ? { name: m[1], key: decodeURIComponent(m[2]) } : null;
+}
+
+function banner(text, err, link) {
+  const b = $('#banner');
+  if (!text) { b.hidden = true; return; }
+  b.hidden = false; b.className = 'banner' + (err ? ' err' : ''); b.textContent = text;
+  if (link) { const a = el('a', null, link.text); a.href = link.href; a.target = '_blank'; a.rel = 'noopener'; b.append(' ', a); }
+}
+

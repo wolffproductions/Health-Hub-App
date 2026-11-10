@@ -1,0 +1,130 @@
+document.querySelectorAll('nav.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.go === 'stats' ? (S.statTab || 'training') : b.dataset.go)));
+document.querySelectorAll('#statseg button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.stat)));
+$('#nav-account').addEventListener('click', () => { S.kontoView = 'main'; showTab('konto'); });
+document.querySelectorAll('.js-back').forEach((b) => b.addEventListener('click', goBack));
+// Sprung zu einer Karte in einem anderen Bereich, z. B. „VO2max eintragen ›“ unter Leistung → Konto
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-goto]'); if (!b) return;
+  const target = document.getElementById(b.dataset.goto); if (!target) return;
+  const sec = target.closest('section[data-tab]');
+  const sub = target.closest('[id^="konto-"]');
+  if (sec && sec.dataset.tab === 'konto') S.kontoView = sub && sub.id !== 'konto-main' ? sub.id.slice(6) : 'main';
+  if (sec) showTab(sec.dataset.tab);
+  requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+});
+document.querySelectorAll('#seg button').forEach((b) => b.addEventListener('click', () => {
+  S.days = Number(b.dataset.days);
+  S.weekOffset = 0;
+  document.querySelectorAll('#seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  try { localStorage.setItem('days', String(S.days)); } catch {}
+  renderAll();
+}));
+$('#wk-prev').addEventListener('click', () => { S.weekOffset -= 1; renderAll(); });
+$('#wk-next').addEventListener('click', () => { if (S.weekOffset < 0) { S.weekOffset += 1; renderAll(); } });
+$('#sync-btn').addEventListener('click', () => syncLoop(true));
+// Laufzeit gewählt -> Ablaufdatum ab heute vorschlagen (bleibt änderbar)
+$('#key-term').addEventListener('change', (e) => {
+  const v = e.target.value;
+  $('#key-expires').value = v === 'none' ? '' : v ? addDays(new Date().toLocaleDateString('en-CA'), Number(v)) : $('#key-expires').value;
+});
+$('#key-exp-save').addEventListener('click', async () => {
+  const msg = $('#key-msg');
+  try {
+    const r = await api('/api/key/expiry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expires: $('#key-expires').value || null }) });
+    msg.textContent = r.ok ? (r.expires ? 'Ablaufdatum gespeichert.' : 'Ablaufdatum entfernt.') : r.error || 'Speichern fehlgeschlagen.';
+    if (r.ok) await loadData();
+  } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+});
+$('#key-save').addEventListener('click', async () => {
+  const input = $('#key-input'), msg = $('#key-msg'), key = input.value.trim();
+  if (!key) { msg.textContent = 'Bitte zuerst den Schlüssel einfügen.'; return; }
+  if (!$('#key-term').value && !$('#key-expires').value) { msg.textContent = 'Bitte noch die Laufzeit wählen, die du bei Garmin eingestellt hast (oder „Weiß ich nicht“).'; return; }
+  msg.textContent = 'Prüfe Schlüssel bei Garmin …';
+  try {
+    const r = await api('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, expires: $('#key-expires').value || null }) });
+    input.value = '';
+    if (r.ok) { msg.textContent = 'Gespeichert. Daten werden geladen …'; await syncLoop(true); msg.textContent = 'Schlüssel gespeichert.'; }
+    else msg.textContent = r.error || 'Speichern fehlgeschlagen.';
+  } catch (e) { input.value = ''; msg.textContent = 'Fehler: ' + e.message; }
+});
+$('#key-del').addEventListener('click', async () => {
+  const msg = $('#key-msg');
+  if (msg.dataset.confirm !== '1') { msg.dataset.confirm = '1'; msg.textContent = 'Zum Löschen noch einmal tippen.'; return; }
+  msg.dataset.confirm = '';
+  await api('/api/key', { method: 'DELETE' });
+  msg.textContent = 'Schlüssel gelöscht.'; await loadData();
+});
+$('#zone-save').addEventListener('click', async () => {
+  const msg = $('#zone-msg');
+  const v = [...document.querySelectorAll('#zone-form input')].map((i) => Number(i.value));
+  const zones = [[v[0], v[1]], [v[2], v[3]], [v[4], v[5]]];
+  const ok = v.every((x) => Number.isInteger(x) && x >= 60 && x <= 230) && zones.every((z) => z[0] <= z[1]) && zones[0][1] < zones[1][0] && zones[1][1] < zones[2][0];
+  if (!ok) { msg.textContent = 'Bitte ganze Pulswerte zwischen 60 und 230 eintragen, aufsteigend und ohne Überschneidung.'; return; }
+  msg.textContent = 'Speichere …';
+  try {
+    const r = await api('/api/zones', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zones }) });
+    if (r.ok) { S.zoneCfg = r.zones; renderZoneForm(true); msg.textContent = 'Gespeichert. Zonen-Diagramm und „Pace je Zone“ rechnen jetzt mit diesen Werten.'; loadData().catch(() => {}); }
+    else msg.textContent = r.error || 'Speichern fehlgeschlagen.';
+  } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+});
+$('#zone-reset').addEventListener('click', () => {
+  const inputs = document.querySelectorAll('#zone-form input');
+  DEFAULT_ZONES.flat().forEach((v, i) => { if (inputs[i]) inputs[i].value = v; });
+  $('#zone-msg').textContent = 'Beispielwerte eingesetzt. Zum Übernehmen auf „Speichern“ tippen.';
+});
+try { const z = Number(localStorage.getItem('zSel')); if ([0, 1, 2].includes(z)) S.zSel = z; } catch {}
+const todayLocal = () => new Date().toLocaleDateString('en-CA');
+$('#vo2-date').value = todayLocal(); $('#vo2-date').max = todayLocal();
+$('#vo2-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const msg = $('#vo2-msg'), input = $('#vo2-val');
+  const d = $('#vo2-date').value, sport = $('#vo2-sport').value, v = Number(String(input.value).replace(',', '.'));
+  if (!d) { msg.textContent = 'Bitte ein Datum wählen.'; return; }
+  if (!input.value || !isFinite(v) || v < 20 || v > 95) { msg.textContent = 'Bitte einen Wert zwischen 20 und 95 eintragen.'; return; }
+  msg.textContent = 'Speichere …';
+  try {
+    const r = await api('/api/vo2', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d, sport, v }) });
+    if (r.ok) { S.vo2 = r.list; input.value = ''; msg.textContent = 'Gespeichert.'; renderAll(); }
+    else msg.textContent = r.error || 'Speichern fehlgeschlagen.';
+  } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+});
+// iOS-Safari ignoriert user-scalable=no teilweise: Zoom-Gesten außerhalb der Vollbild-Karte abfangen (#62)
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(ev, (e) => { if (!e.target.closest?.('.mapfull')) e.preventDefault(); }, { passive: false });
+}
+document.addEventListener('dblclick', (e) => { if (!e.target.closest('.mapfull')) e.preventDefault(); }, { passive: false });
+addExpandButtons();
+$('#b-save').addEventListener('click', saveMood);
+$('#b-breathe').addEventListener('click', openBreathing);
+$('#b-day').addEventListener('click', () => {
+  const t = S.today || todayLocal();
+  B.day = (B.day || t) === t ? addDays(t, -1) : t; B.v = null; B.tags = new Set(); $('#b-note').value = ''; $('#b-msg').textContent = '';
+  renderCheckin();
+});
+window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 24), { passive: true });
+$('#todayDate').textContent = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+// Homescreen-App: beim Zurückkehren aus dem Hintergrund neu laden
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadData().catch(() => {}); });
+// Bleibt die App offen, alle 10 Minuten neu laden, damit z. B. die Body Battery mitläuft (#79)
+setInterval(() => { if (document.visibilityState === 'visible') loadData().catch(() => {}); }, 10 * 60000);
+let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
+
+try { let d = Number(localStorage.getItem('days')); if (d === 84 || d === 91) d = 28; if (PERIODS.includes(d)) { S.days = d; document.querySelectorAll('#seg button').forEach((x) => x.setAttribute('aria-pressed', String(Number(x.dataset.days) === d))); } } catch {}
+let startTab = 'heute';
+try { startTab = localStorage.getItem('tab') || 'heute'; } catch {}
+if (startTab === 'belastung' || startTab === 'volumen') startTab = 'training';
+if (startTab === 'trainings') startTab = 'einheiten'; // umbenannt (#59)
+try { const st = localStorage.getItem('statTab'); if (STAT_TABS.includes(st)) S.statTab = st; } catch {}
+// Konto ist kein Startbereich mehr, dann lieber „Heute“
+showTab(TAB_TITLES[startTab] && !SUB_TABS.includes(startTab) ? startTab : 'heute');
+// Neu geladen auf einer Unterseite (#einheit/<id>): nach dem Laden wieder dorthin
+const startSub = subFromHash();
+loadData().then(() => { if (startSub) { history.replaceState(null, '', location.pathname); openSub(startSub.name, startSub.key); } })
+  .catch((e) => banner('Daten konnten nicht geladen werden: ' + e.message, true));
+// Withings verbinden (#3): Knöpfe und Rückkehr von der Withings-Anmeldung
+initWithings();
+initStrava();
+initPush();
+initSecurity();
+initClaude();
+initPasskeys();

@@ -1,0 +1,35 @@
+# Automatische Updates (#12): holt einmal am Tag den freigegebenen Stand von Health Hub.
+# Cloudflare spielt ihn danach von selbst ein (Workers Builds), inklusive Datenbank-Änderungen.
+# Deine Daten, dein Passwort und deine Datenbank bleiben dabei unverändert.
+name: Health Hub aktualisieren
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # täglich gegen 4 Uhr
+  workflow_dispatch: {}   # „Run workflow“ = sofort aktualisieren
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    # Nicht im öffentlichen Original selbst laufen lassen
+    if: github.repository != 'wolffproductions/Health-Hub-App'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Neuen Stand holen
+        run: |
+          set -e
+          curl -fsSL https://codeload.github.com/wolffproductions/Health-Hub-App/tar.gz/main -o neu.tgz
+          mkdir neu && tar -xzf neu.tgz -C neu --strip-components=1 && rm neu.tgz
+          if [ -f VERSION ] && cmp -s VERSION neu/VERSION; then echo "Schon aktuell: $(cat VERSION)"; rm -rf neu; exit 0; fi
+          # Eigene Datenbank-ID aus wrangler.jsonc behalten (vom „Deploy to Cloudflare“-Button eingetragen)
+          ID=$(grep -o '"database_id": *"[^"]*"' wrangler.jsonc | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+          rsync -a --delete --exclude .git --exclude .github --exclude neu neu/ ./
+          rm -rf neu
+          if [ -n "$ID" ]; then sed -i "s/\"database_id\": *\"[^\"]*\"/\"database_id\": \"$ID\"/" wrangler.jsonc; fi
+          git config user.name "Health Hub Update"
+          git config user.email "update@users.noreply.github.com"
+          git add -A
+          git commit -m "Update auf $(cat VERSION)" && git push || echo "Keine Änderungen"

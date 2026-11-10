@@ -1,0 +1,124 @@
+// ---------- Körper: Fitnessalter (#78) ----------
+// Unter Statistiken → Leistung. Oben Fitnessalter und tatsächliches Alter, die Bausteine zum Ausklappen.
+// Von Garmin berechnet, einmal am Tag abgerufen. Bausteine nach Garmins Priorität: aktueller Wert → Ziel,
+// dazu wie viele Jahre das Erreichen des Ziels bringen würde (Fitnessalter minus potentialAge).
+const FA_PARTS = [
+  [/vigorousday|vigorous_day|activeday/i, 'Intensive Tage pro Woche', '', 1],
+  [/vigorous|intensity|minute/i, 'Intensive Minuten pro Woche', ' min', 0],
+  [/rhr|resting/i, 'Ruhepuls', ' bpm', 0],
+  [/bmi/i, 'BMI', '', 1],
+  [/fat/i, 'Körperfett', ' %', 1],
+];
+const FA_INVALID = {
+  USER_EMPTY_AGE: 'In deinem Garmin-Profil fehlt das Geburtsdatum. Trag es in Garmin Connect ein.',
+  USER_UNDER_AGE: 'Garmin berechnet das Fitnessalter erst ab 20 Jahren.',
+  USER_OVER_AGE: 'Garmin berechnet das Fitnessalter nur bis 80 Jahre.',
+  USER_PREGNANT: 'Während einer Schwangerschaft berechnet Garmin kein Fitnessalter.',
+};
+const years = (x) => { const v = Math.round(Math.abs(x) * 10) / 10; return num(v, v % 1 === 0 || v >= 10 ? 0 : 1) + (v === 1 ? ' Jahr' : ' Jahre'); };
+
+function renderFitAge() {
+  const fa = S.fitAge, list = $('#fa-list'); list.replaceChildren();
+  $('#fa-side').replaceChildren(); $('#fa-cmp').textContent = '';
+  $('#fa-more').hidden = !(fa && fa.fit != null && fa.comps && fa.comps.length);
+  $('#fa-count').textContent = fa && fa.comps ? String(fa.comps.length) : '';
+  if (!fa || fa.fit == null) {
+    $('#fa-val').textContent = '–';
+    $('#fa-cmp').textContent = fa && fa.invalid ? (FA_INVALID[fa.invalid] || 'Garmin liefert gerade kein Fitnessalter.') : 'Noch kein Fitnessalter von Garmin. Die App fragt es einmal am Tag ab.';
+    return;
+  }
+  $('#fa-val').replaceChildren(document.createTextNode(num(fa.fit, 0)), el('small', null, 'Jahre'));
+  const side = $('#fa-side');
+  if (fa.chrono != null) side.append(el('span', null, 'tatsächlich ' + fa.chrono));
+  if (fa.ach != null && Math.round(fa.ach) < Math.round(fa.fit)) side.append(el('span', null, 'erreichbar ' + num(fa.ach, 0)));
+  if (fa.chrono != null) {
+    const diff = fa.chrono - Math.round(fa.fit);
+    $('#fa-cmp').textContent = Math.abs(diff) < 0.5 ? 'So fit wie dein tatsächliches Alter' : years(diff) + (diff > 0 ? ' jünger' : ' älter') + ' als dein tatsächliches Alter';
+    $('#fa-cmp').className = 'fa-cmp ' + (diff >= 0.5 ? 'good' : diff <= -0.5 ? 'bad' : '');
+  }
+  if (fa.prev != null && Math.abs(fa.prev - fa.fit) >= 0.1) {
+    const d = fa.fit - fa.prev;
+    $('#fa-cmp').textContent += (($('#fa-cmp').textContent ? ' · ' : '') + (d < 0 ? '−' : '+') + years(d) + ' zur letzten Berechnung');
+  }
+  for (const c of fa.comps || []) {
+    const part = FA_PARTS.find(([re]) => re.test(c.key));
+    const [label, unit, dig] = part ? part.slice(1) : [c.key, '', 1];
+    const li = el('li');
+    const txt = el('span', 'fa-txt');
+    txt.append(el('span', 'fa-name', label + (c.stale ? ' ' : '')));
+    if (c.stale) txt.firstChild.append(el('span', 'fa-stale', 'veraltet'));
+    const val = c.value != null ? num(c.value, dig) + unit : '–';
+    const reached = c.target == null || c.potential == null || c.potential >= fa.fit - 0.05;
+    txt.append(el('span', 'fa-sub', reached ? val + ' · Ziel erreicht' : val + ' → Ziel ' + num(c.target, dig) + unit));
+    li.append(txt);
+    if (!reached) li.append(el('span', 'fa-gain', 'bis zu −' + years(fa.fit - c.potential)));
+    else { const ok = el('span', 'fa-ok'); ok.innerHTML = icon('haken'); ok.setAttribute('aria-label', 'Ziel erreicht'); li.append(ok); }
+    list.append(li);
+  }
+  $('#fa-note').textContent = 'Von Garmin berechnet' + (fa.day ? ' (Stand ' + dayLabel(fa.day).replace(/^[^,]+, /, '') + ')' : '') + '. Die Bausteine zeigen, was dich am meisten jünger machen würde.';
+}
+
+// ---------- Gewicht und Körper (#3) ----------
+// Unter Statistiken → Leistung. Oben Gewicht und Veränderung, Körperwerte und Verlauf zum Ausklappen.
+// Bevorzugt von der Withings-Waage (Quellen-Priorität in data.ts), sonst Garmin.
+const BODY_PARTS = [
+  ['fat', 'Körperfett', (v) => num(v, 1) + ' %'],
+  ['muscle', 'Muskelmasse', (v) => num(v, 1) + ' kg'],
+  ['water', 'Wasser', (v, kg) => kg ? num(v / kg * 100, 1) + ' %' : num(v, 1) + ' kg'],
+  ['bone', 'Knochenmasse', (v) => num(v, 1) + ' kg'],
+  ['visceral', 'Viszeralfett', (v) => num(v, 0)],
+];
+function lastWith(k, maxAgeDays = 60) {
+  for (let i = S.daily.length - 1; i >= 0; i--) {
+    const x = S.daily[i];
+    if (S.today && x.d < addDays(S.today, -maxAgeDays)) return null;
+    if (x[k] != null) return x;
+  }
+  return null;
+}
+function renderBody() {
+  const last = lastWith('kg', 3650), grid = $('#bd-grid'), sp = $('#bd-spark');
+  grid.replaceChildren(); sp.replaceChildren(); $('#bd-side').replaceChildren(); $('#bd-cmp').textContent = '';
+  $('#bd-more').hidden = !last;
+  if (!last) {
+    $('#bd-val').textContent = '–';
+    $('#bd-cmp').textContent = 'Noch keine Gewichtsdaten. Verbinde unter Konto → Datenquellen eine Withings-Waage.';
+    return;
+  }
+  $('#bd-val').replaceChildren(document.createTextNode(num(last.kg, 1)), el('small', null, 'kg'));
+  $('#bd-side').append(el('span', null, 'Messung vom'), el('span', null, dayLabel(last.d).replace(/^[^,]+, /, '')));
+  const ref = [...S.daily].reverse().find((x) => x.kg != null && x.d <= addDays(last.d, -30));
+  if (ref) {
+    const d = last.kg - ref.kg;
+    $('#bd-cmp').textContent = Math.abs(d) < 0.05 ? 'Gleich wie vor 30 Tagen' : (d < 0 ? '−' : '+') + num(Math.abs(d), 1) + ' kg in 30 Tagen';
+  }
+  const pts = S.daily.filter((x) => x.kg != null && x.d >= addDays(last.d, -90)).map((x) => [parse(x.d), x.kg]);
+  if (pts.length >= 2 && $('#bd-more').open) bodySpark(sp, pts);
+  for (const [k, label, fmt] of BODY_PARTS) {
+    const x = lastWith(k);
+    if (!x) continue;
+    const t = el('div', 'bd-item');
+    t.append(el('span', 'lbl', label), el('span', 'v', fmt(x[k], x.kg ?? last.kg)));
+    grid.append(t);
+  }
+  $('#bd-note').textContent = 'Verlauf der letzten 90 Tage. Von der Withings-Waage, wenn verbunden, sonst aus Garmin Connect.';
+}
+// Gewichtsverlauf: Linie mit Verlauf darunter, Punkt auf der letzten Messung
+function bodySpark(node, pts) {
+  const f = frame(node, 56);
+  const x = d3.scaleTime(d3.extent(pts, (p) => p[0]), [4, f.w - 8]);
+  const [lo, hi] = d3.extent(pts, (p) => p[1]);
+  const pad = Math.max(0.5, (hi - lo) * 0.2);
+  const y = d3.scaleLinear([lo - pad, hi + pad], [50, 6]);
+  const c = css('--ok'), id = 'bdg' + (++gradSeq);
+  const g = f.svg.append('defs').append('linearGradient').attr('id', id).attr('x1', 0).attr('x2', 0).attr('y1', 0).attr('y2', 1);
+  g.append('stop').attr('offset', '0%').attr('stop-color', c).attr('stop-opacity', .3);
+  g.append('stop').attr('offset', '100%').attr('stop-color', c).attr('stop-opacity', 0);
+  f.svg.append('path').datum(pts).attr('fill', `url(#${id})`).attr('d', d3.area().curve(d3.curveMonotoneX).x((p) => x(p[0])).y0(50).y1((p) => y(p[1])));
+  f.svg.append('path').datum(pts).style('fill', 'none').style('stroke', c).style('stroke-width', 1.8)
+    .attr('d', d3.line().curve(d3.curveMonotoneX).x((p) => x(p[0])).y((p) => y(p[1])));
+  const l = pts[pts.length - 1];
+  f.svg.append('circle').attr('cx', x(l[0])).attr('cy', y(l[1])).attr('r', 3).style('fill', c).style('stroke', css('--panel')).style('stroke-width', 1.5);
+}
+
+$('#bd-more').addEventListener('toggle', () => { if ($('#bd-more').open) renderBody(); });
