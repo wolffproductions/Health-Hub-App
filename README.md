@@ -25,7 +25,14 @@ Lass dich von [Claude](https://claude.ai) Schritt für Schritt durch die Einrich
 jedem Schritt, wo du tippen musst, und hilft, wenn etwas hakt. Passwörter und Schlüssel trägst du dabei immer selbst
 in der App ein, nie im Chat.
 
-**Variante A, als Skill (einmal hochladen):**
+**Am iPhone (am einfachsten):** In der Claude-App einen neuen Chat öffnen und das hier schreiben bzw. einfügen:
+
+> Hilf mir Schritt für Schritt, Health Hub einzurichten. Lies dazu diese Anleitung und halte dich daran:
+> https://github.com/wolffproductions/Health-Hub-App/blob/main/claude-skill/health-hub-einrichten/SKILL.md
+
+Claude bleibt dann im Chat bei dir, während du die einzelnen Schritte in Safari machst.
+
+**Am Computer, als Skill (einmal hochladen, danach in jedem Chat verfügbar):**
 
 1. [**health-hub-einrichten.zip**](https://github.com/wolffproductions/Health-Hub-App/raw/main/health-hub-einrichten.zip) herunterladen (nicht entpacken).
 2. In Claude unter **Einstellungen → Funktionen** prüfen, dass **„Code-Ausführung und Dateierstellung“**
@@ -33,10 +40,6 @@ in der App ein, nie im Chat.
 3. **Anpassen → Skills → „+“ → „Skill erstellen“ → „Skill hochladen“** und die ZIP-Datei auswählen.
 4. Einen neuen Chat öffnen und schreiben: **„Hilf mir, Health Hub einzurichten.“**
 
-**Variante B, ohne Hochladen:** In einem neuen Chat mit Claude schreiben:
-
-> Hilf mir Schritt für Schritt, Health Hub einzurichten. Lies dazu diese Anleitung und halte dich daran:
-> https://github.com/wolffproductions/Health-Hub-App/blob/main/claude-skill/health-hub-einrichten/SKILL.md
 
 ## Einrichten (ca. 10 Minuten, ohne Terminal)
 

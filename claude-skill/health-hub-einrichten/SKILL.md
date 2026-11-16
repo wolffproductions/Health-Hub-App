@@ -37,7 +37,26 @@ Entwickler (Pablo und Eddie).
    - **Fitbit, Google Health, COROS, Apple Watch** gehen noch nicht. Mit nur so einem Gerät lohnt die Einrichtung
      gerade nicht, außer die Person nutzt zusätzlich Strava (dann gibt es Trainings, aber keine Schlaf- und Erholungswerte).
 2. Hast du schon ein **GitHub-Konto** und ein **Cloudflare-Konto**? (Beide kostenlos, beide werden gebraucht.)
-3. Machst du das am **Computer oder am iPhone**? Am Computer ist es bequemer (Kopieren und Einfügen), geht aber auch am iPhone.
+3. Machst du das am **Computer oder am iPhone**? Beides geht. Am iPhone gelten die Tipps unter „Am iPhone“, nenn sie
+   dann gleich am Anfang kurz und bei den passenden Schritten noch einmal.
+
+## Am iPhone
+
+Die meisten machen die Einrichtung nur am Handy. Das klappt, wenn man diese Punkte beachtet:
+
+- **Links immer in Safari öffnen**, nicht im Browser innerhalb der Claude-App: Link lange drücken → „In Safari öffnen“
+  (oder im eingebauten Browser auf das Safari-Symbol tippen). Nur in Safari speichert der Schlüsselbund das Passwort,
+  und nur aus Safari lässt sich die App auf den Home-Bildschirm legen.
+- **Zwischen Safari und Claude hin und her wechseln** ist normal: in Safari einen Schritt machen, zurück zu Claude, berichten.
+  Bei Unklarheit einen **Screenshot** machen (Seitentaste + Lauter) und hier im Chat schicken.
+- **Kopieren und Einfügen:** Text lange drücken → „Kopieren“; ins Feld lange tippen → „Einfügen“. Für Schlüssel und
+  Client-Secrets immer kopieren statt abtippen. Die Adressen zum Kopieren zeigt Health Hub selbst mit einem „Kopieren“-Knopf.
+- **Seiten für Entwickler** (Strava-API, Withings, WHOOP) sind für große Bildschirme gebaut. Ist etwas abgeschnitten oder
+  leitet Strava in die Strava-App um: in Safari links in der Adressleiste auf **„aA“** (bzw. das Symbol dort) →
+  **„Desktop-Website anfordern“**. Danach seitlich scrollen bzw. mit zwei Fingern zoomen.
+- **Cloudflare** geht in Safari, ist aber eng. Nach „Create and deploy“ einfach warten, bis die Adresse der App erscheint,
+  und dann nichts weiter anfassen.
+- Schritt 5 (Home-Bildschirm) unbedingt in **Safari** machen, nicht in Chrome oder einer anderen App.
 
 ## Schritt 1: GitHub-Konto
 
@@ -46,7 +65,8 @@ GitHub ist der Ort, an dem eine Kopie des App-Codes für die Person liegt; daher
 
 ## Schritt 2: App bei Cloudflare anlegen
 
-1. https://github.com/wolffproductions/Health-Hub-App öffnen und auf den blauen Knopf **„Deploy to Cloudflare“** tippen.
+1. https://github.com/wolffproductions/Health-Hub-App öffnen (am iPhone in Safari) und auf den blauen Knopf
+   **„Deploy to Cloudflare“** tippen. Fragt Safari, ob die GitHub-App geöffnet werden soll: nein, im Browser bleiben.
 2. Bei Cloudflare anmelden oder dort direkt kostenlos **registrieren** (E-Mail bestätigen, dann geht es weiter).
 3. **GitHub verbinden**, wenn Cloudflare danach fragt. Cloudflare legt dabei in ihrem GitHub-Konto eine Kopie an.
 4. Alles so lassen, wie es vorgeschlagen ist (Name der App, Name der Datenbank), dann **„Create and deploy“**.
@@ -58,9 +78,10 @@ steht dann in der Adresse.
 
 ## Schritt 3: Sofort das Passwort festlegen (wichtig)
 
-- **Die Adresse jetzt gleich selbst öffnen.** Wer sie als Erstes öffnet, legt das Passwort fest. Deshalb die Adresse
+- **Die Adresse jetzt gleich selbst öffnen**, am iPhone in Safari. Wer sie als Erstes öffnet, legt das Passwort fest. Deshalb die Adresse
   vorher niemandem schicken.
-- Passwort mit **mindestens 10 Zeichen** zweimal eingeben. Am besten im Passwort-Manager bzw. iCloud-Schlüsselbund speichern lassen.
+- Passwort mit **mindestens 10 Zeichen** zweimal eingeben. Am iPhone schlägt Safari meist ein starkes Passwort vor und
+  speichert es im Schlüsselbund; das ist die beste Wahl.
 - Danach ist die Person angemeldet und sieht „Heute“ (noch leer).
 
 ## Schritt 4: Datenquellen verbinden
