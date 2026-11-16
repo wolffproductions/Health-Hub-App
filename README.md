@@ -19,6 +19,25 @@ Du brauchst mindestens eine Quelle. Schlaf- und Erholungswerte kommen von Garmin
 deine Trainings funktioniert aber auch nur mit Strava. Nutzt du mehrere Quellen, erkennt die App doppelte
 Einheiten und zeigt sie nur einmal. Bei Garmin-Uhr und WHOOP-Band wählst du, woher Schlaf und HRV kommen.
 
+## Mit Claude einrichten (empfohlen)
+
+Lass dich von [Claude](https://claude.ai) Schritt für Schritt durch die Einrichtung führen. Claude sagt dir bei
+jedem Schritt, wo du tippen musst, und hilft, wenn etwas hakt. Passwörter und Schlüssel trägst du dabei immer selbst
+in der App ein, nie im Chat.
+
+**Variante A, als Skill (einmal hochladen):**
+
+1. [**health-hub-einrichten.zip**](https://github.com/wolffproductions/Health-Hub-App/raw/main/health-hub-einrichten.zip) herunterladen (nicht entpacken).
+2. In Claude unter **Einstellungen → Funktionen** prüfen, dass **„Code-Ausführung und Dateierstellung“**
+   (bzw. **„Dateien erstellen und bearbeiten“**) an ist.
+3. **Anpassen → Skills → „+“ → „Skill erstellen“ → „Skill hochladen“** und die ZIP-Datei auswählen.
+4. Einen neuen Chat öffnen und schreiben: **„Hilf mir, Health Hub einzurichten.“**
+
+**Variante B, ohne Hochladen:** In einem neuen Chat mit Claude schreiben:
+
+> Hilf mir Schritt für Schritt, Health Hub einzurichten. Lies dazu diese Anleitung und halte dich daran:
+> https://github.com/wolffproductions/Health-Hub-App/blob/main/claude-skill/health-hub-einrichten/SKILL.md
+
 ## Einrichten (ca. 10 Minuten, ohne Terminal)
 
 Du brauchst ein kostenloses [GitHub-Konto](https://github.com/signup). Ein Cloudflare-Konto legst du
