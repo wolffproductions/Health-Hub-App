@@ -48,8 +48,8 @@ const nowS = () => Math.floor(Date.now() / 1000);
 // alle gespeicherten Rohdaten (raw_records) neu aus, ohne Garmin erneut abzufragen.
 // 2: Puls im Schlaf aus averageSpO2HRSleep, SpO2 im Schlaf
 // 3: Stress-Höchstwert, Zeit je Stressstufe, Body Battery geladen/verbraucht (Balance)
-// 4: VO2max je Einheit · 5: Kalorien je Einheit (#17)
-const EXTRACT_VERSION = 5;
+// 4: VO2max je Einheit · 5: Kalorien je Einheit (#17) · 6: Runden mit Intensität und Auslöser (#105)
+const EXTRACT_VERSION = 6;
 const EXTRACTORS: Record<string, (json: unknown) => MetricRow[]> = {
   dailysummaries: extractDailySummaries,
   sleep: extractSleep,
@@ -76,6 +76,11 @@ async function reextract(env: Env): Promise<boolean> {
   // Version 5: Kalorien je Einheit aus der gespeicherten Garmin-Antwort nachtragen
   if (done < 5) {
     await env.DB.prepare("UPDATE activities SET data = json_set(data, '$.kcal', json_extract(payload, '$.calories')) WHERE source = 'garmin' AND payload IS NOT NULL AND json_valid(payload)").run();
+  }
+  // Version 6 (#105): Runden kennen jetzt Intensität und Auslöser. Läufe der letzten 60 Tage (nur die zählen für
+  // die Prognose) holen ihre .fit-Datei noch einmal, neueste zuerst, 2 pro Sync-Lauf
+  if (done < 6) {
+    await env.DB.prepare("UPDATE activities SET laps_done = 0 WHERE source = 'garmin' AND type LIKE '%running%' AND day >= date('now', '-60 days')").run();
   }
   await kvPut(env, "extractVersion", String(EXTRACT_VERSION));
   return true;

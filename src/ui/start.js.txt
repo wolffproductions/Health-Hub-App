@@ -22,6 +22,7 @@ document.querySelectorAll('#seg button').forEach((b) => b.addEventListener('clic
 $('#wk-prev').addEventListener('click', () => { S.weekOffset -= 1; renderAll(); });
 $('#wk-next').addEventListener('click', () => { if (S.weekOffset < 0) { S.weekOffset += 1; renderAll(); } });
 $('#sync-btn').addEventListener('click', () => syncLoop(true));
+$('#refresh-btn').addEventListener('click', () => syncLoop(true));
 // Laufzeit gewählt -> Ablaufdatum ab heute vorschlagen (bleibt änderbar)
 $('#key-term').addEventListener('change', (e) => {
   const v = e.target.value;
@@ -124,7 +125,9 @@ loadData().then(() => { if (startSub) { history.replaceState(null, '', location.
 // Withings verbinden (#3): Knöpfe und Rückkehr von der Withings-Anmeldung
 initWithings();
 initStrava();
+initWhoop();
 initPush();
 initSecurity();
 initClaude();
+initPredCfg();
 initPasskeys();

@@ -17,4 +17,7 @@ export interface Env {
   /** Optional statt Eintrag in der App: eigene Strava-App (#44) */
   STRAVA_CLIENT_ID?: string;
   STRAVA_CLIENT_SECRET?: string;
+  /** Optional statt Eintrag in der App: eigene WHOOP-App (#119) */
+  WHOOP_CLIENT_ID?: string;
+  WHOOP_CLIENT_SECRET?: string;
 }

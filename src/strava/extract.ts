@@ -92,19 +92,34 @@ export function sameUnit(g: Obj, s: Obj): boolean {
 export const STRAVA_EXTRAS = ["sid", "re", "rpe", "prs", "ach", "kudos", "comments", "photos", "commute", "wt", "gear"] as const;
 
 /**
+ * Stravas automatische Namen nach der Tageszeit („Morgenlauf“, „Lauf am Abend“, „Morning Run“). Die API kennzeichnet
+ * sie nicht, deshalb über das Muster. Solche Namen ersetzen Garmins Namen nicht (#113).
+ */
+export function isAutoName(name: string): boolean {
+  const n = String(name || "").trim();
+  return /^(Morning|Lunch|Afternoon|Evening|Night) [A-Za-z ]+$/.test(n)
+    || /^(Morgen|Mittags?|Nachmittags?|Abend|Nacht)[a-zäöüß-]*$/i.test(n)
+    || /^[A-Za-zÄÖÜäöüß-]+ (am|in der) (Morgen|Mittag|Nachmittag|Abend|Nacht)$/.test(n)
+    || /^(Morgendliche|Mittägliche|Nachmittägliche|Abendliche|Nächtliche) [A-Za-zÄÖÜäöüß-]+$/.test(n);
+}
+
+/**
  * Doppelte Einheiten zusammenführen: Lädt die Uhr zu Garmin und Strava hoch, gewinnt Garmin, und die
  * Strava-Extras hängen als `strava` an der Garmin-Einheit. Einheiten nur bei Strava bleiben eigenständig.
  */
 export function mergeDuplicates(acts: Obj[]): Obj[] {
-  const garmin = acts.filter((a) => a.src !== "strava");
+  // WHOOP-Einheiten laufen hier nur durch, die führt mergeWhoop (src/whoop/extract.ts) danach zusammen (#119)
+  const garmin = acts.filter((a) => a.src !== "strava" && a.src !== "whoop");
   const byDay = new Map<string, Obj[]>();
   for (const g of garmin) (byDay.get(g.date) ?? byDay.set(g.date, []).get(g.date)!).push(g);
-  const out = [...garmin];
+  const out = [...garmin, ...acts.filter((a) => a.src === "whoop")];
   for (const s of acts.filter((a) => a.src === "strava")) {
     const g = (byDay.get(s.date) || []).find((x) => !x.strava && sameUnit(x, s));
     if (!g) { out.push(s); continue; }
     g.strava = Object.fromEntries(STRAVA_EXTRAS.map((k) => [k, s[k]]));
-    if (s.name && !g.name) g.name = s.name;
+    // Name (#113): ein selbst vergebener Strava-Titel ersetzt Garmins Standardnamen („Wien Laufen“).
+    // Garmins Name bleibt als garminName, der Claude-Zugang nutzt nur ihn (Strava-Bedingungen).
+    if (s.name && (!g.name || (!isAutoName(s.name) && s.name !== g.name))) { g.garminName = g.name || ""; g.name = s.name; }
   }
   return out;
 }

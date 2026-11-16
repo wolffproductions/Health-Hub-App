@@ -459,3 +459,86 @@
   .bb-side .bb-facts { display: flex; flex-direction: column; gap: 2px; font-size: 14px; color: var(--muted); }
   .bb-side .bb-facts b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
   .bb-side .spark { margin-top: 6px; }
+
+  /* ---------- Stil B (#35), Schritt 2: Diagramme ---------- */
+  /* Achsen-Beschriftung liegt über den Linien: mit Hof in Kartenfarbe, damit sie über Daten lesbar bleibt */
+  .chart .yax text { paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+  .card .tile .chart .yax text, #dg-body .yax text { stroke: var(--panel); }
+  /* Wert-Blase beim Wischen: dunkel auf hell bzw. hell auf dunkel, oben über dem Diagramm */
+  .chart { margin-top: 18px; }
+  .tip { background: var(--fg); color: var(--bg); border-radius: 10px; box-shadow: none; padding: 6px 10px; font-family: var(--mono); font-size: 11px; transition: opacity .12s; }
+  .tip .t { color: var(--bg); opacity: .7; font-weight: 500; margin-bottom: 2px; }
+  .tip .r b { font-weight: 600; }
+  .tip .sw { box-shadow: 0 0 0 1.5px var(--bg); }
+  /* Aufbau beim Laden: Linie zeichnet sich, Fläche und Balken wachsen (300–450 ms) */
+  .gl-line { stroke-dasharray: 1; animation: glDraw .45s ease-out both; }
+  .gl-area { animation: glFade .45s ease-out both; }
+  .chart rect.bar { transform-box: fill-box; transform-origin: 50% 100%; animation: barGrow .35s ease-out both; }
+  @keyframes glDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+  @keyframes glFade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes barGrow { from { transform: scaleY(0); } to { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .gl-line, .gl-area, .chart rect.bar { animation: none; } }
+
+  /* Vergleich unter Kennzahlen als Pille (Stil B, Eddies Wunsch): grün gut, rot schlecht, sonst neutral */
+  .tile .cmp { align-self: flex-start; max-width: 100%; margin-top: 6px; padding: 3px 9px; border-radius: 12px; background: var(--fill); color: var(--muted); line-height: 1.4; }
+  .card .tile .cmp { background: var(--panel); }
+  .tile .cmp.good { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+  .tile .cmp.bad { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+  .tile .cmp.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); }
+  .tile .cmp:empty { display: none; }
+
+  /* Wettkampfprognose (#105): Quellen als Marken, Erklärung zum Aufklappen */
+  .pred-src { gap: 6px; }
+  .pred-src .chip.off { text-decoration: line-through; color: var(--ter); }
+  .pred-why { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .pred-why li { display: flex; flex-direction: column; gap: 2px; font-size: 14px; color: var(--muted); }
+  .pred-why b { color: var(--fg); font-weight: 600; font-size: 15px; }
+  #pred-more > *:not(summary) { margin-top: 10px; }
+
+  /* Überblick unter Einheiten (#55) */
+  .stats-rows { list-style: none; margin: 0 -18px; padding: 0; }
+  .stats-rows > li { display: flex; flex-direction: column; }
+  .st-head { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 12px 18px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .st-head:active { background: var(--fill); }
+  .st-name .st-chev { margin-left: auto; }
+  .st-chev { display: inline-flex; color: var(--ter); }
+  .st-chev .ico { width: 18px; height: 18px; stroke-width: 2.2; transition: transform .2s; }
+  .st-row.open .st-head .st-chev .ico { transform: rotate(90deg); }
+  .st-units { list-style: none; margin: 0; padding: 0 0 6px; border-top: .5px solid var(--line); }
+  .st-units li + li { border-top: .5px solid var(--line); }
+  .st-unit { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 18px 10px 56px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .st-unit:active { background: var(--fill); }
+  .st-utxt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .st-uname { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .st-umeta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .st-units .st-more { padding: 10px 18px 4px 56px; border-top: 0; }
+  @media (prefers-reduced-motion: reduce) { .st-chev .ico { transition: none; } }
+  .stats-rows > li + li { border-top: .5px solid var(--line); }
+  .st-name { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .st-name .sp-ico { width: 28px; height: 28px; border-radius: 8px; }
+  .st-name .sp-ico .ico { width: 18px; height: 18px; }
+  .st-vals { display: flex; flex-wrap: wrap; gap: 4px 16px; font-variant-numeric: tabular-nums; }
+  .st-vals b { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .st-vals small { font-size: 13px; color: var(--muted); }
+  /* Aktualisieren auf „Heute“ (#104) */
+  .refresh { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+  .refresh .btn { display: inline-flex; align-items: center; gap: 8px; }
+  .refresh .btn .ico { width: 18px; height: 18px; stroke-width: 2.2; }
+  .refresh .btn.busy .ico { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .refresh .btn.busy .ico { animation: none; } }
+  /* VO2max selbst eintragen (#96) */
+  #vo2-entry > *:not(summary) { margin-top: 12px; }
+  #vo2-entry .sessions { margin-top: 0; }
+
+  /* Ausrüstung (#52) */
+  .gear-list .right b { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .gear-bar { display: block; width: 84px; height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
+  .gear-bar i { display: block; height: 100%; border-radius: 3px; }
+  #gear-old > .gear-list, #gear-add > form { margin-top: 12px; }
+  #gear-add .row { flex-wrap: wrap; }
+  .gear-pick { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--muted); }
+  .gear-pick select { width: 100%; font: inherit; font-size: 17px; padding: 11px 12px; border: 0; border-radius: 10px; background: var(--fill); color: var(--fg); min-height: 44px; }
+  .u-gear { display: flex; flex-direction: column; gap: 12px; }
+  .u-gear .note:empty { display: none; }
+  .gear-foot { display: flex; flex-direction: column; gap: 12px; }

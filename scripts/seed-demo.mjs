@@ -1,7 +1,7 @@
 // Erzeugt 120 Tage Fantasie-Daten für die LOKALE Datenbank, um die Oberfläche ohne
 // Garmin-Schlüssel auszuprobieren. Nie gegen --remote ausführen.
 //   npm run seed:demo
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 let seed = 7;
 const rnd = (min, max) => { seed = (seed * 16807) % 2147483647; return min + ((seed - 1) / 2147483646) * (max - min); };
@@ -16,11 +16,13 @@ function demoLaps(km, v, hr, intervals) {
   if (intervals) {
     const out = [lap(2000, v * 0.9, hr - 15), lap(v * 1.1 * 900, v * 1.1, hr + 8)];
     for (let k = 0; k < 5; k++) out.push(lap(800 + rnd(-3, 3), v * 1.25, hr + 14), lap(400, v * 0.75, hr - 5));
-    return out;
+    // Wie ein strukturiertes Training auf der Uhr (#105): Aufwärmen, Belastung (aktiv), Erholung, alles per Taste
+    return out.map((l, i) => ({ ...l, it: i === 0 ? 2 : i === 1 || i % 2 === 0 ? 0 : 4, tg: 0 }));
   }
   const out = [];
   for (let m = km * 1000; m > 0; m -= 1000) out.push(lap(Math.min(1000, m), v * rnd(0.96, 1.04), hr + r(-4, 4)));
-  return out;
+  // Normaler Lauf: Auto-Runde je Kilometer, die letzte endet mit der Einheit
+  return out.map((l, i) => ({ ...l, it: 0, tg: i === out.length - 1 ? 7 : 2 }));
 }
 
 const LAPS = []; // Runden erst setzen, wenn alle Einheiten angelegt sind
@@ -144,6 +146,43 @@ for (const [i, v] of [[30, 50]]) L.push(`INSERT INTO vo2 (day, sport, value) VAL
     re: 116, kudos: 19, comments: 2, prs: 0, ach: 0, photos: 0, trainer: true, commute: false, wt: null, z: [0, 0, 0, 0, 0] };
   L.push(`INSERT OR REPLACE INTO activities (source, external_id, day, type, data, laps_done, route, route_done, updated_at) VALUES ('strava', 's9001', ${q(d)}, 'virtual_ride', ${q(JSON.stringify(sa))}, 1, '[]', 1, ${now});`);
 }
-L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('meta', ${q(JSON.stringify({ lastRecent: new Date().toISOString(), complete: true, oldest: day(119), lapsPending: 0 }))});`);
+// WHOOP (#119), nur mit DEMO_WHOOP=1: ausgedachte Recovery, Nächte und Strain der letzten 60 Tage, dazu WHOOP-Einheiten
+// (dieselben Läufe wie die Uhr, werden zusammengeführt, plus ein paar nur von WHOOP). Ohne rnd, damit der Rest gleich bleibt.
+L.push("DELETE FROM daily_metrics WHERE source = 'whoop';", "DELETE FROM activities WHERE source = 'whoop';", "DELETE FROM kv WHERE key IN ('whoopApp', 'whoopTokens', 'whoopMeta');");
+if (process.env.DEMO_WHOOP === "1") {
+  for (let i = 0; i < 60; i++) {
+    const w = 0.5 + 0.5 * Math.sin(i * 1.3) * Math.cos(i / 5);
+    const slp = +(6.4 + 1.6 * w).toFixed(2);
+    const m = { rec: Math.round(28 + 60 * w), hrv: Math.round(52 + 22 * w), rhr: Math.round(54 - 6 * w), spo2: 96.1, skinT: +(33.4 + 0.3 * Math.cos(i)).toFixed(1),
+      slp, deep: +(slp * 0.2).toFixed(2), rem: +(slp * 0.24).toFixed(2), awake: 24, score: Math.round(70 + 25 * w), resp: 15.1, bed: 23.2, wake: 7.1,
+      strain: +(6 + 12 * Math.abs(Math.sin(i * 0.9))).toFixed(1), kcal: Math.round(2300 + 600 * Math.abs(Math.sin(i * 0.9))) };
+    for (const [k, v] of Object.entries(m)) L.push(`INSERT OR REPLACE INTO daily_metrics VALUES (${q(day(i))},${q(k)},'whoop',${v},${now});`);
+    const uuid = (n) => "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
+    if (i % 2 === 0 && i < 30) {
+      const run = i % 4 === 0;
+      const a = { id: "w" + uuid(i), wid: uuid(i), src: "whoop", date: day(i), start: "07:31", type: run ? "running" : "cycling", name: "", km: null, min: null, hr: 148, maxHr: 171, kcal: 640, strain: +(9 + (i % 5)).toFixed(1), z: [60, 900, 1300, 500, 60], te: null, teAn: null, load: null, label: null };
+      // Dauer wie die Einheit der Uhr: folgt unten per UPDATE, wenn alle Einheiten angelegt sind
+      L.push(`INSERT OR REPLACE INTO activities (source, external_id, day, type, data, laps_done, route_done, updated_at) VALUES ('whoop', ${q(a.id)}, ${q(a.date)}, ${q(a.type)}, ${q(JSON.stringify(a))}, 1, 1, ${now});`);
+      LAPS.push(`UPDATE activities SET data = json_set(data, '$.min', (SELECT json_extract(data, '$.min') FROM activities WHERE source = 'demo' AND external_id = ${q("demo" + i)})) WHERE source = 'whoop' AND external_id = ${q(a.id)};`);
+    }
+    if (i % 7 === 3) {
+      const a = { id: "w" + uuid(500 + i), wid: uuid(500 + i), src: "whoop", date: day(i), start: "18:15", type: "yoga", name: "", km: null, min: 45, hr: 96, maxHr: 121, kcal: 160, strain: 4.2, z: [1800, 900, 0, 0, 0], te: null, teAn: null, load: null, label: null };
+      L.push(`INSERT OR REPLACE INTO activities (source, external_id, day, type, data, laps_done, route_done, updated_at) VALUES ('whoop', ${q(a.id)}, ${q(a.date)}, 'yoga', ${q(JSON.stringify(a))}, 1, 1, ${now});`);
+    }
+  }
+  // Für Screenshots „verbunden“ zeigen: ausgedachte App und Tokens, verschlüsselt wie in der App (src/util.ts) mit dem
+  // lokalen SESSION_SECRET aus .dev.vars. Keine echten Zugangsdaten; Abrufe bei WHOOP schlagen lokal einfach fehl.
+  const secret = (readFileSync(new URL("../.dev.vars", import.meta.url), "utf8").match(/^SESSION_SECRET=(.*)$/m) || [])[1];
+  if (secret) {
+    const { webcrypto } = await import("node:crypto");
+    const b64u = (b) => Buffer.from(b).toString("base64url");
+    const key = await webcrypto.subtle.importKey("raw", await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(secret.trim() + ":garmin-key")), "AES-GCM", false, ["encrypt"]);
+    const enc = async (o) => { const iv = webcrypto.getRandomValues(new Uint8Array(12)); return b64u(iv) + "." + b64u(await webcrypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(o)))); };
+    L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('whoopApp', ${q(await enc({ id: "demo-client-id", secret: "demo-client-secret-0000" }))});`);
+    L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('whoopTokens', ${q(await enc({ access: "demo", refresh: "demo", expires: Date.now() + 3600e3, user: "1", name: "Demo Person" }))});`);
+  }
+  L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('whoopMeta', ${q(JSON.stringify({ lastOk: new Date().toISOString(), lastSleep: new Date(Date.now() - 3 * 3600000).toISOString(), complete: true, count: 22 }))});`);
+}
+L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('meta', ${q(JSON.stringify({ lastRun: new Date(Date.now() - 12 * 60000).toISOString(), lastRecent: new Date().toISOString(), complete: true, oldest: day(119), lapsPending: 0 }))});`);
 writeFileSync(new URL("./.demo-seed.sql", import.meta.url), [...L, ...LAPS].join("\n"));
 console.log(`Demo-SQL mit ${L.length} Zeilen geschrieben.`);

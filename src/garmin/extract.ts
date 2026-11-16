@@ -239,8 +239,10 @@ export async function unzipFirst(buf: ArrayBuffer): Promise<Uint8Array> {
   return new Uint8Array(await out.arrayBuffer());
 }
 
-/** Runde: Ø Puls, Geschwindigkeit (m/s), Dauer (s), Länge (m) */
-export interface Lap { hr: number | null; v: number | null; s: number | null; m: number | null }
+/** Runde: Ø Puls, Geschwindigkeit (m/s), Dauer (s), Länge (m); dazu aus der Uhr (#105):
+ *  it = Intensität (0 aktiv, 1 Pause, 2 Aufwärmen, 3 Abwärmen, 4 Erholung, 5 Intervall),
+ *  tg = Auslöser (0 Runden-Taste, 1 Zeit, 2 Distanz = Auto-Runde, 3–6 Position, 7 Ende der Einheit) */
+export interface Lap { hr: number | null; v: number | null; s: number | null; m: number | null; it?: number | null; tg?: number | null }
 /** Route als [Breite, Länge] in Grad, auf 5 Nachkommastellen (~1 m) gerundet */
 export type Route = Array<[number, number]>;
 
@@ -305,7 +307,12 @@ function lapsFrom(raw: FitMsg[]): Lap[] {
     .map((f) => {
       const s = (ok(f[8], 0xffffffff) ?? ok(f[7], 0xffffffff) ?? 0) / 1000;
       const dist = (ok(f[9], 0xffffffff) ?? 0) / 100;
-      return { hr: ok(f[15], 0xff), v: s ? round(dist / s, 3) : null, s: round(s, 0), m: dist ? round(dist, 0) : null };
+      const lap: Lap = { hr: ok(f[15], 0xff), v: s ? round(dist / s, 3) : null, s: round(s, 0), m: dist ? round(dist, 0) : null };
+      // Intensität (Feld 23) und Auslöser (Feld 24) nur speichern, wenn die Uhr sie geschrieben hat
+      const it = ok(f[23], 0xff), tg = ok(f[24], 0xff);
+      if (it != null) lap.it = it;
+      if (tg != null) lap.tg = tg;
+      return lap;
     })
     .filter((l) => (l.s ?? 0) > 0);
 }
@@ -452,7 +459,7 @@ function streamsFrom(raw: FitMsg[], max = STREAM_MAX_POINTS): Streams | null {
 
 /** Runden, Route, Puls-Histogramm und Verläufe in einem Durchgang über die Datei */
 export function fitParse(u8: Uint8Array): { laps: Lap[]; route: Route; hist: HrHist; streams: Streams | null } {
-  const m = fitScan(u8, { 19: [7, 8, 9, 15], 20: [0, 1, 2, 3, 4, 5, 6, 7, 73, 78, 253] });
+  const m = fitScan(u8, { 19: [7, 8, 9, 15, 23, 24], 20: [0, 1, 2, 3, 4, 5, 6, 7, 73, 78, 253] });
   return { laps: lapsFrom(m[19]), route: routeFrom(m[20]), hist: hrHistFrom(m[20]), streams: streamsFrom(m[20]) };
 }
 

@@ -127,7 +127,7 @@ function renderBalance() {
     const f = frame(node, 220);
     const y = d3.scaleLinear([0, 100], [f.h - 22, 8]);
     const ym = d3.scaleLinear([1, 5], [f.h - 30, 16]);
-    const ml = measure(f.svg, ['100']) + 10;
+    const ml = AXIS_L;
     const x = d3.scaleUtc([parse(addDays(cur[0], -1)), parse(addDays(cur[1], 1))], [ml, f.w - 28]);
     yAxis(f, y, ml, f.w - 28, [0, 25, 50, 75, 100], (v) => String(v)); xTime(f, x, f.h - 22);
     for (let v = 1; v <= 5; v += 2) f.svg.append('text').attr('x', f.w - 22).attr('y', ym(v)).attr('dy', '0.32em').text(v);

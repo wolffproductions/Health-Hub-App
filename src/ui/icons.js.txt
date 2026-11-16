@@ -21,6 +21,7 @@ const ICONS = {
   schwimmen: '<path d="M16 9m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M6 11l4 -2l3.5 3l-1.5 2"/><path d="M3 16.75a2.4 2.4 0 0 0 1 .25a2.4 2.4 0 0 0 2 -1a2.4 2.4 0 0 1 2 -1a2.4 2.4 0 0 1 2 1a2.4 2.4 0 0 0 2 1a2.4 2.4 0 0 0 2 -1a2.4 2.4 0 0 1 2 -1a2.4 2.4 0 0 1 2 1a2.4 2.4 0 0 0 2 1a2.4 2.4 0 0 0 1 -.25"/>', // swimming
   sonstiges: '<path d="M3 12h4l3 8l4 -16l3 8h4"/>', // activity
   vollbild: '<path d="M16 4l4 0l0 4"/><path d="M14 10l6 -6"/><path d="M8 20l-4 0l0 -4"/><path d="M4 20l6 -6"/><path d="M16 20l4 0l0 -4"/><path d="M14 14l6 6"/><path d="M8 4l-4 0l0 4"/><path d="M4 4l6 6"/>', // arrows-maximize
+  aktualisieren: '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/>', // refresh
   haken: '<path d="M5 12l5 5l10 -10"/>', // check
   stimmung1: '<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M14.5 16.05a3.5 3.5 0 0 0 -5 0"/><path d="M8.5 11.5l1.5 -1.5l-1.5 -1.5"/><path d="M15.5 11.5l-1.5 -1.5l1.5 -1.5"/>', // mood-sad-squint
   stimmung2: '<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 10l.01 0"/><path d="M15 10l.01 0"/><path d="M9.5 15.25a3.5 3.5 0 0 1 5 0"/>', // mood-sad

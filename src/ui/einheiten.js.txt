@@ -12,18 +12,227 @@ function sportIcon(type) {
   return ico;
 }
 
-function renderSessions() {
-  const ul = $('#sessions'); ul.replaceChildren();
-  for (const a of [...S.acts].reverse().slice(0, 40)) {
-    const li = el('li', 'tap with-icon'); const left = el('div'); const right = el('div', 'right');
-    li.tabIndex = 0; li.setAttribute('role', 'button');
-    li.addEventListener('click', () => openUnit(a.id));
-    li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openUnit(a.id); });
-    left.append(el('div', null, a.name || sportOf(a.type).label));
-    const meta = el('div', 'meta', dayLabel(a.date) + ' · ' + hm(a.min / 60) + ' h' + (a.km ? ' · ' + num(a.km, 1) + ' km' : '') + (a.hr ? ' · ' + a.hr + ' bpm' : ''));
-    left.append(meta);
-    const chip = el('span', 'chip', catOf(a.label)[1]); chip.style.background = catOf(a.label)[2]; chip.style.color = '#fff';
-    right.append(chip, el('div', 'meta', 'TE ' + num(a.te, 1) + ' / ' + num(a.teAn, 1) + ' · Last ' + num(a.load)));
-    li.append(sportIcon(a.type), left, right); ul.append(li);
+
+// ---------- ÜBERBLICK (#55) ----------
+// Summen je Sportart für 4 Wochen / dieses Jahr / gesamt, Wochenserie (Wochen in Folge mit mindestens einer Einheit,
+// wie der Strava-Streak) und Rekorde. Alles aus den eigenen Einheiten, ohne Strava. „Gesamt“ = so weit die App Daten hat.
+const STATS_R = { '4w': '4 Wochen', jahr: 'Dieses Jahr', alle: 'Gesamt' };
+const weekOf = (d) => addDays(d, -((parse(d).getUTCDay() + 6) % 7));
+function renderStats() {
+  if (!S.statsR) S.statsR = '4w';
+  const seg = $('#stats-seg');
+  seg.querySelectorAll('button').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.r === S.statsR));
+    b.onclick = () => { S.statsR = b.dataset.r; S.statsMore = 0; renderStats(); };
+  });
+  const today = S.today || new Date().toLocaleDateString('en-CA');
+  const from = S.statsR === '4w' ? addDays(today, -27) : S.statsR === 'jahr' ? today.slice(0, 4) + '-01-01' : '0000';
+  const acts = S.acts.filter((a) => a.date >= from && a.date <= today);
+  // Summen je Sportart
+  const rows = $('#stats-rows'); rows.replaceChildren();
+  for (const sp of SPORTS) {
+    const list = acts.filter((a) => sportOf(a.type) === sp);
+    if (!list.length) continue;
+    const km = sum(list.map((a) => a.km)), h = sum(list.map((a) => a.min)) / 60, up = sum(list.map((a) => a.elev));
+    // Zeile antippen klappt die Einheiten dieser Sportart im Zeitraum auf (ersetzt die lange Liste, Eddies Wunsch)
+    const open = S.statsOpen === sp.key;
+    const li = el('li', 'st-row' + (open ? ' open' : ''));
+    const head = el('button', 'st-head'); head.type = 'button'; head.setAttribute('aria-expanded', String(open));
+    head.addEventListener('click', () => { S.statsOpen = open ? null : sp.key; S.statsMore = 0; renderStats(); });
+    const name = el('span', 'st-name'); name.append(sportIcon(list[0].type), el('span', null, sp.label));
+    const chev = el('span', 'st-chev'); chev.innerHTML = icon('weiter'); name.append(chev);
+    const vals = el('span', 'st-vals');
+    const v = (n, u) => { const s = el('span'); s.append(el('b', null, n), el('small', null, u)); vals.append(s); };
+    v(String(list.length), list.length === 1 ? ' Einheit' : ' Einheiten');
+    if (km >= 0.1) v(num(km, km < 100 ? 1 : 0), ' km');
+    v(hm(h), ' h');
+    if (up >= 1) v(num(up), ' hm');
+    head.append(name, vals); li.append(head);
+    if (open) li.append(unitList(list));
+    rows.append(li);
   }
+  if (!rows.children.length) rows.append(el('li', 'note', 'Keine Einheiten in diesem Zeitraum.'));
+  // Wochenserie über alle Daten: aktuelle (die laufende Woche zählt, sobald trainiert; ohne Training läuft sie noch) und längste
+  const weeks = new Set(S.acts.map((a) => weekOf(a.date)));
+  let cur = 0, w = weekOf(today);
+  if (!weeks.has(w)) w = addDays(w, -7);
+  while (weeks.has(w)) { cur++; w = addDays(w, -7); }
+  let best = 0, run = 0, prev = null;
+  for (const wk of [...weeks].sort()) { run = prev && addDays(prev, 7) === wk ? run + 1 : 1; best = Math.max(best, run); prev = wk; }
+  // Rekorde im gewählten Zeitraum
+  const rec = $('#stats-rec'); rec.replaceChildren();
+  tile(rec, { label: 'Serie', value: String(cur), unit: cur === 1 ? ' Woche' : ' Wochen', cmp: { text: 'längste: ' + best + (best === 1 ? ' Woche' : ' Wochen'), cls: cur && cur >= best ? 'good' : '' } });
+  const longest = (k) => acts.filter((a) => sportOf(a.type).key === k && a.km).reduce((m, a) => (!m || a.km > m.km ? a : m), null);
+  const lr = longest('run'), lb = longest('ride');
+  const climb = acts.filter((a) => a.elev).reduce((m, a) => (!m || a.elev > m.elev ? a : m), null);
+  const dl = (a) => dayLabel(a.date).replace(/^[^,]+, /, '');
+  if (lr) tile(rec, { label: 'Längster Lauf', value: num(lr.km, 1), unit: ' km', cmp: { text: dl(lr), cls: '' }, open: () => openUnit(lr.id) });
+  if (lb) tile(rec, { label: 'Längste Fahrt', value: num(lb.km, 0), unit: ' km', cmp: { text: dl(lb), cls: '' }, open: () => openUnit(lb.id) });
+  if (climb) tile(rec, { label: 'Meiste Höhenmeter', value: num(climb.elev), unit: ' hm', cmp: { text: dl(climb), cls: '' }, open: () => openUnit(climb.id) });
+  const first = S.acts.length ? S.acts[0].date : null;
+  $('#stats-note').textContent = (S.statsR === 'alle' && first ? 'Gesamt seit ' + dayLabel(first).replace(/^[^,]+, /, '') + ' ' + first.slice(0, 4) + ' (so weit die App Daten hat). ' : '')
+    + 'Sportart antippen zeigt die einzelnen Einheiten. Serie: Wochen in Folge (Montag bis Sonntag) mit mindestens einer Einheit; die laufende Woche zählt, sobald du trainiert hast.';
+}
+
+// Schlichte Liste der Einheiten einer Sportart (neueste zuerst): Name, Datum, Strecke, Dauer, Tempo; antippen öffnet die Seite
+const UNITS_STEP = 30;
+function unitList(list) {
+  const ul = el('ul', 'st-units');
+  const sorted = [...list].sort((x, y) => (x.date + x.start < y.date + y.start ? 1 : -1));
+  const shown = sorted.slice(0, UNITS_STEP * (1 + (S.statsMore || 0)));
+  for (const a of shown) {
+    const li = el('li');
+    const b = el('button', 'st-unit'); b.type = 'button';
+    b.addEventListener('click', () => openUnit(a.id));
+    const sp = sportOf(a.type).key, txt = el('span', 'st-utxt');
+    const bits = [dayLabel(a.date)];
+    if (a.km) bits.push(num(a.km, 1) + ' km');
+    if (a.min) bits.push(hm(a.min / 60) + ' h');
+    if (sp === 'run' && a.km && a.min) bits.push(pace(a.min * 60 / a.km) + '/km');
+    else if (sp === 'ride' && a.km && a.min) bits.push(num(a.km / (a.min / 60), 1) + ' km/h');
+    txt.append(el('span', 'st-uname', a.name || sportOf(a.type).label), el('span', 'st-umeta', bits.join(' · ')));
+    const chev = el('span', 'st-chev'); chev.innerHTML = icon('weiter');
+    b.append(txt, chev); li.append(b); ul.append(li);
+  }
+  if (sorted.length > shown.length) {
+    const li = el('li'), more = el('button', 'btn ghost small', 'Weitere anzeigen (' + (sorted.length - shown.length) + ')');
+    more.type = 'button'; more.addEventListener('click', () => { S.statsMore = (S.statsMore || 0) + 1; renderStats(); });
+    li.className = 'st-more'; li.append(more); ul.append(li);
+  }
+  return ul;
+}
+
+// ---------- AUSRÜSTUNG (#52) ----------
+// Schuhe und Räder mit Kilometerstand. Strava-Teile kommen einmal am Tag automatisch (Stand laut Strava plus
+// Einheiten, die du hier selbst zuordnest), eigene Teile zählen ab dem eingetragenen Kilometerstand.
+// Der Server rechnet (src/ausruestung.ts), die Oberfläche zeigt nur an. S.gear = null heißt: neu laden.
+async function loadGear() {
+  if (S.gearLoading) return;
+  S.gearLoading = true;
+  try { S.gear = await api('/api/gear'); } catch { S.gear = { items: [], assign: {}, usage: {} }; }
+  S.gearLoading = false;
+  if (S.tab === 'einheiten') renderGear();
+  if (S.tab === 'einheit') renderUnitGear();
+}
+async function gearPost(body) {
+  const r = await api('/api/gear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (r && r.ok === false) throw new Error(r.error || 'Fehler');
+  S.gear = r; return r;
+}
+/** Teil einer Einheit wie im Server: eigene Wahl vor Strava */
+function gearOfAct(a) {
+  const g = S.gear; if (!g) return null;
+  if (Object.prototype.hasOwnProperty.call(g.assign, a.id)) return g.assign[a.id] || null;
+  const sg = a.strava ? a.strava.gear : a.src === 'strava' ? a.gear : null;
+  const it = sg && g.items.find((i) => i.strava === sg);
+  return it ? it.id : null;
+}
+
+function renderGear() {
+  if (S.gear == null) { loadGear(); return; }
+  const g = S.gear, used = g.usage || {};
+  const active = g.items.filter((i) => !i.retired), old = g.items.filter((i) => i.retired);
+  const row = (it) => {
+    const u = used[it.id] || { km: it.startKm || 0, count: 0, last: null };
+    const li = el('li', 'with-icon tap gear-row');
+    const ico = el('span', 'sp-ico'); ico.innerHTML = icon(it.sport === 'ride' ? 'rad' : 'laufen'); ico.style.color = css('--muted');
+    const txt = el('div'); txt.append(el('div', null, it.name));
+    const bits = [u.count ? u.count + (u.count === 1 ? ' Einheit' : ' Einheiten') : 'noch keine Einheit'];
+    if (u.last) bits.push('zuletzt ' + dayLabel(u.last).replace(/^[^,]+, /, ''));
+    if (it.strava) bits.push('aus Strava');
+    txt.append(el('div', 'meta', bits.join(' · ')));
+    const right = el('div', 'right'); right.append(el('b', null, num(u.km, u.km < 100 ? 1 : 0) + ' km'));
+    if (it.limitKm && !it.retired) {
+      const p = u.km / it.limitKm, bar = el('span', 'gear-bar'), f = el('i');
+      f.style.width = Math.min(100, p * 100) + '%';
+      f.style.background = p >= 1 ? css('--bad') : p >= 0.9 ? css('--warn') : css('--accent');
+      bar.append(f); right.append(bar);
+      right.append(el('span', 'meta', p >= 1 ? 'Grenze erreicht' : 'noch ' + num(it.limitKm - u.km) + ' km'));
+    }
+    li.append(ico, txt, right);
+    li.addEventListener('click', () => editGear(it));
+    return li;
+  };
+  const list = $('#gear-list'); list.replaceChildren(...active.map(row));
+  if (!active.length) list.append(el('li', 'note', g.stravaConnected ? 'Noch keine Schuhe oder Räder. Sie kommen beim nächsten Abgleich aus Strava, oder du legst sie unten an.' : 'Noch keine Schuhe oder Räder. Lege unten einen an.'));
+  $('#gear-old').hidden = !old.length; $('#gear-old-n').textContent = 'Im Ruhestand (' + old.length + ')';
+  $('#gear-old-list').replaceChildren(...old.map(row));
+  const note = $('#gear-note'); note.replaceChildren();
+  const txt = el('p', 'note', 'Antippen zum Bearbeiten. Welcher Schuh zu einer Einheit gehört, wählst du auf der Seite der Einheit.'); note.append(txt);
+  if (g.stravaConnected) {
+    txt.append(' Aus Strava kommen deine Schuhe und Räder einmal am Tag' + (g.stravaAt ? ' (zuletzt ' + relTime(g.stravaAt) + ')' : '') + '.');
+    const b = el('button', 'btn ghost small', 'Jetzt abgleichen'); b.type = 'button';
+    b.onclick = async () => { b.disabled = true; b.textContent = 'Gleiche ab …'; try { await gearPost({ action: 'strava' }); renderGear(); } catch (e) { b.textContent = 'Fehler: ' + e.message; } };
+    const r = el('div', 'row'); r.append(b); note.append(r);
+  }
+  wireGearForm();
+}
+
+// Formular: neu anlegen oder vorhandenes Teil bearbeiten (S.gearEdit = ID)
+function editGear(it) {
+  S.gearEdit = it ? it.id : null;
+  const d = $('#gear-add'); d.open = !!it || d.open;
+  $('#gear-add-sum').textContent = it ? it.name + ' bearbeiten' : 'Schuh oder Rad hinzufügen';
+  $('#gear-name').value = it ? it.name : '';
+  $('#gear-sport').value = it ? it.sport : 'run';
+  $('#gear-sport').disabled = !!(it && it.strava);
+  // Bei Strava-Teilen zählt Stravas Stand, ein eigener Start-Kilometerstand ergibt dort keinen Sinn
+  $('#gear-start').closest('label').hidden = !!(it && it.strava);
+  $('#gear-start').value = it ? it.startKm || '' : '';
+  $('#gear-limit').value = it ? (it.limitKm ?? '') : '';
+  $('#gear-save').textContent = it ? 'Speichern' : 'Hinzufügen';
+  $('#gear-retire').hidden = !it; if (it) $('#gear-retire').textContent = it.retired ? 'Wieder aktivieren' : 'In den Ruhestand';
+  $('#gear-del').hidden = !it || !!it.strava;
+  $('#gear-cancel').hidden = !it;
+  $('#gear-msg').textContent = '';
+  if (it) d.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function wireGearForm() {
+  const f = $('#gear-form'); if (f.dataset.wired) return; f.dataset.wired = '1';
+  const msg = $('#gear-msg');
+  const done = (t) => { editGear(null); $('#gear-add').open = false; renderGear(); msg.textContent = t || ''; };
+  // Grenze passend zur Art vorschlagen (Laufschuhe 700 km, Räder ohne)
+  $('#gear-sport').addEventListener('change', () => { $('#gear-limit').placeholder = $('#gear-sport').value === 'run' ? '700' : 'leer = ohne'; });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const sport = $('#gear-sport').value, lim = $('#gear-limit').value.trim();
+    const item = { name: $('#gear-name').value, sport, startKm: $('#gear-start').value.replace(',', '.'), limitKm: lim === '' ? (sport === 'run' && !S.gearEdit ? 700 : '') : lim };
+    try { await gearPost({ action: 'save', id: S.gearEdit || undefined, item }); done(S.gearEdit ? 'Gespeichert.' : 'Hinzugefügt.'); }
+    catch (err) { msg.textContent = err.message; }
+  });
+  $('#gear-retire').addEventListener('click', async () => {
+    const it = S.gear.items.find((i) => i.id === S.gearEdit); if (!it) return;
+    try { await gearPost({ action: 'save', id: it.id, item: { retired: !it.retired } }); done(); } catch (err) { msg.textContent = err.message; }
+  });
+  $('#gear-del').addEventListener('click', async () => {
+    const it = S.gear.items.find((i) => i.id === S.gearEdit); if (!it) return;
+    if (!confirm('„' + it.name + '“ löschen? Die Zuordnungen zu Einheiten gehen dabei verloren. Im Ruhestand bleibt alles erhalten.')) return;
+    try { await gearPost({ action: 'delete', id: it.id }); done('Gelöscht.'); } catch (err) { msg.textContent = err.message; }
+  });
+  $('#gear-cancel').addEventListener('click', () => done());
+}
+
+// Auf der Seite einer Einheit: welcher Schuh bzw. welches Rad, änderbar
+function renderUnitGear() {
+  const box = $('#u-gear'); if (!box) return;
+  const a = S.acts.find((x) => x.id === box.dataset.act); if (!a) return;
+  if (S.gear == null) { loadGear(); return; }
+  const sport = sportOf(a.type).key, cur = gearOfAct(a);
+  const items = S.gear.items.filter((i) => i.sport === sport && (!i.retired || i.id === cur));
+  box.replaceChildren();
+  const lab = el('label', 'gear-pick');
+  const sel = el('select'); sel.setAttribute('aria-label', sport === 'ride' ? 'Rad dieser Einheit' : 'Schuh dieser Einheit');
+  sel.append(new Option('Keiner', ''));
+  for (const it of items) sel.append(new Option(it.name + (it.retired ? ' (Ruhestand)' : ''), it.id));
+  sel.value = cur || '';
+  lab.append(sel); box.append(lab);
+  const own = Object.prototype.hasOwnProperty.call(S.gear.assign, a.id);
+  const note = el('p', 'note', items.length ? (own ? 'Von dir gewählt.' : cur ? 'Aus Strava übernommen.' : '') : 'Lege unter Einheiten → Ausrüstung zuerst ' + (sport === 'ride' ? 'ein Rad' : 'einen Schuh') + ' an.');
+  box.append(note);
+  sel.addEventListener('change', async () => {
+    sel.disabled = true;
+    try { await gearPost({ action: 'assign', act: a.id, gear: sel.value }); note.textContent = 'Gespeichert.'; }
+    catch (e) { note.textContent = 'Fehler: ' + e.message; }
+    sel.disabled = false;
+  });
 }

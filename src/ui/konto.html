@@ -23,29 +23,12 @@
         <div class="row"><button class="btn" id="mcp-copy" type="button">Adresse kopieren</button></div>
         <p class="note">In Claude unter Einstellungen → Connectors einen eigenen Connector mit dieser Adresse hinzufügen und dann mit deinem App-Passwort erlauben.</p>
         <label class="mcp-mood"><input type="checkbox" id="mcp-mood"><span>Stimmung (Balance) für Claude freigeben</span></label>
+        <label class="mcp-mood" id="mcp-whoop-row" hidden><input type="checkbox" id="mcp-whoop"><span>WHOOP-Daten für Claude freigeben</span></label>
         <p class="note">Was Claude abruft, wird Teil des Gesprächs und damit an Anthropic übertragen.</p>
         <ul class="mcp-list" id="mcp-clients" aria-label="Verbundene Apps"></ul>
         <p class="msg" id="mcp-msg" role="status"></p>
       </div>
-      <h3 class="sec">Eigene Werte</h3>
-    <!-- VO2max eintragen (#27), Anzeige bleibt unter Statistiken → Leistung -->
-    <div class="card form" id="vo2-entry">
-      <h3>VO2max eintragen</h3>
-      <p class="note">Die App übernimmt die VO2max automatisch aus deinen Läufen und Radfahrten. Eintragen musst du nur, wenn ein Wert fehlt oder du ihn korrigieren willst; dein Eintrag gilt dann für diesen Tag. Verlauf und Einschätzung siehst du unter Statistiken → Leistung.</p>
-      <form class="form" id="vo2-form" novalidate>
-        <div class="fields">
-          <label>Datum<input type="date" id="vo2-date" required></label>
-          <label>Sportart<select id="vo2-sport"><option value="run">Laufen</option><option value="ride">Rad</option></select></label>
-          <label>VO2max<input type="number" id="vo2-val" inputmode="numeric" min="20" max="95" step="1" placeholder="z. B. 58" required></label>
-        </div>
-        <div class="row"><button class="btn" type="submit">Eintragen</button></div>
-        <p class="msg" id="vo2-msg" role="status"></p>
-      </form>
-      <details>
-        <summary class="note">Alle Einträge (<span id="vo2-count">0</span>)</summary>
-        <ul class="sessions" id="vo2-list"></ul>
-      </details>
-    </div>
+      <h3 class="sec">Einstellungen</h3>
     <div class="card form">
       <h3>Pulszonen</h3>
       <p class="note">Für „Zeit in Herzfrequenzzonen“ und „Pace je Zone“ unter „Leistung“. Die drei Bereiche sind Z2–Z4, Z1 liegt darunter, Z5 darüber (wie bei Strava). Vorbelegt mit Beispielwerten, trag deine eigenen ein (z. B. aus Strava oder vom Leistungstest). Ganze Werte, aufsteigend, ohne Überschneidung.</p>
@@ -74,6 +57,12 @@
         <div class="row"><button class="btn" id="pw-save" type="button">Passwort ändern</button></div>
       </div>
       <p class="msg" id="pw-msg" role="status"></p>
+    </div>
+    <div class="card form" id="pred-cfg">
+      <h3>Wettkampfprognose</h3>
+      <p class="note">Woraus die Prognose unter Statistiken → Leistung rechnet. „Automatisch“ passt für fast alle: Garmins VO2max, dazu deine Läufe und echte Intervalle, je nachdem wie verlässlich sie sind.</p>
+      <label>Prognose berechnen aus<select id="pred-mode"><option value="auto">Automatisch (empfohlen)</option><option value="garmin">Nur Garmin-VO2max</option><option value="intervalle">Mit meinen Intervallen</option></select></label>
+      <p class="msg" id="pred-msg" role="status"></p>
     </div>
     <div class="card">
       <a class="btn ghost" href="/logout">Abmelden</a>
@@ -113,6 +102,47 @@
       <p class="msg" id="sv-app-msg" role="status"></p>
       <p class="note">„Verbindung löschen“ widerruft den Zugriff bei Strava und entfernt App-Daten und Zugang. Bereits geladene Einheiten bleiben erhalten.</p>
       <p class="note">Strava-Daten siehst nur du. Die Nutzungsbedingungen von Strava schränken die Weitergabe an KI-Dienste ein, deshalb bleiben Strava-Daten beim geplanten Claude-Zugang (#5) vorerst außen vor.</p>
+    </div>
+    </div>
+
+    <!-- Unterseite WHOOP (#119) -->
+    <div id="konto-whoop" hidden>
+    <div class="card form">
+      <h3>Verbindung</h3>
+      <p class="note" id="wh-state">Status wird geladen …</p>
+      <label class="mcp-mood" id="wh-consent-row"><input type="checkbox" id="wh-consent"><span>Ich erlaube meiner App, meine WHOOP-Daten dauerhaft in meinem Cloudflare-Konto zu speichern.</span></label>
+      <div class="row" id="wh-actions"><a class="btn" id="wh-connect" href="/whoop/connect?ok=1">Mit WHOOP verbinden</a><button class="btn ghost" id="wh-sync" type="button">Jetzt aktualisieren</button></div>
+      <p class="msg" id="wh-msg" role="status"></p>
+      <p class="note">Die App holt Recovery, Schlaf, Strain und Einheiten alle 30 Minuten. Beim ersten Mal kommt die Historie des letzten Jahres, in Etappen. WHOOP liefert keine GPS-Route, keine Runden und keine Verläufe.</p>
+    </div>
+    <div class="card form" id="wh-night-card">
+      <h3>Garmin und WHOOP zusammen</h3>
+      <p class="note">Trägst du beides, zählt für Schlaf, HRV, Ruhepuls und Sauerstoff nur eine Quelle, damit sich die Werte nicht mischen. Trainings kommen immer von der Uhr (GPS, Runden), WHOOP-Strain hängt daran.</p>
+      <label>Nachtwerte von<select id="wh-night"><option value="whoop">WHOOP (empfohlen)</option><option value="garmin">Garmin</option></select></label>
+      <p class="msg" id="wh-night-msg" role="status"></p>
+    </div>
+    <div class="card form">
+      <h3>Sofort aktualisieren</h3>
+      <p class="note" id="wh-hook-state">Mit einem Webhook meldet WHOOP jede neue Nacht und Einheit sofort, statt dass die App bis zu 30 Minuten wartet. Trag dazu in deiner WHOOP-App unter „Webhooks“ diese Adresse ein (Version v2):</p>
+      <p class="note"><code id="wh-hook-url"></code> <button class="btn small ghost" id="wh-hook-copy" type="button">Kopieren</button></p>
+      <p class="msg" id="wh-hook-msg" role="status"></p>
+    </div>
+    <div class="card form">
+      <h3>Eigene WHOOP-App</h3>
+      <p class="note">WHOOP gibt Daten nur an registrierte Apps heraus. Das richtest du einmal ein, kostenlos, in etwa fünf Minuten:</p>
+      <ol class="wi-steps">
+        <li>Auf <a href="https://developer-dashboard.whoop.com/" target="_blank" rel="noopener">developer.whoop.com ↗</a> mit deinem WHOOP-Konto anmelden, ein Team und darin eine App anlegen (Name z. B. „Mein Health Hub“).</li>
+        <li>Alle Lese-Rechte und „offline“ anhaken. Als Redirect-URL genau diese Adresse eintragen:<br><code id="wh-cb"></code> <button class="btn small ghost" id="wh-copy" type="button">Kopieren</button></li>
+        <li>Client-ID und Client-Secret von dort hier eintragen, speichern, dann oben „Mit WHOOP verbinden“.</li>
+      </ol>
+      <label class="note" for="wh-id">Client-ID</label>
+      <input id="wh-id" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Client-ID einfügen">
+      <label class="note" for="wh-secret">Client-Secret (wird verschlüsselt gespeichert und nie wieder angezeigt)</label>
+      <input id="wh-secret" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Client-Secret einfügen">
+      <div class="row"><button class="btn" id="wh-save" type="button">Speichern</button><button class="btn danger" id="wh-del" type="button">Verbindung löschen</button></div>
+      <p class="msg" id="wh-app-msg" role="status"></p>
+      <p class="note">„Verbindung löschen“ widerruft den Zugriff bei WHOOP und entfernt App-Daten und Zugang. Bereits geladene Werte bleiben erhalten.</p>
+      <p class="note">WHOOP-Daten siehst nur du. Beim Claude-Zugang sind sie nur dabei, wenn du sie unter „Claude“ ausdrücklich freigibst (so verlangen es die WHOOP-Bedingungen).</p>
     </div>
     </div>
 

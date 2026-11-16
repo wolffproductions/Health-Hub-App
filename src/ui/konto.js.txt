@@ -6,6 +6,7 @@ const SOURCES = [
   { id: 'garmin', name: 'Garmin', icon: 'watch', color: '--accent', detail: 'garmin', status: garminSourceStatus },
   { id: 'strava', name: 'Strava', icon: 'route', color: '--accent-2', detail: 'strava', status: stravaSourceStatus },
   { id: 'withings', name: 'Withings', icon: 'scale', color: '--ok', detail: 'withings', status: withingsSourceStatus },
+  { id: 'whoop', name: 'WHOOP', icon: 'band', color: '--warn', detail: 'whoop', status: whoopSourceStatus },
   { id: 'google', name: 'Google Health / Fitbit', icon: 'band', color: '--muted', status: () => ({ light: '', text: 'In Prüfung', sub: 'z. B. Fitbit Air' }) },
   { id: 'coros', name: 'COROS', icon: 'watch', color: '--muted', status: () => ({ light: '', text: 'In Prüfung', sub: 'Uhren von COROS' }) },
 ];
@@ -49,11 +50,11 @@ function renderSources() {
 }
 
 // Unterseiten im Konto (iOS-artig „hineinnavigieren“); 'main' = Übersicht
-const KONTO_TITLES = { main: 'Konto', garmin: 'Garmin Connect', strava: 'Strava', withings: 'Withings' };
+const KONTO_TITLES = { main: 'Konto', garmin: 'Garmin Connect', strava: 'Strava', withings: 'Withings', whoop: 'WHOOP' };
 function showKontoView(view) {
   S.kontoView = KONTO_TITLES[view] ? view : 'main';
   $('#konto-main').hidden = S.kontoView !== 'main';
-  document.querySelectorAll('#konto-garmin, #konto-strava, #konto-withings').forEach((n) => { n.hidden = n.id !== 'konto-' + S.kontoView; });
+  document.querySelectorAll('#konto-garmin, #konto-strava, #konto-withings, #konto-whoop').forEach((n) => { n.hidden = n.id !== 'konto-' + S.kontoView; });
   $('#konto-title').textContent = KONTO_TITLES[S.kontoView];
   document.body.dataset.konto = S.kontoView;
   if (S.tab === 'konto') $('#navTitle').textContent = KONTO_TITLES[S.kontoView];
@@ -66,6 +67,7 @@ function renderAccount() {
   renderSources();
   renderWithings();
   renderStrava();
+  renderWhoop();
   renderPush();
   renderSecurity();
   renderClaude();
@@ -217,6 +219,89 @@ function initStrava() {
   }
 }
 
+// ---------- WHOOP verbinden (#119) ----------
+function whoopSourceStatus() {
+  const w = S.status && S.status.whoop;
+  const what = 'Recovery, Schlaf und Strain';
+  if (!w) return { light: '', text: S.status ? 'Nicht eingerichtet' : 'Lädt …', sub: what };
+  if (!w.app) return { light: '', text: 'Nicht eingerichtet', sub: what };
+  if (!w.connected) return { light: 'r', text: 'Nicht verbunden', sub: 'Mit WHOOP verbinden' };
+  const last = w.lastSleep ? 'Letzte Nacht ' + relTime(w.lastSleep) : 'Noch keine Nacht';
+  if (w.paused) return { light: 'y', text: 'Pause (WHOOP-Limit)', sub: last };
+  if (w.lastError) return { light: 'y', text: 'Verbunden, letzter Abruf mit Fehler', sub: last };
+  return { light: 'g', text: 'Verbunden', sub: last + (w.complete ? '' : ' · Historie wird geladen') };
+}
+function renderWhoop() {
+  $('#wh-cb').textContent = location.origin + '/whoop/callback';
+  $('#wh-hook-url').textContent = location.origin + '/whoop/webhook';
+  const w = S.status && S.status.whoop; if (!w) return;
+  $('#wh-state').textContent = !w.app ? 'Noch nicht eingerichtet. Lege zuerst unten deine eigene WHOOP-App an.'
+    : !w.connected ? 'App eingetragen, aber noch nicht mit deinem WHOOP-Konto verbunden.'
+    : 'Verbunden' + (w.name ? ' als ' + w.name : '') + '.' + (w.lastOk ? ' Zuletzt abgerufen: ' + new Date(w.lastOk).toLocaleString('de-DE') + '.' : '')
+      + (w.count ? ' ' + w.count + ' Einheiten.' : '') + (w.complete ? ' Historie vollständig.' : ' Historie wird geladen.')
+      + (w.paused ? ' WHOOP bittet gerade um eine Pause, die App macht später von selbst weiter.' : '') + (w.lastError ? ' Letzter Fehler: ' + w.lastError : '');
+  $('#wh-connect').textContent = w.connected ? 'Neu verbinden' : 'Mit WHOOP verbinden';
+  $('#wh-connect').classList.toggle('ghost', w.connected);
+  $('#wh-connect').hidden = !w.app;
+  $('#wh-consent-row').hidden = !w.app || w.connected;
+  $('#wh-sync').hidden = !w.connected;
+  $('#wh-actions').hidden = !w.app;
+  $('#wh-del').hidden = !w.app;
+  $('#wh-night').value = w.night || 'whoop';
+  $('#wh-hook-msg').textContent = w.connected ? (w.lastHook ? 'Letzte Meldung von WHOOP: ' + relTime(w.lastHook) + '.' : 'Noch keine Meldung von WHOOP empfangen.') : '';
+}
+const WH_RETURN = {
+  ok: 'Verbunden. Recovery, Schlaf, Strain und Einheiten werden geladen.',
+  abgebrochen: 'Die Verbindung wurde bei WHOOP abgebrochen.',
+  abgelaufen: 'Die Anmeldung bei WHOOP ist abgelaufen. Bitte noch einmal verbinden.',
+  rechte: 'WHOOP hat keinen dauerhaften Zugang erlaubt. Bitte in deiner WHOOP-App „offline“ anhaken und neu verbinden.',
+  fehler: 'WHOOP hat die Verbindung abgelehnt. Stimmen Client-ID, Client-Secret und Redirect-URL?',
+  app: 'Bitte zuerst Client-ID und Client-Secret eintragen.',
+  zustimmung: 'Bitte erst das Speichern erlauben (Haken oben), dann verbinden.',
+};
+function initWhoop() {
+  const copy = (src, msg) => navigator.clipboard?.writeText($(src).textContent).then(() => { $(msg).textContent = 'Adresse kopiert.'; }).catch(() => {});
+  $('#wh-copy').addEventListener('click', () => copy('#wh-cb', '#wh-app-msg'));
+  $('#wh-hook-copy').addEventListener('click', () => copy('#wh-hook-url', '#wh-hook-msg'));
+  // Verbinden erst nach dem Haken: WHOOPs Bedingungen verlangen die ausdrückliche Zustimmung zum Speichern
+  $('#wh-connect').addEventListener('click', (e) => {
+    const w = S.status && S.status.whoop;
+    if (w && !w.connected && !$('#wh-consent').checked) { e.preventDefault(); $('#wh-msg').textContent = WH_RETURN.zustimmung; }
+  });
+  $('#wh-save').addEventListener('click', async () => {
+    const b = $('#wh-save'); b.disabled = true; $('#wh-app-msg').textContent = '';
+    try {
+      const r = await api('/api/whoop/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: $('#wh-id').value, secret: $('#wh-secret').value }) });
+      if (r.ok) { $('#wh-id').value = ''; $('#wh-secret').value = ''; $('#wh-app-msg').textContent = 'Gespeichert. Jetzt oben „Mit WHOOP verbinden“.'; await loadData(); }
+      else $('#wh-app-msg').textContent = r.error || 'Speichern fehlgeschlagen.';
+    } finally { b.disabled = false; }
+  });
+  $('#wh-del').addEventListener('click', async () => {
+    if (!confirm('WHOOP-Verbindung löschen? Geladene Werte bleiben erhalten.')) return;
+    await api('/api/whoop/app', { method: 'DELETE' });
+    $('#wh-app-msg').textContent = 'Verbindung gelöscht.'; await loadData();
+  });
+  $('#wh-sync').addEventListener('click', async () => {
+    const b = $('#wh-sync'); b.disabled = true; $('#wh-msg').textContent = 'Wird aktualisiert …';
+    try { await api('/api/whoop/sync', { method: 'POST' }); await loadData(); $('#wh-msg').textContent = 'Aktualisiert.'; }
+    catch { $('#wh-msg').textContent = 'Aktualisieren fehlgeschlagen.'; } finally { b.disabled = false; }
+  });
+  $('#wh-night').addEventListener('change', async (e) => {
+    try {
+      await api('/api/sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ night: e.target.value }) });
+      $('#wh-night-msg').textContent = 'Gespeichert. Nachtwerte kommen jetzt von ' + (e.target.value === 'garmin' ? 'Garmin.' : 'WHOOP.');
+      await loadData();
+    } catch { $('#wh-night-msg').textContent = 'Speichern fehlgeschlagen.'; }
+  });
+  // Rückkehr von WHOOP (/?whoop=…): direkt die WHOOP-Seite im Konto zeigen
+  const res = new URLSearchParams(location.search).get('whoop');
+  if (res) {
+    history.replaceState(null, '', location.pathname);
+    showTab('konto'); showKontoView('whoop');
+    $('#wh-msg').textContent = WH_RETURN[res] || '';
+  }
+}
+
 // ---------- Morgen-Push (#13) ----------
 // Web Push an die Homescreen-App. Auf dem iPhone nur, wenn die App über „Zum Home-Bildschirm“ geöffnet wurde (ab iOS 16.4).
 const PUSH = { info: null };
@@ -303,6 +388,8 @@ async function renderClaude() {
   let i; try { i = await api('/api/mcp'); } catch { return; }
   $('#mcp-url').value = i.url;
   $('#mcp-mood').checked = !!i.mood;
+  $('#mcp-whoop').checked = !!i.whoop;
+  $('#mcp-whoop-row').hidden = !i.whoopConnected && !i.whoop;
   const ul = $('#mcp-clients'); ul.replaceChildren();
   ul.hidden = !i.clients.length;
   for (const c of i.clients) {
@@ -325,6 +412,13 @@ function initClaude() {
     try {
       await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mood: e.target.checked }) });
       $('#mcp-msg').textContent = e.target.checked ? 'Claude darf jetzt deine Stimmung lesen.' : 'Stimmung ist für Claude wieder gesperrt.';
+    } catch { $('#mcp-msg').textContent = 'Speichern fehlgeschlagen.'; }
+  });
+  // WHOOP (#119): nur mit ausdrücklicher Freigabe (WHOOP-Bedingungen)
+  $('#mcp-whoop').addEventListener('change', async (e) => {
+    try {
+      await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ whoop: e.target.checked }) });
+      $('#mcp-msg').textContent = e.target.checked ? 'Claude darf jetzt deine WHOOP-Daten lesen.' : 'WHOOP-Daten sind für Claude wieder gesperrt.';
     } catch { $('#mcp-msg').textContent = 'Speichern fehlgeschlagen.'; }
   });
 }
@@ -390,4 +484,17 @@ function initPasskeys() {
     } finally { b.disabled = false; loadPasskeys(); }
   });
   loadPasskeys();
+}
+
+// ---------- Wettkampfprognose: Einstellung (#105) ----------
+function initPredCfg() {
+  const sel = $('#pred-mode');
+  api('/api/pred').then((c) => { if (c && c.mode) sel.value = c.mode; }).catch(() => {});
+  sel.addEventListener('change', async () => {
+    try {
+      await api('/api/pred', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: sel.value }) });
+      $('#pred-msg').textContent = 'Gespeichert. Die Prognose unter Leistung rechnet jetzt so.';
+      loadData().catch(() => {});
+    } catch { $('#pred-msg').textContent = 'Speichern fehlgeschlagen.'; }
+  });
 }

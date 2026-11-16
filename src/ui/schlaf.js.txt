@@ -19,7 +19,7 @@ function renderSleep() {
     const f = frame(hn, 220);
     const vals = H.flatMap((d) => [d.hrv, d.hrvLo, d.hrvHi]).filter((v) => v != null);
     const y = d3.scaleLinear(d3.extent(vals), [f.h - 22, 8]).nice();
-    const ml = measure(f.svg, y.ticks(4).map((v) => num(v))) + 10;
+    const ml = AXIS_L;
     const x = d3.scaleUtc([parse(cur[0]), parse(cur[1])], [ml, f.w - 10]);
     yAxis(f, y, ml, f.w - 10, 4, (v) => num(v)); xTime(f, x, f.h - 22);
     f.svg.append('path').datum(H.filter((d) => d.hrvLo != null)).style('fill', css('--prev')).style('opacity', .25).attr('d', d3.area().x((d) => x(parse(d.d))).y0((d) => y(d.hrvLo)).y1((d) => y(d.hrvHi)));
@@ -39,12 +39,14 @@ function renderSleep() {
     const f = frame(sn, 220);
     const y = d3.scaleLinear([0, Math.max(10, d3.max(Z, (d) => d.slp))], [f.h - 22, 8]);
     const y2 = d3.scaleLinear([0, 100], [f.h - 22, 8]);
-    const ml = measure(f.svg, y.ticks(5).map((v) => v + ' h')) + 10;
+    const ml = AXIS_L;
     const x = d3.scaleUtc([parse(addDays(cur[0], -1)), parse(addDays(cur[1], 1))], [ml, f.w - 28]);
     yAxis(f, y, ml, f.w - 28, 5, (v) => v + ' h'); xTime(f, x, f.h - 22);
     for (const v of [50, 100]) f.svg.append('text').attr('x', f.w - 24).attr('y', y2(v)).attr('dy', '0.32em').text(v);
     const bw = Math.max(1.5, (f.w - ml - 28) / (S.days + 2) - 1);
-    f.svg.append('g').selectAll('rect').data(Z).join('rect').attr('x', (d) => x(parse(d.d)) - bw / 2).attr('width', bw).attr('y', (d) => y(d.slp)).attr('height', (d) => y(0) - y(d.slp)).attr('rx', Math.min(2, bw / 2)).style('fill', css('--accent')).style('opacity', .45);
+    f.svg.append('g').selectAll('rect').data(Z).join('rect').attr('x', (d) => x(parse(d.d)) - bw / 2).attr('width', bw).attr('y', (d) => y(d.slp)).attr('height', (d) => y(0) - y(d.slp)).attr('rx', Math.min(3, bw / 2)).attr('class', 'bar')
+      // Stil B: Historie grau, die letzte Nacht in der Akzentfarbe
+      .style('fill', (d, i) => (i === Z.length - 1 ? css('--accent') : css('--prev')));
     glowLine(f, Z.filter((d) => d.score != null), { x: (d) => x(parse(d.d)), y: (d) => y2(d.score), color: css('--accent-2'), area: false, dot: true });
     const bis = d3.bisector((d) => parse(d.d)).center;
     hoverLayer(f, { x0: ml, x1: f.w - 28, y0: 8, y1: f.h - 22 }, (px) => {

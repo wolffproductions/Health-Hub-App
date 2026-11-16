@@ -82,3 +82,92 @@ test("Web Push: VAPID-Kopfzeile ist ein gültiges ES256-JWT für den Push-Dienst
   assert.equal(m[4], pub);
   assert.ok(await s.verify({ name: "ECDSA", hash: "SHA-256" }, kp.publicKey, dec(m[3]), new TextEncoder().encode(m[1] + "." + m[2])));
 });
+
+// Erholungszeit (#107), ausgedachte Werte nach dem Muster von Eddies Intervall-Dienstag
+test("Erholungszeit: nach harten Intervallen am Abend morgens gelb, zwei Tage später grün", () => {
+  const D = (d: number) => `2026-11-${String(d).padStart(2, "0")}`;
+  const days = Array.from({ length: 31 }, (_, i) => ({ d: new Date(Date.UTC(2026, 9, 14 + i)).toISOString().slice(0, 10), rhr: 42, hrv: 77, hrvLo: 73, hrvHi: 95, score: 88, slp: 8 }));
+  const loads = new Map(days.map((x) => [x.d, 60]));
+  const easy = [3, 5, 7, 8].map((d) => ({ date: D(d), start: "09:00", min: 50, te: 2.5, teAn: 0, load: 90, name: "Dauerlauf" }));
+  const hard = { date: D(10), start: "18:45", min: 58.5, te: 3.9, teAn: 3.8, load: 304, name: "Intervalle" };
+  const acts = [...easy, hard];
+  const upTo = (d: string) => days.filter((x) => x.d <= d);
+  // Mittwochmorgen: noch rund 45 h offen → höchstens moderat, obwohl HRV, Ruhepuls und Schlaf gut sind
+  let a = assess(upTo(D(11)), loads, acts)!;
+  const rec = a.items.find((i) => i.key === "recovery")!;
+  assert.equal(rec.st, "y");
+  assert.match(rec.val, /^noch ca\. 4\d h$/);
+  assert.match(rec.why, /Nach „Intervalle“ am 10\.11\./);
+  assert.equal(a.verdict, "Moderat trainieren");
+  assert.match(pushText(a, days.find((x) => x.d === D(11))).body, /Erholung noch ca\. 4\d h/);
+  // Donnerstag noch gelb, Freitag abgeschlossen
+  assert.equal(assess(upTo(D(12)), loads, acts)!.items.find((i) => i.key === "recovery")!.st, "y");
+  a = assess(upTo(D(13)), loads, acts)!;
+  assert.equal(a.items.find((i) => i.key === "recovery")!.val, "abgeschlossen");
+  assert.equal(a.light, "g");
+});
+
+test("Erholungszeit: lockere Einheit kaum, ohne Einheiten kein zusätzlicher Punkt; Body Battery beim Aufwachen", () => {
+  const days = Array.from({ length: 31 }, (_, i) => ({ d: day(i), rhr: 48, hrv: 62, hrvLo: 52, hrvHi: 70, score: 85, slp: 7.5 }));
+  const loads = new Map(days.map((x) => [x.d, 50]));
+  const easy = { date: day(29), start: "18:00", min: 40, te: 2.2, teAn: 0, load: 50, name: "Locker" };
+  assert.equal(assess(days, loads, [easy])!.items.find((i) => i.key === "recovery")!.val, "abgeschlossen");
+  assert.equal(assess(days, loads)!.items.some((i) => i.key === "recovery"), false);
+  const low = assess([...days.slice(0, 30), { ...days[30], bbWake: 25 }], loads)!;
+  assert.equal(low.items.find((i) => i.key === "bb")!.st, "r");
+  assert.equal(low.verdict, "Erholung hat Vorrang");
+});
+
+// Nachbesserung nach Eddies Hinweis: Erholung zur aktuellen Uhrzeit, HRV im Normalbereich grün
+test("Erholungszeit zur aktuellen Uhrzeit: Freitag 1:20 nach dem Intervall-Dienstag nur noch wenige Stunden", () => {
+  const D = (d: number) => `2026-11-${String(d).padStart(2, "0")}`;
+  const days = Array.from({ length: 30 }, (_, i) => ({ d: new Date(Date.UTC(2026, 9, 14 + i)).toISOString().slice(0, 10), rhr: 42, hrv: 75, hrvLo: 73, hrvHi: 94, score: 93, slp: 8 }));
+  const loads = new Map(days.map((x) => [x.d, 60]));
+  const acts = [...[3, 5, 7, 8].map((d) => ({ date: D(d), start: "09:00", min: 50, te: 2.5, teAn: 0, load: 90, name: "Dauerlauf" })),
+    { date: D(10), start: "18:45", min: 58.5, te: 3.9, teAn: 3.8, load: 304, name: "Intervalle" }];
+  // Letzte Nacht mit Daten ist die auf Donnerstag (12.11.), jetzt ist Freitag 1:20
+  const a = assess(days, loads, acts, "2026-11-13T01:20")!;
+  assert.equal(a.day, "2026-11-12");
+  const rec = a.items.find((i) => i.key === "recovery")!;
+  assert.equal(rec.val, "noch ca. 3 h");
+  assert.equal(rec.st, "g");
+  assert.match(rec.why, /Stand 01:20 Uhr/);
+  assert.equal(a.items.find((i) => i.key === "hrv")!.st, "g", "HRV 75 im Bereich 73–94 ist grün");
+  assert.equal(a.light, "g");
+  // Ohne Uhrzeit wie bisher 7 Uhr am Morgen der Nacht: Donnerstag 7 Uhr noch gut 20 h
+  assert.match(assess(days, loads, acts)!.items.find((i) => i.key === "recovery")!.val, /^noch ca\. 2\d h$/);
+});
+
+test("HRV wie Garmins Status: im Bereich grün, darunter gelb, mehr als 10 % darunter rot", () => {
+  const base = Array.from({ length: 31 }, (_, i) => ({ d: day(i), rhr: 48, hrvLo: 73, hrvHi: 94, score: 85, slp: 7.5, hrv: 80 }));
+  const loads = new Map(base.map((x) => [x.d, 50]));
+  const st = (hrv: number) => assess([...base.slice(0, 30), { ...base[30], hrv }], loads)!.items.find((i) => i.key === "hrv")!.st;
+  assert.equal(st(73), "g");
+  assert.equal(st(75), "g");
+  assert.equal(st(98), "g");
+  assert.equal(st(70), "y");
+  assert.equal(st(65), "r");
+});
+
+// Nachbesserung: eine einzelne niedrige Nacht (z. B. nach einem Wettkampf) macht höchstens gelb,
+// rot erst mit niedrigem Wochenschnitt oder sehr kurzem Schlaf
+test("HRV über den Wochenschnitt, sehr kurzer Schlaf bleibt rot", () => {
+  const base = Array.from({ length: 31 }, (_, i) => ({ d: day(i), rhr: 42, hrv: 80, hrvWk: 80, hrvLo: 73, hrvHi: 94, score: 89, slp: 8.4 }));
+  const loads = new Map(base.map((x) => [x.d, 50]));
+  const at = (x: object) => assess([...base.slice(0, 30), { ...base[30], ...x }], loads)!;
+  // Nach dem Wettkampf: Nacht 65 ms, Woche 74 ms im Bereich, Ruhepuls +4 → moderat statt rot
+  let a = at({ hrv: 65, hrvWk: 74, rhr: 46 });
+  assert.equal(a.items.find((i) => i.key === "hrv")!.st, "y");
+  assert.equal(a.light, "y");
+  assert.equal(a.verdict, "Moderat trainieren");
+  // Wochenschnitt schon unter dem Bereich und Nacht deutlich darunter → rot
+  assert.equal(at({ hrv: 62, hrvWk: 70 }).items.find((i) => i.key === "hrv")!.st, "r");
+  // Wochenschnitt mehr als 10 % unter dem Bereich → rot, auch bei guter Nacht
+  assert.equal(at({ hrv: 80, hrvWk: 64 }).items.find((i) => i.key === "hrv")!.st, "r");
+  // Nur 3 h Schlaf → rot, auch bei sonst guten Werten
+  a = at({ slp: 3, score: 85 });
+  assert.equal(a.items.find((i) => i.key === "score")!.st, "r");
+  assert.equal(a.light, "r");
+  // 6 h → gelb
+  assert.equal(at({ slp: 6 }).items.find((i) => i.key === "score")!.st, "y");
+});

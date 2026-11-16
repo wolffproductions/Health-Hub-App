@@ -20,6 +20,8 @@ async function loadData() {
   S.vo2 = Array.isArray(vo2) ? vo2 : [];
   S.fitAge = data.fitAge || null;
   S.ampel = data.ampel || null;
+  S.gear = null; // Ausrüstung (#52) beim nächsten Anzeigen neu laden (Kilometer ändern sich mit neuen Einheiten)
+  S.prognose = data.prognose || null;
   if (Array.isArray(zones) && zones.length === 3) S.zoneCfg = zones;
   S.daily = Object.values(data.daily || {}).sort((a, b) => a.d < b.d ? -1 : 1);
   S.acts = Object.values(data.acts || {}).sort((a, b) => (a.date + a.start) < (b.date + b.start) ? -1 : 1);
@@ -28,10 +30,10 @@ async function loadData() {
   S.today = S.daily.length ? S.daily[S.daily.length - 1].d : null;
   $('#updated').textContent = data.updated ? 'Stand ' + new Date(data.updated).toLocaleString('de-DE', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const exp = keyExpiry(status);
-  // Ohne Garmin, aber mit Strava oder Withings: kein Garmin-Hinweis, die App läuft mit den anderen Quellen
-  const otherSource = !!(status.strava?.connected || status.withings?.connected);
+  // Ohne Garmin, aber mit Strava, Withings oder WHOOP: kein Garmin-Hinweis, die App läuft mit den anderen Quellen
+  const otherSource = !!(status.strava?.connected || status.withings?.connected || status.whoop?.connected);
   if (status.key === 'none' && otherSource) banner('');
-  else if (status.key === 'none') { banner('Verbinde zuerst eine Datenquelle: Garmin, Strava oder Withings (oben rechts unter Konto).', false); }
+  else if (status.key === 'none') { banner('Verbinde zuerst eine Datenquelle: Garmin, Strava, Withings oder WHOOP (oben rechts unter Konto).', false); }
   else if (status.lastError && /abgelehnt|401|403/.test(status.lastError)) banner('Garmin lehnt deinen Schlüssel ab – vermutlich ist er abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.', true, GARMIN_KEY_LINK);
   else if (exp && exp.left < 0) banner(`Dein Garmin-Schlüssel ist am ${exp.label} abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.`, true, GARMIN_KEY_LINK);
   else if (exp && exp.left <= KEY_WARN_DAYS) banner(`Dein Garmin-Schlüssel läuft ${exp.left === 0 ? 'heute' : exp.left === 1 ? 'morgen' : 'in ' + exp.left + ' Tagen'} ab (${exp.label}). Erstelle rechtzeitig einen neuen und trag ihn unter „Konto“ ein.`, false, GARMIN_KEY_LINK);
@@ -48,19 +50,59 @@ async function loadData() {
   checkNews();
 }
 
+// Aktualisieren (#104): läuft vom Konto und von „Heute“ aus, beide Knöpfe und Anzeigen zeigen den Fortschritt.
+// Erst Garmin (schrittweise, bis Historie und Runden fertig sind), dann Withings, Strava und WHOOP, wenn verbunden.
+// Ohne Garmin-Schlüssel (z. B. nur WHOOP, #119) direkt die übrigen Quellen.
 async function syncLoop(force) {
-  const btn = $('#sync-btn'), msg = $('#sync-msg');
-  btn.disabled = true; msg.textContent = 'Lade Daten von Garmin …';
+  const btns = ['#sync-btn', '#refresh-btn'].map((q) => $(q)).filter(Boolean);
+  const say = (t) => { $('#sync-msg').textContent = t; $('#refresh-state').textContent = t; };
+  btns.forEach((b) => { b.disabled = true; b.classList.add('busy'); });
+  let err = null;
   try {
-    let st = await api('/api/sync' + (force ? '?force=1' : ''), { method: 'POST' });
-    for (let i = 0; i < 60 && (!st.complete || st.lapsPending) && !st.lastError && !st.lapsPaused; i++) {
-      S.status = st; renderAccount();
-      await new Promise((r) => setTimeout(r, 1500)); // Garmin nicht mit Anfragen überhäufen
-      st = await api('/api/sync', { method: 'POST' });
+    let st = S.status && S.status.key === 'none' ? await api('/api/status') : null;
+    if (!st || st.key !== 'none') {
+      say('Lade Daten von Garmin …');
+      st = await api('/api/sync' + (force ? '?force=1' : ''), { method: 'POST' });
+      for (let i = 0; i < 60 && (!st.complete || st.lapsPending) && !st.lastError && !st.lapsPaused; i++) {
+        S.status = st; renderAccount();
+        await new Promise((r) => setTimeout(r, 1500)); // Garmin nicht mit Anfragen überhäufen
+        st = await api('/api/sync', { method: 'POST' });
+      }
+      if (st.lastError) err = 'Garmin: ' + st.lastError;
     }
-    msg.textContent = st.lastError ? 'Fehler: ' + st.lastError : 'Fertig.';
+    const w = st.withings, sv = st.strava, wh = st.whoop;
+    if (w && w.connected) { say('Lade Daten von Withings …'); await api('/api/withings/sync', { method: 'POST' }).catch(() => { err = err || 'Withings nicht erreichbar'; }); }
+    if (sv && sv.connected) { say('Lade Daten von Strava …'); await api('/api/strava/sync', { method: 'POST' }).catch(() => { err = err || 'Strava nicht erreichbar'; }); }
+    if (wh && wh.connected) {
+      say('Lade Daten von WHOOP …');
+      const r = await api('/api/whoop/sync', { method: 'POST' }).catch(() => null);
+      if (!r) err = err || 'WHOOP nicht erreichbar';
+      else if (r.whoop && r.whoop.lastError && !r.whoop.paused) err = err || 'WHOOP: ' + r.whoop.lastError;
+    }
     await loadData();
-  } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
-  btn.disabled = false;
+  } catch (e) { err = e.message; }
+  btns.forEach((b) => { b.disabled = false; b.classList.remove('busy'); });
+  $('#sync-msg').textContent = err ? 'Fehler: ' + err : 'Fertig.';
+  renderRefreshState(err);
+}
+
+/** „Zuletzt aktualisiert …“ auf „Heute“: letzter Abruf bei Garmin, dazu ein Hinweis, wenn die Uhr hinterherhinkt */
+function renderRefreshState(err) {
+  const node = $('#refresh-state'); if (!node) return;
+  const st = S.status || {};
+  if (err) { node.textContent = 'Fehler: ' + err; node.className = 'note bad'; return; }
+  node.className = 'note';
+  // Ohne Garmin zählt der letzte WHOOP-Abruf (#119)
+  const lastRun = st.lastRun || (st.whoop && st.whoop.lastOk) || null;
+  if (!lastRun) { node.textContent = st.key === 'none' && !(st.whoop && st.whoop.connected) ? 'Noch keine Datenquelle verbunden.' : 'Noch nicht aktualisiert.'; return; }
+  const t = new Date(lastRun), mins = Math.round((Date.now() - t) / 60000);
+  let txt = 'Zuletzt aktualisiert ' + (mins < 1 ? 'gerade eben' : mins < 60 ? 'vor ' + mins + ' Min.' : relTime(lastRun));
+  // Letzter Messpunkt der Body Battery: zeigt, wann die Uhr zuletzt Werte an Garmin geschickt hat
+  const c = ((S.bb && S.bb.curves) || []).find((x) => x.day === S.today), p = c && c.pts[c.pts.length - 1];
+  if (p) {
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    if (S.today === new Date().toLocaleDateString('en-CA') && nowMin - p[0] > 90) txt += '. Deine Uhr hat zuletzt um ' + bbClock(p[0]) + ' Uhr Werte an Garmin geschickt; öffne Garmin Connect, um sie zu synchronisieren.';
+  }
+  node.textContent = txt;
 }
 

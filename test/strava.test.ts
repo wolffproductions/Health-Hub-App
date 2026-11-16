@@ -2,7 +2,7 @@
 // Ausführen: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodePolyline, mergeDuplicates, normalizeStrava, sameUnit, stravaType } from "../src/strava/extract.ts";
+import { decodePolyline, isAutoName, mergeDuplicates, normalizeStrava, sameUnit, stravaType } from "../src/strava/extract.ts";
 
 const run = {
   id: 1234567890, name: "Abendlauf", sport_type: "Run", start_date: "2026-11-07T17:02:10Z", start_date_local: "2026-11-07T18:02:10Z",
@@ -50,4 +50,17 @@ test("Doppelte Einheit Garmin + Strava: Garmin bleibt, Strava-Extras hängen dra
   assert.equal(merged.strava.kudos, 7);
   assert.equal(merged.name, "Abendlauf"); // Garmin ohne Namen übernimmt den Strava-Titel
   assert.ok(out.find((a) => a.id === "s55"));
+});
+
+test("Strava-Name statt Garmins Standardname, automatische Strava-Namen nicht (#113)", () => {
+  const g = (name: string) => ({ id: "987", src: "garmin", date: "2026-11-07", start: "18:01", type: "running", km: 10.05, name });
+  const s = (name: string) => normalizeStrava({ ...run, name })!;
+  let m = mergeDuplicates([g("Stadt Laufen"), s("4 × 1200 m an der Donau")])[0];
+  assert.equal(m.name, "4 × 1200 m an der Donau");
+  assert.equal(m.garminName, "Stadt Laufen");
+  for (const auto of ["Abendlauf", "Morgenlauf", "Lauf am Nachmittag", "Morning Run", "Evening Ride", "Nachmittägliche Radfahrt"]) {
+    assert.equal(isAutoName(auto), true, auto);
+    assert.equal(mergeDuplicates([g("Stadt Laufen"), s(auto)])[0].name, "Stadt Laufen", auto);
+  }
+  for (const own of ["Abendrunde mit Pablo", "Longrun", "Wettkampf 10 km"]) assert.equal(isAutoName(own), false, own);
 });

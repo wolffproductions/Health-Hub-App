@@ -17,7 +17,7 @@ jobs:
     if: github.repository != 'wolffproductions/Health-Hub-App'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Neuen Stand holen
         run: |
           set -e
@@ -26,7 +26,7 @@ jobs:
           if [ -f VERSION ] && cmp -s VERSION neu/VERSION; then echo "Schon aktuell: $(cat VERSION)"; rm -rf neu; exit 0; fi
           # Eigene Datenbank-ID aus wrangler.jsonc behalten (vom „Deploy to Cloudflare“-Button eingetragen)
           ID=$(grep -o '"database_id": *"[^"]*"' wrangler.jsonc | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
-          rsync -a --delete --exclude .git --exclude .github --exclude neu neu/ ./
+          rsync -a --checksum --delete --exclude .git --exclude .github --exclude neu neu/ ./
           rm -rf neu
           if [ -n "$ID" ]; then sed -i "s/\"database_id\": *\"[^\"]*\"/\"database_id\": \"$ID\"/" wrangler.jsonc; fi
           git config user.name "Health Hub Update"

@@ -5,29 +5,34 @@ import { addDays, kvGetJson, localDate } from "./util";
 import type { Profile } from "./garmin/sync";
 import { zoneTotals, type HrHist } from "./garmin/extract";
 import { mergeDuplicates } from "./strava/extract";
+import { prognose, type PredMode } from "./prognose";
 import { assess } from "./ampel";
+import { DEFAULT_SRC_CFG, pickDaily, type SrcCfg } from "./quellen";
+import { mergeWhoop } from "./whoop/extract";
 
 /** Eigene Pulszonen (Grundlage, Tempo, Schwelle), Standard für /api/zones und die Auswertung */
 export const DEFAULT_ZONES = [[129, 160], [161, 175], [176, 191]];
 
-// Liefern mehrere Quellen denselben Wert, gewinnt die erste in der Liste.
-const SOURCE_PRIORITY: Record<string, string[]> = {
-  kg: ["withings", "garmin", "manual"],
-  fat: ["withings", "garmin", "manual"],
-  default: ["garmin", "withings", "strava", "manual"],
-};
-const rank = (metric: string, source: string) => {
-  const list = SOURCE_PRIORITY[metric] ?? SOURCE_PRIORITY.default;
-  const i = list.indexOf(source);
-  return i === -1 ? list.length : i;
-};
+// Quellen-Priorität pro Metrik (#119): src/quellen.ts. Nachtwerte bei Garmin + WHOOP einstellbar (kv `srcCfg`).
 
-export async function buildData(env: Env, days: number) {
+/** Jetzt in Ortszeit als „JJJJ-MM-TTTHH:MM“ (für die Erholungszeit der Ampel) */
+function nowLocal(tz: string): string {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+export interface BuildOpts {
+  /** Quellen, die nicht in die Antwort dürfen (Claude-Zugang ohne Freigabe: WHOOP, #119) */
+  exclude?: string[];
+}
+
+export async function buildData(env: Env, days: number, opts: BuildOpts = {}) {
+  const skip = new Set(opts.exclude || []);
   const profile = await kvGetJson<Profile | null>(env, "profile", null);
   const today = localDate(profile?.tz || env.TIMEZONE || "Europe/Berlin");
   const from = addDays(today, -days + 1);
 
-  const [metrics, acts, zones, upd, myZones, fitAge] = await Promise.all([
+  const [metrics, acts, zones, upd, myZones, fitAge, srcCfg, whoopBody] = await Promise.all([
     env.DB.prepare("SELECT day, metric, source, value FROM daily_metrics WHERE day >= ?").bind(from)
       .all<{ day: string; metric: string; source: string; value: number }>(),
     // Die Route selbst bleibt draußen (lädt die Oberfläche einzeln über /api/route), nur ein Hinweis „rt“
@@ -39,23 +44,20 @@ export async function buildData(env: Env, days: number) {
     kvGetJson<number[][]>(env, "zones", DEFAULT_ZONES),
     // Fitnessalter von Garmin (#78), neuester Stand mit Bausteinen
     kvGetJson<Record<string, unknown> | null>(env, "fitAge", null),
+    kvGetJson<SrcCfg>(env, "srcCfg", DEFAULT_SRC_CFG),
+    // Maximalpuls aus WHOOPs Körperdaten (#119), falls Garmin keine Zonen liefert
+    kvGetJson<{ maxHr?: number | null } | null>(env, "whoopBody", null),
   ]);
 
-  const daily: Record<string, Record<string, number | string>> = {};
-  const chosen: Record<string, number> = {};
-  for (const r of metrics.results) {
-    const key = r.day + "|" + r.metric;
-    const rk = rank(r.metric, r.source);
-    if (chosen[key] !== undefined && chosen[key] <= rk) continue;
-    chosen[key] = rk;
-    (daily[r.day] ??= { d: r.day })[r.metric] = r.value;
-  }
+  // Ein Wert pro Tag und Metrik nach Quellen-Priorität, HRV ohne Quellen-Mix (#119)
+  const daily = pickDaily(metrics.results.filter((r) => !skip.has(r.source)), { ...DEFAULT_SRC_CFG, ...srcCfg });
 
   const list: Array<Record<string, any>> = [];
   for (const r of acts.results) {
+    if (skip.has(r.source)) continue;
     const a = JSON.parse(r.data);
-    if (a.hidden) continue; // bei Strava gelöscht (#44)
-    a.src = r.source === "strava" ? "strava" : a.src || "garmin";
+    if (a.hidden) continue; // bei Strava bzw. WHOOP gelöscht (#44, #119)
+    a.src = r.source === "strava" || r.source === "whoop" ? r.source : a.src || "garmin";
     if (r.laps) { a.laps = JSON.parse(r.laps); a.lp = 1; }
     if (r.has_route) a.rt = 1;
     if (r.has_streams) a.st = 1;
@@ -68,12 +70,32 @@ export async function buildData(env: Env, days: number) {
   }
   // Gleiche Einheit von Garmin und Strava nur einmal, mit den Strava-Extras an der Garmin-Einheit (#44)
   const actsOut: Record<string, unknown> = {};
-  for (const a of mergeDuplicates(list)) actsOut[a.id] = a;
+  // Ebenso Uhr + WHOOP-Band: die Einheit der Uhr bleibt, WHOOP-Strain hängt als `whoop` daran (#119)
+  for (const a of mergeWhoop(mergeDuplicates(list))) actsOut[a.id] = a;
 
   // Erholungs-Ampel (#13): dieselbe Regel wie im Morgen-Push
   const loads = new Map<string, number>();
   for (const a of Object.values(actsOut) as Array<Record<string, any>>) loads.set(a.date, (loads.get(a.date) || 0) + (a.load || 0));
-  const ampel = assess(Object.values(daily).sort((a, b) => (a.d < b.d ? -1 : 1)) as Array<Record<string, any> & { d: string }>, loads);
+  const ampel = assess(Object.values(daily).sort((a, b) => (a.d < b.d ? -1 : 1)) as Array<Record<string, any> & { d: string }>, loads, Object.values(actsOut) as Array<Record<string, any> & { date: string }>, nowLocal(profile?.tz || env.TIMEZONE || "Europe/Berlin"));
+
+  // Wettkampfprognose (#105): fertig gerechnet, Oberfläche und Claude-Zugang zeigen sie nur an
+  const [vo2Rows, predCfg] = await Promise.all([
+    env.DB.prepare("SELECT day, sport, value FROM vo2").all<{ day: string; sport: string; value: number }>(),
+    kvGetJson<{ mode?: PredMode }>(env, "predCfg", {}),
+  ]);
+  const runZone = (zones as Array<{ sport?: string; max?: number }>).find((z) => z && /RUN/i.test(z.sport || "")) || (zones as Array<{ max?: number }>).find((z) => z && z.max);
+  let pred = null;
+  try {
+    pred = prognose({
+      today,
+      // Wettkampf aus Strava (workout_type 1) zählt bei der Prognose als harte Zeit
+      acts: (Object.values(actsOut) as Array<Record<string, any> & { date: string }>).map((a) => ({ ...a, race: (a.strava ? a.strava.wt : a.src === "strava" ? a.wt : null) === 1 })),
+      days: Object.values(daily) as Array<{ d: string; rhr?: number }>,
+      manualVo2: vo2Rows.results.map((r) => ({ d: r.day, sport: r.sport, v: r.value })),
+      hrMax: runZone?.max ?? (skip.has("whoop") ? null : whoopBody?.maxHr) ?? null,
+      mode: predCfg.mode || "auto",
+    });
+  } catch (e) { console.error("prognose", e); }
 
   // Body-Battery-Verlauf von heute und gestern (#79), nur wenn vorhanden
   const bb = await kvGetJson<{ at: string; curves: Array<{ day: string; pts: Array<[number, number]> }> } | null>(env, "bbCurves", null);
@@ -82,6 +104,7 @@ export async function buildData(env: Env, days: number) {
     v: 2,
     bb,
     ampel,
+    prognose: pred,
     daily,
     acts: actsOut,
     zones,

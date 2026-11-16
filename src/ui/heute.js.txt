@@ -21,26 +21,32 @@ function renderToday() {
   const tiles = $('#today-tiles'); tiles.replaceChildren();
   const last14 = days.filter((x) => x.d > addDays(S.today, -14));
   const base30 = (k, day) => mean(days.filter((x) => x.d < day && x.d >= addDays(day, -30)).map((x) => x[k]));
+  // WHOOP-Recovery und Day Strain (#119) nur, wenn es Werte gibt; Strain ist eine eigene Skala (0–21), kein Garmin-Ersatz
+  const has = (k) => last14.some((x) => x[k] != null);
   const defs = [
+    ...(has('rec') ? [['WHOOP-Recovery', 'rec', ' %', true, false]] : []),
     ['HRV letzte Nacht', 'hrv', ' ms', true, true],
     ['Schlafscore', 'score', '', true, false],
     ['Schlaf', 'slp', ' h', true, false],
     ['Ruhepuls', 'rhr', ' bpm', false, false],
-    ['Stress Ø', 'stress', '', false, false]
+    ['Stress Ø', 'stress', '', false, false],
+    ...(has('strain') ? [['Strain', 'strain', '', null, false]] : [])
   ];
-  for (const [label, k, unit, up, band] of defs) {
+  // Kacheln ohne Wert in 14 Tagen weglassen, wenn eine andere Quelle sie nicht kennt (z. B. Stress nur mit WHOOP)
+  const shown = defs.filter(([, k]) => has(k) || !(S.status && S.status.key === 'none'));
+  for (const [label, k, unit, up, band] of shown) {
     const lastV = [...last14].reverse().find((x) => x[k] != null);
     let cmp = null;
     if (lastV) {
       const b = base30(k, lastV.d);
       // Schlafdauer in Minuten vergleichen, sonst ganze Werte
-      cmp = k === 'slp' ? cmpLine(lastV[k] * 60, b == null ? null : b * 60, 0, up, ' min') : cmpLine(lastV[k], b, 0, up, unit);
+      cmp = k === 'slp' ? cmpLine(lastV[k] * 60, b == null ? null : b * 60, 0, up, ' min') : cmpLine(lastV[k], b, k === 'strain' ? 1 : 0, up, unit);
       cmp.text = cmp.text.replace(/ggü\..*$/, 'ggü. Ø 30 Tage');
     }
     tile(tiles, {
       // Ist der letzte Wert nicht von heute, steht der Tag dabei
       label: label + (lastV && lastV.d !== S.today ? ' · ' + dayLabel(lastV.d).split(',')[0] : ''),
-      value: lastV ? (k === 'slp' ? hm(lastV[k]) : num(lastV[k], 0)) : '–', unit: lastV ? unit : '',
+      value: lastV ? (k === 'slp' ? hm(lastV[k]) : num(lastV[k], k === 'strain' ? 1 : 0)) : '–', unit: lastV ? unit : '',
       cmp,
       spark: { data: last14.map((x) => ({ d: x.d, v: x[k] })), band: band ? last14.map((x) => ({ d: x.d, lo: x.hrvLo, hi: x.hrvHi })) : null },
       open: () => openChart(k)
@@ -48,6 +54,8 @@ function renderToday() {
   }
   // Body Battery als erste Kachel, erst jetzt, damit die Kurve die richtige Breite misst
   bbTile(tiles, days);
+  vo2Tile(tiles);
+  renderRefreshState();
 }
 
 // ---------- Body Battery (#79) ----------
@@ -124,7 +132,7 @@ const duration = (min) => {
 
 function actPost(a) {
   const card = el('article', 'card actpost');
-  const sp = sportOf(a.type), cat = catOf(a.label);
+  const sp = sportOf(a.type), cat = chipCat(a);
   const head = el('div', 'ap-head'), title = el('div', 'ap-title');
   title.append(el('div', 'ap-name', a.name || sp.label), el('div', 'note', (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr'));
   const chip = el('span', 'chip', cat[1]); chip.style.background = cat[2]; chip.style.color = '#fff';
@@ -155,7 +163,7 @@ function renderTodayActs() {
   if (!list.length && S.acts.length) list = [S.acts[S.acts.length - 1]];
   list = [...list].reverse();
   // Nur neu zeichnen, wenn sich die Einheiten geändert haben (Karten nicht bei jedem Neuzeichnen neu laden)
-  const key = list.map((a) => a.id + (a.rt ? 'r' : '')).join(',');
+  const key = list.map((a) => a.id + (a.rt ? 'r' : '') + (isRace(a) ? 'w' : '')).join(','); // w: Wettkampf-Marke
   if (box.dataset.key === key && box.childElementCount) return;
   box.dataset.key = key;
   $('#acts-title').textContent = title;
@@ -164,3 +172,24 @@ function renderTodayActs() {
   for (const a of list) box.append(actPost(a));
 }
 
+// ---------- VO2max auf „Heute“ (#104) ----------
+// Garmin liefert die VO2max nur je Einheit, deshalb der letzte bekannte Wert mit Datum, Trend zum Wert vor gut 30 Tagen
+// und der Verlauf der letzten 90 Tage. Gleiche Werte wie die Karte unter Leistung (vo2All). Ohne Wert keine Kachel.
+function vo2Tile(tiles) {
+  const all = vo2All();
+  const runs = all.filter((e) => e.sport === 'run'), list = runs.length ? runs : all.filter((e) => e.sport === 'ride');
+  if (!list.length) return;
+  const last = list[list.length - 1];
+  const ref = [...list].reverse().find((e) => e.d <= addDays(last.d, -30));
+  let cmp = { text: 'Stand ' + dayLabel(last.d).replace(/^[^,]+, /, ''), cls: '' };
+  if (ref) {
+    const c = cmpLine(last.v, ref.v, 0, true);
+    cmp = { text: c.text.replace(/ggü\. .*$/, 'in 30 Tagen') + ' · Stand ' + dayLabel(last.d).replace(/^[^,]+, /, ''), cls: c.cls };
+  }
+  const from = addDays(S.today || last.d, -90);
+  tile(tiles, {
+    label: 'VO2max' + (list === runs ? '' : ' Rad'), value: num(last.v), cmp,
+    spark: { data: list.filter((e) => e.d >= from).map((e) => ({ d: e.d, v: e.v })), band: null },
+    open: () => openChart('c-vo2'),
+  });
+}

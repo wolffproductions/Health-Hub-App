@@ -3,12 +3,27 @@
     <h2>Statistiken</h2>
     <div class="card" id="vo2-card">
       <h3>VO2max</h3>
-      <p class="note">Kommt automatisch aus deinen Läufen und Radfahrten (Garmins Wert je Einheit). Fehlt ein Wert, kannst du ihn unter „Konto“ selbst eintragen.</p>
+      <p class="note">Kommt automatisch aus deinen Läufen und Radfahrten (Garmins Wert je Einheit). Fehlt ein Wert, trägst du ihn unten selbst ein.</p>
       <div class="tiles" id="vo2-tiles"></div>
       <div id="vo2-status"></div>
       <div class="legend"><span><i class="ln" style="background:var(--accent)"></i>Laufen</span><span><i class="ln" style="background:var(--accent-2)"></i>Rad</span><span><i style="background:var(--accent);opacity:.12"></i>Gewählter Zeitraum</span></div>
       <div class="chart small" id="c-vo2"></div>
-      <div class="row"><button class="btn ghost small" type="button" data-goto="vo2-entry">VO2max eintragen ›</button></div>
+      <!-- Selbst eintragen (#96): direkt beim Verlauf statt im Konto -->
+      <details class="fold" id="vo2-entry">
+        <summary>VO2max selbst eintragen</summary>
+        <p class="note">Nur nötig, wenn ein Wert fehlt oder du ihn korrigieren willst. Dein Eintrag gilt für diesen Tag und Vorrang vor Garmins Wert.</p>
+        <form class="form" id="vo2-form" novalidate>
+          <div class="fields">
+            <label>Datum<input type="date" id="vo2-date" required></label>
+            <label>Sportart<select id="vo2-sport"><option value="run">Laufen</option><option value="ride">Rad</option></select></label>
+            <label>VO2max<input type="number" id="vo2-val" inputmode="numeric" min="20" max="95" step="1" placeholder="z. B. 58" required></label>
+          </div>
+          <div class="row"><button class="btn" type="submit">Eintragen</button></div>
+          <p class="msg" id="vo2-msg" role="status"></p>
+        </form>
+        <p class="note">Deine Einträge (<span id="vo2-count">0</span>)</p>
+        <ul class="sessions" id="vo2-list"></ul>
+      </details>
     </div>
     <!-- Fitnessalter von Garmin (#78): oben das Wichtigste, Bausteine zum Ausklappen -->
     <div class="card fitage" id="fitage-card">
@@ -60,9 +75,14 @@
     </div>
     <div class="card" id="pred-card">
       <h3>Wettkampfprognosen</h3>
-      <p class="note" id="pred-note"></p>
       <div class="tiles" id="pred-tiles"></div>
-      <p class="note" id="pred-alt"></p>
+      <div class="chips pred-src" id="pred-src" aria-label="Verwendete Quellen"></div>
+      <details class="fold" id="pred-more">
+        <summary>Wie wird das berechnet?</summary>
+        <ul class="pred-why" id="pred-why"></ul>
+        <p class="note" id="pred-note"></p>
+        <p class="note" id="pred-alt"></p>
+      </details>
     </div>
     <div class="grid">
       <div class="card">

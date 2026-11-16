@@ -81,6 +81,22 @@ funktioniert damit auch auf Mac und iPad. Dein Passwort bleibt als Reserve gült
 3. Client-ID und Client-Secret von Withings in der App eintragen, **„Speichern“**, dann **„Mit Withings verbinden“**.
 4. Gewicht und Körperwerte erscheinen danach unter **Statistiken → Leistung**.
 
+## 8. WHOOP verbinden (freiwillig)
+
+1. Auf [developer.whoop.com](https://developer-dashboard.whoop.com/) mit deinem WHOOP-Konto anmelden, ein Team und
+   darin eine App anlegen (z. B. „Mein Health Hub“). Kostenlos. Alle Lese-Rechte und **„offline“** anhaken.
+2. In der App oben rechts aufs **Konto-Symbol** → unter Datenquellen **WHOOP**. Dort steht die Redirect-URL
+   (`https://<deine-adresse>/whoop/callback`), die du bei WHOOP einträgst.
+3. Client-ID und Client-Secret von WHOOP in der App eintragen, **„Speichern“**, den Haken zum Speichern deiner Daten
+   setzen, dann **„Mit WHOOP verbinden“**.
+4. Optional, damit neue Nächte sofort kommen: in deiner WHOOP-App unter **Webhooks** die Adresse
+   `https://<deine-adresse>/whoop/webhook` eintragen (Version v2). Sonst holt die App alle 30 Minuten.
+5. Trägst du zusätzlich eine Garmin-Uhr: unter Konto → WHOOP wählst du, ob Schlaf, HRV und Ruhepuls von WHOOP
+   (empfohlen) oder von Garmin kommen. Trainings kommen immer von der Uhr, WHOOP-Strain hängt daran.
+
+Jede Person legt ihre **eigene** WHOOP-App an. Die Grenze von 10 Mitgliedern für Apps ohne Prüfung durch WHOOP
+stört deshalb nicht.
+
 ---
 
 ## Claude mit deinen Daten verbinden (freiwillig)
@@ -91,6 +107,7 @@ funktioniert damit auch auf Mac und iPad. Dein Passwort bleibt als Reserve gült
 3. Es öffnet sich deine App: mit dem App-Passwort **„Erlauben“**.
 4. Jetzt einfach fragen, z. B. „Wie habe ich diese Woche geschlafen?“. Claude kann nur lesen.
    Den Zugriff entziehst du jederzeit unter Konto → Claude.
+5. WHOOP-Daten sieht Claude nur, wenn du sie unter Konto → Claude ausdrücklich freigibst.
 
 ## Gut zu wissen
 

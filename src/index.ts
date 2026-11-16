@@ -21,6 +21,11 @@ import { AUTH_URL, connected as withingsConnected, exchangeCode, getApp, saveApp
 import { withingsStep, type WithingsMeta } from "./withings/sync";
 import * as strava from "./strava/client";
 import { stravaEvent, stravaStep, type StravaMeta } from "./strava/sync";
+import { gearRoute, stravaGearDaily } from "./ausruestung-api";
+import * as whoop from "./whoop/client";
+import { whoopBodyDaily, whoopEvent, whoopStep, type WhoopMeta } from "./whoop/sync";
+import { webhookSignature } from "./whoop/extract";
+import { DEFAULT_SRC_CFG, type SrcCfg } from "./quellen";
 import SW from "./sw.js.txt";
 import { addSub, DEFAULT_CFG, removeSub, subs, vapidPublic, type PushCfg, type PushSub } from "./push";
 import { morningPush } from "./morgen";
@@ -75,6 +80,7 @@ async function status(env: Env) {
     news: NEWS.slice(0, 6),
     withings: await withingsStatus(env),
     strava: await stravaStatus(env),
+    whoop: await whoopStatus(env),
   };
 }
 
@@ -247,6 +253,105 @@ async function stravaWebhook(req: Request, url: URL, env: Env, ctx: ExecutionCon
   return json({ ok: true });
 }
 
+// ---------- WHOOP (#119) ----------
+// Wie Strava: eigene WHOOP-App pro Person, Verbindung über /whoop/connect → /whoop/callback. Der Webhook
+// (/whoop/webhook, öffentlich) wird in der WHOOP-App selbst eingetragen und ist mit dem Client-Secret signiert.
+const WHOOP_KEYS = ["whoopApp", "whoopTokens", "whoopMeta", "whoopState", "whoopBody"];
+async function whoopStatus(env: Env) {
+  const meta = await kvGetJson<WhoopMeta>(env, "whoopMeta", {});
+  const app = await whoop.getApp(env).catch(() => null);
+  const me = await whoop.who(env);
+  return {
+    app: !!app,
+    connected: await whoop.connected(env),
+    name: me.name,
+    lastOk: meta.lastOk || null,
+    lastError: meta.lastError || null,
+    lastSleep: meta.lastSleep || null,
+    oldest: meta.oldest || null,
+    complete: !!meta.complete,
+    count: meta.count ?? 0,
+    paused: !!(meta.pauseUntil && Date.now() < meta.pauseUntil),
+    lastHook: meta.lastHook || null,
+    night: (await kvGetJson<SrcCfg>(env, "srcCfg", DEFAULT_SRC_CFG)).night,
+  };
+}
+async function whoopAppRoute(req: Request, env: Env) {
+  if (req.method === "DELETE") {
+    // Zugriff bei WHOOP widerrufen; die geladenen Werte bleiben (Historie wird nie gelöscht)
+    await whoop.revoke(env);
+    for (const k of WHOOP_KEYS) await kvDelete(env, k);
+    return json({ ok: true });
+  }
+  const body = (await req.json().catch(() => ({}))) as { id?: unknown; secret?: unknown };
+  const id = String(body.id || "").trim(), secret = String(body.secret || "").trim();
+  if (!/^[\w-]{8,200}$/.test(id) || !/^[\w-]{16,200}$/.test(secret)) {
+    return json({ ok: false, error: "Client-ID und Client-Secret bitte vollständig aus developer.whoop.com kopieren." }, 400);
+  }
+  await whoop.saveApp(env, { id, secret });
+  await kvDelete(env, "whoopTokens");
+  return json({ ok: true });
+}
+/** Nachtwerte bei Garmin + WHOOP: welche Quelle zählt (Schlaf, HRV, Ruhepuls, SpO2) */
+async function srcCfgRoute(req: Request, env: Env) {
+  const body = (await req.json().catch(() => ({}))) as { night?: unknown };
+  const cfg: SrcCfg = { ...DEFAULT_SRC_CFG, night: body.night === "garmin" ? "garmin" : "whoop" };
+  await kvPut(env, "srcCfg", JSON.stringify(cfg));
+  return json({ ok: true, ...cfg });
+}
+async function whoopConnect(url: URL, env: Env) {
+  const app = await whoop.getApp(env);
+  if (!app) return new Response(null, { status: 303, headers: { Location: "/?whoop=app", ...SECURITY_HEADERS } });
+  // Ausdrückliche Zustimmung zum Speichern (WHOOP-API-Bedingungen 4.2), gesetzt vom Knopf unter Konto → WHOOP
+  if (url.searchParams.get("ok") !== "1") return new Response(null, { status: 303, headers: { Location: "/?whoop=zustimmung", ...SECURITY_HEADERS } });
+  const state = b64u(crypto.getRandomValues(new Uint8Array(18)));
+  await kvPut(env, "whoopState", state, 600);
+  const q = new URLSearchParams({ response_type: "code", client_id: app.id, redirect_uri: url.origin + "/whoop/callback", scope: whoop.SCOPE, state });
+  return new Response(null, { status: 302, headers: { Location: whoop.AUTH_URL + "?" + q, ...SECURITY_HEADERS } });
+}
+async function whoopCallback(url: URL, env: Env, ctx: ExecutionContext) {
+  const code = url.searchParams.get("code"), state = url.searchParams.get("state");
+  const saved = await kvGet(env, "whoopState");
+  await kvDelete(env, "whoopState");
+  let res = "ok";
+  if (url.searchParams.get("error")) res = "abgebrochen";
+  else if (!code || !state || state !== saved) res = "abgelaufen";
+  else {
+    try {
+      await whoop.exchangeCode(env, code, url.origin + "/whoop/callback");
+      // Neue Verbindung: Historie von vorn
+      await kvDelete(env, "whoopMeta");
+      ctx.waitUntil(whoopStep(env).then(() => whoopBodyDaily(env)).catch((e) => console.error("whoop", e)));
+    } catch (e) {
+      console.error("whoop", e);
+      res = /offline/.test(String((e as Error).message)) ? "rechte" : "fehler";
+    }
+  }
+  return new Response(null, { status: 303, headers: { Location: "/?whoop=" + res, ...SECURITY_HEADERS } });
+}
+/** Öffentlicher Webhook-Endpunkt: prüft die Signatur, liefert keine Daten, lädt nur die gemeldete Nacht/Einheit nach */
+async function whoopWebhook(req: Request, env: Env, ctx: ExecutionContext) {
+  if (req.method !== "POST") return json({ error: "Nicht erlaubt" }, 405);
+  const raw = await req.text();
+  const ts = req.headers.get("X-WHOOP-Signature-Timestamp") || "", sig = req.headers.get("X-WHOOP-Signature") || "";
+  const app = await whoop.getApp(env).catch(() => null);
+  // Zeitstempel in Millisekunden; ältere als 10 Minuten nicht annehmen (Wiederholung abgefangener Meldungen)
+  const fresh = /^\d{10,14}$/.test(ts) && Math.abs(Date.now() - Number(ts)) < 10 * 60000;
+  if (!app || !fresh || !sig) return json({ error: "Nicht erlaubt" }, 401);
+  const want = await webhookSignature(app.secret, ts, raw);
+  // Vergleich ohne frühen Abbruch
+  let diff = want.length ^ sig.length;
+  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ (sig.charCodeAt(i) || 0);
+  if (diff) return json({ error: "Nicht erlaubt" }, 401);
+  const ev = JSON.parse(raw || "null") as { user_id?: unknown; id?: unknown; type?: unknown } | null;
+  const me = await whoop.who(env);
+  // Nur Meldungen des eigenen WHOOP-Kontos
+  if (ev && me.user && String(ev.user_id) === me.user && (await whoop.connected(env))) {
+    ctx.waitUntil(whoopEvent(env, { type: String(ev.type || ""), id: String(ev.id || "") }).catch((e) => console.error("whoop webhook", e)));
+  }
+  return json({ ok: true });
+}
+
 // ---------- Morgen-Push (#13) ----------
 async function pushRoute(req: Request, url: URL, env: Env, sub: string) {
   const cfg: PushCfg = { ...DEFAULT_CFG, ...(await kvGetJson<PushCfg>(env, "pushCfg", DEFAULT_CFG)) };
@@ -412,13 +517,17 @@ async function mcpSettingsRoute(req: Request, url: URL, env: Env) {
     return json({ ok: true });
   }
   if (req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as { mood?: unknown };
-    const set: McpSettings = { ...DEFAULT_MCP_SETTINGS, mood: body.mood === true };
+    // Nur die mitgeschickten Freigaben ändern (Stimmung, WHOOP #119), die anderen bleiben
+    const body = (await req.json().catch(() => ({}))) as { mood?: unknown; whoop?: unknown };
+    const old = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
+    const set: McpSettings = { ...DEFAULT_MCP_SETTINGS, ...old };
+    if (typeof body.mood === "boolean") set.mood = body.mood;
+    if (typeof body.whoop === "boolean") set.whoop = body.whoop;
     await kvPut(env, "mcpSettings", JSON.stringify(set));
   }
   const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
   const clients = (await listClients(env)).map(({ id, name, created, lastUsed }) => ({ id, name, created, lastUsed: lastUsed || null }));
-  return json({ url: url.origin + "/mcp", mood: !!set.mood, clients, apiToken: !!env.API_TOKEN });
+  return json({ url: url.origin + "/mcp", mood: !!set.mood, whoop: !!set.whoop, whoopConnected: await whoop.connected(env).catch(() => false), clients, apiToken: !!env.API_TOKEN });
 }
 
 async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -438,6 +547,8 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   }
   // Strava-Webhook (#44): ruft Strava ohne Login auf, geprüft über Bestätigungs-Token bzw. Abo- und Konto-Nummer
   if (path === "/strava/webhook") return stravaWebhook(req, url, env, ctx);
+  // WHOOP-Webhook (#119): ohne Login, geprüft über die Signatur mit dem Client-Secret und die Nutzer-ID
+  if (path === "/whoop/webhook") return whoopWebhook(req, env, ctx);
 
   // Ersteinrichtung im Browser (#12): noch kein Passwort → erst festlegen
   if (!(await hasPassword(env))) {
@@ -484,6 +595,15 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
 
   if (path === "/") return respond(DASHBOARD, 200, "text/html; charset=utf-8");
   if (path === "/api/mcp") return mcpSettingsRoute(req, url, env);
+  if (path === "/api/pred") {
+    // Prognose berechnen aus: auto (empfohlen) · garmin (nur VO2max) · intervalle (mit meinen Intervallen), #105
+    if (req.method === "POST") {
+      const body = (await req.json().catch(() => ({}))) as { mode?: unknown };
+      const mode = ["auto", "garmin", "intervalle"].includes(String(body.mode)) ? String(body.mode) : "auto";
+      await kvPut(env, "predCfg", JSON.stringify({ mode }));
+    }
+    return json(await kvGetJson(env, "predCfg", { mode: "auto" }));
+  }
   if (path === "/api/data") {
     const days = Math.max(28, Math.min(4000, Number(url.searchParams.get("days")) || 800));
     return json(await buildData(env, days));
@@ -514,6 +634,7 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   }
   if (path === "/api/status") return json(await status(env));
   if (path === "/api/vo2") return vo2Route(req, env);
+  if (path === "/api/gear") return gearRoute(req, env);
   if (path === "/api/mood") return moodRoute(req, env);
   if (path === "/api/zones") return zonesRoute(req, env);
   if (path === "/api/key" && (req.method === "POST" || req.method === "DELETE")) return keyRoute(req, env);
@@ -528,10 +649,20 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   if (path === "/api/strava/app" && (req.method === "POST" || req.method === "DELETE")) return stravaAppRoute(req, env);
   if (path === "/api/strava/sync" && req.method === "POST") {
     await stravaStep(env);
+    await stravaGearDaily(env);
     return json(await status(env));
   }
   if (path === "/api/strava/webhook" && req.method === "POST") return stravaWebhookOn(url, env);
   if (path === "/api/strava/webhook" && req.method === "DELETE") { await stravaWebhookOff(env); return json({ ok: true }); }
+  if (path === "/api/whoop/app" && (req.method === "POST" || req.method === "DELETE")) return whoopAppRoute(req, env);
+  if (path === "/api/whoop/sync" && req.method === "POST") {
+    await whoopStep(env);
+    await whoopBodyDaily(env).catch(() => null);
+    return json(await status(env));
+  }
+  if (path === "/api/sources" && req.method === "POST") return srcCfgRoute(req, env);
+  if (path === "/whoop/connect") return whoopConnect(url, env);
+  if (path === "/whoop/callback") return whoopCallback(url, env, ctx);
   if (path === "/strava/connect") return stravaConnect(url, env);
   if (path === "/strava/callback") return stravaCallback(url, env, ctx);
   if (path === "/withings/connect") return withingsConnect(url, env);
@@ -562,6 +693,9 @@ export default {
     })());
     // Withings (#3) und Strava (#44) unabhängig von Garmin
     if (await withingsConnected(env).catch(() => false)) ctx.waitUntil(withingsStep(env));
-    if (await strava.connected(env).catch(() => false)) ctx.waitUntil(stravaStep(env));
+    // Ausrüstung (#52): Schuhe und Räder einmal am Tag aus Strava (eine Anfrage)
+    if (await strava.connected(env).catch(() => false)) ctx.waitUntil(stravaStep(env).then(() => stravaGearDaily(env)));
+    // WHOOP (#119): Nächte, Recovery, Strain, Einheiten; Maximalpuls einmal am Tag
+    if (await whoop.connected(env).catch(() => false)) ctx.waitUntil(whoopStep(env).then(() => whoopBodyDaily(env)).catch((e) => console.error("whoop", e)));
   },
 } satisfies ExportedHandler<Env>;

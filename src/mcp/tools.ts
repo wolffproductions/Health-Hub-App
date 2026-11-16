@@ -1,13 +1,15 @@
 // Werkzeuge des MCP-Zugangs (#5). Alle nur lesend. Grundlage ist dieselbe Aufbereitung wie für die
 // Oberfläche (buildData: Quellen-Priorität, Strava-Doppelungen zusammengeführt, Erholungs-Ampel).
 // Stimmung (Balance) nur, wenn unter Konto → Claude ausdrücklich freigegeben (CLAUDE.md).
+// WHOOP-Daten (#119) ebenso nur mit Freigabe: Die WHOOP-API-Bedingungen (4.2) verlangen für die Weitergabe an Dritte
+// die ausdrückliche Zustimmung der Person. Ohne Freigabe rechnet alles (auch die Ampel) ohne WHOOP.
 import type { Env } from "../env";
 import { buildData } from "../data";
 import { addDays, isDay, kvGetJson, localDate, round } from "../util";
 import { ToolError, type McpTool } from "./server";
 
-export interface McpSettings { mood: boolean }
-export const DEFAULT_MCP_SETTINGS: McpSettings = { mood: false };
+export interface McpSettings { mood: boolean; whoop?: boolean }
+export const DEFAULT_MCP_SETTINGS: McpSettings = { mood: false, whoop: false };
 
 const MAX_DAYS = 400;
 const METRICS_DOC =
@@ -15,7 +17,8 @@ const METRICS_DOC =
   "hrvLo/hrvHi Normalbereich) · slp Schlaf h · deep/rem h · awake min · score Schlafscore 0–100 · shr Puls im Schlaf bpm · " +
   "resp Atemzüge/min · spo2/spo2Lo % · bed/wake Uhrzeit in h (bed > 24 = nach Mitternacht) · stress/stressMax 0–100 · " +
   "stRest/stLow/stMed/stHi min je Stressstufe · bbMax/bbMin/bbNow/bbWake Body Battery 0–100 · bbCharged/bbDrained Punkte · " +
-  "steps · vig/mod Intensitätsminuten · kg · fat % · muscle/water/bone kg · visceral · fitAge/fitAgeAch Jahre.";
+  "steps · vig/mod Intensitätsminuten · kg · fat % · muscle/water/bone kg · visceral · fitAge/fitAgeAch Jahre · " +
+  "rec WHOOP-Recovery % · strain WHOOP Day Strain 0–21 · skinT Hauttemperatur °C · kcal Tagesumsatz · hrvSrc Quelle der HRV-Werte.";
 
 const str = (x: unknown) => (typeof x === "string" ? x : undefined);
 const num = (x: unknown) => (typeof x === "number" && isFinite(x) ? x : undefined);
@@ -33,7 +36,8 @@ const daysBack = (today: string, from: string) => Math.max(28, Math.min(4000, Ma
 async function load(env: Env, from?: string) {
   const profile = await kvGetJson<{ tz?: string } | null>(env, "profile", null);
   const today = localDate(profile?.tz || env.TIMEZONE || "Europe/Berlin");
-  const data = await buildData(env, from ? daysBack(today, from) : 60);
+  const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
+  const data = await buildData(env, from ? daysBack(today, from) : 60, { exclude: set.whoop ? [] : ["whoop"] });
   return { today, data };
 }
 
@@ -55,7 +59,7 @@ const pace = (km: number, min: number) => {
 function summary(a: any) {
   const sp = sportOf(a.type);
   return {
-    id: a.id, date: a.date, start: a.start, sport: sp, type: a.type, name: a.name || undefined,
+    id: a.id, date: a.date, start: a.start, sport: sp, type: a.type, name: (a.src === "strava" ? undefined : a.garminName ?? a.name) || undefined, // nie Strava-Titel (#113)
     km: a.km, min: a.min, pace: sp === "run" ? pace(a.km, a.min) : undefined,
     kmh: sp === "ride" && a.km && a.min ? round(a.km / (a.min / 60), 1) : undefined,
     hr: a.hr ?? undefined, maxHr: a.maxHr ?? undefined, elev: a.elev ?? undefined,
@@ -154,8 +158,10 @@ export const TOOLS: McpTool<Env>[] = [
     async run(env, args) {
       const id = str(args.id);
       if (!id) throw new ToolError("Bitte eine id aus get_activities angeben.");
-      const row = await env.DB.prepare("SELECT data, laps FROM activities WHERE external_id = ? LIMIT 1").bind(id).first<{ data: string; laps: string | null }>();
-      if (!row) throw new ToolError("Keine Einheit mit dieser id.");
+      const row = await env.DB.prepare("SELECT source, data, laps FROM activities WHERE external_id = ? LIMIT 1").bind(id).first<{ source: string; data: string; laps: string | null }>();
+      // WHOOP-Einheiten nur mit Freigabe (#119)
+      const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
+      if (!row || (row.source === "whoop" && !set.whoop)) throw new ToolError("Keine Einheit mit dieser id.");
       const a = JSON.parse(row.data);
       const laps = row.laps ? (JSON.parse(row.laps) as any[]) : [];
       return {
@@ -216,6 +222,29 @@ export const TOOLS: McpTool<Env>[] = [
         .all<{ day: string; sport: string; value: number }>();
       for (const r of results) by.set(r.day + "|" + r.sport, { date: r.day, sport: r.sport, value: r.value, source: "eigener Eintrag" });
       return [...by.values()].sort((x, y) => (x.date < y.date ? -1 : 1));
+    },
+  },
+  {
+    name: "get_race_predictions",
+    title: "Wettkampfprognosen",
+    description: "Prognose für 5 km, 10 km, Halbmarathon und Marathon (Zeit in Sekunden und als Text, Tempo je km, ggf. Spanne) " +
+      "mit den verwendeten Quellen (Garmins VO2max, Form aus Läufen, Intervalle) und warum eine Quelle zählt oder nicht. " +
+      "Dieselbe Rechnung wie in der App unter Statistiken → Leistung. Schätzung nach Daniels, kein Garmin-Wert.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run(env) {
+      const { data } = await load(env);
+      const p = (data as any).prognose;
+      if (!p) throw new ToolError("Noch keine Prognose: Es fehlen Garmins VO2max und schnelle Abschnitte aus Läufen.");
+      const t = (sec: number | null) => {
+        if (sec == null) return null;
+        const r = Math.round(sec), h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60), x = String(r % 60).padStart(2, "0");
+        return h ? h + ":" + String(m).padStart(2, "0") + ":" + x : m + ":" + x;
+      };
+      return {
+        rough: p.rough, mode: p.mode, volume: p.volume,
+        races: p.races.map((r: any) => ({ race: r.label, time: t(r.sec), seconds: Math.round(r.sec), pacePerKm: t(r.pace), range: r.lo != null ? [t(r.lo), t(r.hi)] : undefined, vo2Used: r.vo2, enduranceSurchargePct: Math.round(r.penalty * 1000) / 10 })),
+        sources: p.sources.map((s: any) => ({ source: s.key, vo2: Math.round(s.vo2 * 10) / 10, counted: s.used, confidence: Math.round(s.conf * 100) / 100, explanation: s.why })),
+      };
     },
   },
   {

@@ -19,7 +19,7 @@ function renderWeekNav() {
 function renderAll() {
   if (!S.today) return;
   renderWeekNav();
-  const fns = { heute: renderToday, training: () => { renderLoad(); renderVolume(); }, leistung: () => { renderPerf(); renderFitAge(); renderBody(); }, schlaf: renderSleep, einheiten: renderSessions, konto: renderAccount, einheit: renderUnit, diagramm: renderDiagram, balance: renderBalance };
+  const fns = { heute: renderToday, training: () => { renderLoad(); renderForm(); renderVolume(); }, leistung: () => { renderPerf(); renderFitAge(); renderBody(); }, schlaf: renderSleep, einheiten: () => { renderStats(); renderGear(); }, konto: renderAccount, einheit: renderUnit, diagramm: renderDiagram, balance: renderBalance };
   try { fns[S.tab](); } catch (e) { console.error(e); }
 }
 

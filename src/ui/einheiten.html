@@ -1,12 +1,36 @@
   <!-- EINHEITEN (#18, #59): absolvierte Einheiten; eigene Trainings und Vorschläge folgen (#20, #33) -->
   <section data-tab="einheiten" hidden>
     <h2>Einheiten</h2>
-    <div class="card">
-      <h3>Letzte Einheiten</h3>
-      <ul class="sessions" id="sessions"></ul>
+    <!-- Überblick (#55): Summen je Sportart, Serie und Rekorde aus den eigenen Einheiten -->
+    <div class="card" id="stats-card">
+      <h3>Überblick</h3>
+      <div class="seg" id="stats-seg" role="group" aria-label="Zeitraum"><button type="button" data-r="4w" aria-pressed="true">4 Wochen</button><button type="button" data-r="jahr" aria-pressed="false">Dieses Jahr</button><button type="button" data-r="alle" aria-pressed="false">Gesamt</button></div>
+      <ul class="stats-rows" id="stats-rows" aria-label="Summen je Sportart"></ul>
+      <div class="tiles" id="stats-rec"></div>
+      <p class="note" id="stats-note"></p>
     </div>
     <div class="card">
       <h3>Eigene Trainings und Vorschläge</h3>
       <p class="note">Hier kommen bald eigene Trainings zum Planen und Abhaken sowie Vorschläge passend zu deiner Erholung hin.</p>
+    </div>
+    <!-- Ausrüstung (#52): Schuhe und Räder mit Kilometerstand, aus Strava oder selbst angelegt -->
+    <div class="card" id="gear-card">
+      <h3>Ausrüstung</h3>
+      <ul class="sessions gear-list" id="gear-list" aria-label="Schuhe und Räder"></ul>
+      <details class="fold" id="gear-old" hidden><summary id="gear-old-n">Im Ruhestand</summary><ul class="sessions gear-list" id="gear-old-list"></ul></details>
+      <details class="fold" id="gear-add">
+        <summary id="gear-add-sum">Schuh oder Rad hinzufügen</summary>
+        <form class="form" id="gear-form" novalidate>
+          <div class="fields">
+            <label>Name<input type="text" id="gear-name" maxlength="60" placeholder="z. B. Wettkampfschuh" required></label>
+            <label>Art<select id="gear-sport"><option value="run">Laufschuh</option><option value="ride">Rad</option></select></label>
+            <label>Kilometer bisher<input type="number" id="gear-start" inputmode="decimal" min="0" step="0.1" placeholder="0"></label>
+            <label>Hinweis ab (km)<input type="number" id="gear-limit" inputmode="numeric" min="50" step="10" placeholder="700"></label>
+          </div>
+          <div class="row"><button class="btn" type="submit" id="gear-save">Hinzufügen</button><button class="btn ghost" type="button" id="gear-retire" hidden>In den Ruhestand</button><button class="btn ghost danger" type="button" id="gear-del" hidden>Löschen</button><button class="btn ghost" type="button" id="gear-cancel" hidden>Abbrechen</button></div>
+          <p class="msg" id="gear-msg" role="status"></p>
+        </form>
+      </details>
+      <div class="gear-foot" id="gear-note"></div>
     </div>
   </section>

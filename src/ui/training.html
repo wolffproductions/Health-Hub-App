@@ -9,6 +9,15 @@
       <div class="legend"><span><i class="ln" style="background:var(--accent)"></i>Akut (7 Tage)</span><span><i class="ln" style="background:var(--prev)"></i>Chronisch (28 Tage)</span><span><i style="background:var(--bad);opacity:.35"></i>Akut über dem 1,5-Fachen</span></div>
       <div class="chart" id="c-acwr"></div>
     </div>
+    <!-- Fitness und Form (#48), aus Garmins Trainingslast selbst berechnet -->
+    <div class="card" id="form-card">
+      <h3>Fitness und Form</h3>
+      <p class="note">Wie bei TrainingPeaks oder Strava, aus Garmins Trainingslast selbst berechnet. <b>Fitness</b>: Last der letzten Wochen (gleitend über 42 Tage), <b>Ermüdung</b>: der letzten Tage (gleitend über 7 Tage), <b>Form</b>: Fitness minus Ermüdung, also wie ausgeruht du gerade bist.</p>
+      <div class="tiles" id="form-tiles"></div>
+      <div class="legend"><span><i class="ln" style="background:var(--accent)"></i>Fitness</span><span><i class="ln" style="background:var(--accent-2)"></i>Ermüdung</span><span><i style="background:var(--prev)"></i>Form</span></div>
+      <div class="chart" id="c-form"></div>
+      <p class="note" id="form-note"></p>
+    </div>
     <div class="grid">
       <div class="card">
         <h3 id="h-cats">Art der Einheiten pro Woche</h3>

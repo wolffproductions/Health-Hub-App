@@ -20,7 +20,7 @@ function renderUnit() {
   const a = S.acts.find((x) => x.id === id);
   // Gleiche Einheit nicht bei jedem Neuzeichnen neu aufbauen (Karte bliebe sonst nicht stehen)
   // Kennung enthält auch die Zonen, damit neue Grenzen oder nachgeladene Pulsdaten neu zeichnen
-  const uid = a ? a.id + (a.rt ? 'r' : '') + (a.lp ? 'l' : '') + (a.hz ? 'z' + S.zoneCfg.flat().join('-') : '') : '';
+  const uid = a ? a.id + (a.rt ? 'r' : '') + (isRace(a) ? 'w' : '') + (a.lp ? 'l' : '') + (a.hz ? 'z' + S.zoneCfg.flat().join('-') : '') : '';
   if (a && body.dataset.id === uid && body.childElementCount) return;
   body.replaceChildren(); body.dataset.id = uid;
   if (!a) {
@@ -28,7 +28,7 @@ function renderUnit() {
     body.append(el('div', 'card empty', S.acts.length ? 'Diese Einheit ist nicht (mehr) in den geladenen Daten.' : 'Lade Daten …'));
     return;
   }
-  const sp = sportOf(a.type), cat = catOf(a.label);
+  const sp = sportOf(a.type), cat = chipCat(a);
   $('#u-title').textContent = a.name || sp.label;
   $('#navTitle').textContent = a.name || sp.label;
   $('#u-sub').textContent = (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr · ' + sp.label;
@@ -150,7 +150,14 @@ function renderUnit() {
     c.append(ul);
   }
 
+  // Ausrüstung (#52): Schuh bzw. Rad dieser Einheit
+  if (sp.key === 'run' || sp.key === 'ride') {
+    const c = uCard(body, sp.key === 'ride' ? 'Rad' : 'Schuh');
+    const box = el('div', 'u-gear'); box.id = 'u-gear'; box.dataset.act = a.id; c.append(box);
+    renderUnitGear();
+  }
   renderStravaExtras(body, a);
+  renderWhoopExtras(body, a);
   renderStreams(body, a, sp);
 }
 
@@ -219,7 +226,7 @@ function drawStreams(box, s, sp, type) {
     const pad = (hi - lo) * 0.08 || 1;
     const y = d3.scaleLinear(se.invert ? [hi + pad, lo - pad] : [lo - pad, hi + pad], [yb, 8]);
     const ticks = y.ticks(3);
-    const ml = 44;
+    const ml = AXIS_L;
     const x = d3.scaleLinear(xExt, [ml, f.w - 8]);
     yAxis(f, y, ml, f.w - 8, ticks, (t) => se.fmt(t));
     if (last) {
@@ -284,4 +291,21 @@ function renderStravaExtras(body, a) {
     const link = el('a', null, 'In Strava öffnen ↗'); link.href = 'https://www.strava.com/activities/' + encodeURIComponent(x.sid); link.target = '_blank'; link.rel = 'noopener';
     const p = el('p', 'note'); p.append(link); c.append(p);
   }
+}
+
+// ---------- WHOOP (#119) ----------
+// Bei doppelten Einheiten (Uhr + Band) hängt WHOOP als a.whoop an der Einheit der Uhr, sonst steht es direkt dran.
+function renderWhoopExtras(body, a) {
+  const x = a.whoop || (a.src === 'whoop' ? a : null);
+  if (!x) return;
+  const c = uCard(body, 'WHOOP', a.src === 'whoop'
+    ? 'Diese Einheit kommt nur von WHOOP. WHOOP liefert keine Route, keine Runden und keine Verläufe.'
+    : 'Dieselbe Einheit auf deinem WHOOP-Band. Die Messwerte oben stammen von ' + (a.src === 'strava' ? 'Strava' : 'Garmin') + '.');
+  const stats = el('div', 'ap-stats');
+  const add = (v, u, l) => { if (v == null) return; const s = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u)); s.append(b, el('span', null, l)); stats.append(s); };
+  add(x.strain != null ? num(x.strain, 1) : null, ' / 21', 'Strain');
+  if (a.whoop) { add(x.hr ? String(x.hr) : null, ' bpm', 'Ø Puls (Band)'); add(x.maxHr ? String(x.maxHr) : null, ' bpm', 'Max. Puls (Band)'); }
+  add(x.kcal ? String(x.kcal) : null, ' kcal', 'Kalorien');
+  if (stats.childElementCount) c.append(stats);
+  c.append(el('p', 'note', 'Strain ist WHOOPs eigene Skala (0–21) für die Belastung von Herz und Kreislauf, nicht mit Garmins Trainingslast vergleichbar.'));
 }
