@@ -10,6 +10,10 @@ export const DEFAULT_SHARE: Share = { umfang: false, best: false, watt: false, v
 /** Eine geteilte Aktivität fürs Profil (#87): Kennzahlen und gekürzte Route [[Breite, Länge], …] */
 export interface FriendAct { id: string; date: string; type: string; name?: string; km?: number; min?: number; hm?: number; hr?: number; route?: Array<[number, number]> }
 export const MAX_ACTS = 10;
+
+/** Kennung eines Freundes, Followers oder einer Anfrage: Host + Anfang des Tokens, eindeutig je Instanz.
+ *  Wird bei jedem Lesen neu berechnet, gespeicherte alte Kennungen (#87, gekürzt und bei gleichem Adress-Anfang doppelt) zählen nicht. */
+export const friendId = (x: { origin: string; token: string }) => (x.origin.replace(/^https?:\/\//, "") + "~" + x.token.slice(0, 8)).replace(/[^A-Za-z0-9.~_-]/g, "_");
 const PRIVACY_M = 200, ROUTE_PTS = 200;
 
 /** Summen je Zeitraum: km, Stunden, Höhenmeter, Anzahl Einheiten */

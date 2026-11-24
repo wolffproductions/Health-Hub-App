@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { cleanSummary, DEFAULT_SHARE, MAX_ACTS, parseLink, shareRoute, summarize, weightAt } from "../src/freunde.ts";
+import { cleanSummary, DEFAULT_SHARE, friendId, MAX_ACTS, parseLink, shareRoute, summarize, weightAt } from "../src/freunde.ts";
 
 const acts = [
   { date: "2026-11-16", type: "running", km: 10, min: 50, elev: 100, bst: { d: { "5000": 1300, "1000": 250 }, p: {} } },
@@ -98,4 +98,12 @@ test("Freunde: Anzahl Follower/Gefolgt wird übernommen, Unsinn nicht", () => {
   assert.equal(ok.fol, 3); assert.equal(ok.fing, 2);
   const bad = cleanSummary({ v: 1, name: "A", at: "", fol: -1, fing: "viele" })!;
   assert.equal(bad.fol, undefined); assert.equal(bad.fing, undefined);
+});
+
+test("Kennung: verschiedene Instanzen mit gleichem Adress-Anfang bekommen verschiedene Kennungen", () => {
+  const a = friendId({ origin: "https://health-hub.beispiel-a.workers.dev", token: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
+  const b = friendId({ origin: "https://health-hub.beispiel-b.workers.dev", token: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" });
+  assert.notEqual(a, b);
+  assert.equal(a, friendId({ origin: "https://health-hub.beispiel-a.workers.dev", token: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }));
+  assert.match(a, /^[A-Za-z0-9.~_-]+$/);
 });

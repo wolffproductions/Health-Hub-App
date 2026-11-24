@@ -7,7 +7,7 @@
 import type { Env } from "./env";
 import { buildData } from "./data";
 import { b64u, json, kvGetJson, kvPut, localDate, SECURITY_HEADERS } from "./util";
-import { cleanSummary, DEFAULT_SHARE, parseLink, recentActs, summarize, type FriendSummary, type Share } from "./freunde";
+import { cleanSummary, DEFAULT_SHARE, friendId, parseLink, recentActs, summarize, type FriendSummary, type Share } from "./freunde";
 import type { Profile } from "./garmin/sync";
 import { DEFAULT_CFG, sendAll, type PushCfg } from "./push";
 import { kindOn } from "./mitteilungen";
@@ -20,7 +20,9 @@ interface FollowRequest { id: string; origin: string; token: string; name: strin
 
 const MAX_FRIENDS = 50, MAX_FOLLOWERS = 100, MAX_REQUESTS = 30;
 const newToken = () => b64u(crypto.getRandomValues(new Uint8Array(32)).buffer as ArrayBuffer);
-const fid = (origin: string, token: string) => b64u(new TextEncoder().encode(origin + "|" + token.slice(0, 8)).buffer as ArrayBuffer).slice(0, 24);
+const fid = (origin: string, token: string) => friendId({ origin, token });
+/** Passt die Kennung? Immer aus Adresse und Token, nie aus dem gespeicherten Feld */
+const is = (id: unknown) => (x: { origin: string; token: string }) => fid(x.origin, x.token) === id;
 const cfgOf = async (env: Env) => { const c = await kvGetJson<Cfg>(env, "friendsCfg", {}); return { ...c, share: { ...DEFAULT_SHARE, ...(c.share || {}) } }; };
 const myLink = (c: Cfg) => (c.origin && c.token ? `${c.origin}/f/${c.token}` : null);
 const save = (env: Env, k: string, v: unknown) => kvPut(env, k, JSON.stringify(v));
@@ -190,10 +192,10 @@ export async function friendsRoute(req: Request, url: URL, env: Env, ctx: Execut
     return json({
       ...extra, link: myLink(c), share: c.share,
       me: await ownSummary(env, { umfang: true, best: true, watt: true, vo2: true, bild: true, akt: false }, fresh),
-      friends: friends.map((f) => ({ id: f.id, name: f.name, status: f.status === "ok" ? "ok" : "pending", data: f.data || null, last: f.last || null, err: f.err || null })),
+      friends: friends.map((f) => ({ id: fid(f.origin, f.token), name: f.name, status: f.status === "ok" ? "ok" : "pending", data: f.data || null, last: f.last || null, err: f.err || null })),
       // Profilbild und Profil eines Followers nur, wenn ich ihm auch folge (dann kenne ich seine Zusammenfassung)
-      followers: followers.map((f) => { const fr = friends.find((x) => x.origin === f.origin); return { id: f.id, name: f.name, at: f.at, following: !!fr, img: fr?.data?.img || undefined, friendId: fr && fr.status === "ok" && fr.data ? fr.id : undefined }; }),
-      requests: reqs.map((r) => ({ id: r.id, name: r.name, at: r.at })),
+      followers: followers.map((f) => { const fr = friends.find((x) => x.origin === f.origin); return { id: fid(f.origin, f.token), name: f.name, at: f.at, following: !!fr, img: fr?.data?.img || undefined, friendId: fr && fr.status === "ok" && fr.data ? fid(fr.origin, fr.token) : undefined }; }),
+      requests: reqs.map((r) => ({ id: fid(r.origin, r.token), name: r.name, at: r.at })),
     });
   };
   if (req.method === "GET") { if (url.searchParams.get("refresh")) await refreshFriends(env, true); return state(); }
@@ -208,7 +210,7 @@ export async function friendsRoute(req: Request, url: URL, env: Env, ctx: Execut
   if (b.action === "newLink") { c.token = newToken(); await save(env, "friendsCfg", c); await save(env, "followers", []); await save(env, "friendRequests", []); return state(); }
   if (b.action === "add" || b.action === "followBack") {
     let l = b.action === "add" ? parseLink(String(b.link || "")) : null;
-    if (b.action === "followBack") { const f = (await kvGetJson<Follower[]>(env, "followers", [])).find((x) => x.id === b.id); if (f) l = { origin: f.origin, token: f.token }; }
+    if (b.action === "followBack") { const f = (await kvGetJson<Follower[]>(env, "followers", [])).find(is(b.id)); if (f) l = { origin: f.origin, token: f.token }; }
     if (!l) return json({ ok: false, error: "Das ist kein gültiger Freundeslink." }, 400);
     if (l.origin === url.origin) return json({ ok: false, error: "Das ist dein eigener Link." }, 400);
     const r = await requestFollow(env, c, l.origin, l.token);
@@ -217,20 +219,20 @@ export async function friendsRoute(req: Request, url: URL, env: Env, ctx: Execut
   }
   if (b.action === "accept" || b.action === "decline") {
     const reqs = await kvGetJson<FollowRequest[]>(env, "friendRequests", []);
-    const r = reqs.find((x) => x.id === b.id);
-    await save(env, "friendRequests", reqs.filter((x) => x.id !== b.id));
+    const r = reqs.find(is(b.id));
+    await save(env, "friendRequests", reqs.filter((x) => !is(b.id)(x)));
     if (r && b.action === "accept") {
       // Persönlicher Schlüssel für diesen Follower; seine Instanz bekommt ihn zugeschickt
       const key = newToken();
       const followers = (await kvGetJson<Follower[]>(env, "followers", [])).filter((f) => f.origin !== r.origin);
-      followers.push({ id: r.id, origin: r.origin, token: r.token, name: r.name, at: new Date().toISOString(), key });
+      followers.push({ id: fid(r.origin, r.token), origin: r.origin, token: r.token, name: r.name, at: new Date().toISOString(), key });
       await save(env, "followers", followers.slice(-MAX_FOLLOWERS));
       ctx.waitUntil(postJson(`${r.origin}/f/${r.token}/zugang`, { link: myLink(c), key }).catch(() => null));
     }
     return state();
   }
-  if (b.action === "remove") { await save(env, "friends", (await kvGetJson<Friend[]>(env, "friends", [])).filter((x) => x.id !== b.id)); return state(); }
+  if (b.action === "remove") { await save(env, "friends", (await kvGetJson<Friend[]>(env, "friends", [])).filter((x) => !is(b.id)(x))); return state(); }
   // Follower entfernen: sein Schlüssel verfällt sofort, nur für ihn
-  if (b.action === "removeFollower") { await save(env, "followers", (await kvGetJson<Follower[]>(env, "followers", [])).filter((x) => x.id !== b.id)); return state(); }
+  if (b.action === "removeFollower") { await save(env, "followers", (await kvGetJson<Follower[]>(env, "followers", [])).filter((x) => !is(b.id)(x))); return state(); }
   return json({ error: "Unbekannte Aktion" }, 400);
 }
