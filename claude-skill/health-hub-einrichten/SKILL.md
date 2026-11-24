@@ -173,7 +173,7 @@ Auf dem iPhone die App-Adresse in **Safari** öffnen → **Teilen** → **„Zum
 
 ## Updates
 
-Kommen **automatisch**: Die Kopie auf GitHub holt sich einmal am Tag den neuen Stand, Cloudflare spielt ihn ein.
+Kommen **automatisch**: Die Kopie auf GitHub schaut alle 30 Minuten nach einem neuen Stand, Cloudflare spielt ihn ein.
 Daten und Passwort bleiben erhalten. Was neu ist, zeigt die App beim nächsten Öffnen. Sofort aktualisieren: in der
 eigenen Kopie auf GitHub unter **Actions → „Health Hub aktualisieren“ → „Run workflow“**. Falls GitHub dort fragt, ob
 Workflows erlaubt werden sollen: ja.

@@ -159,8 +159,19 @@ async function refreshOne(f: Friend) {
   try { f.data = await fetchData(f); f.name = f.data.name; f.err = undefined; } catch (e) { f.err = (e as Error).message; }
   f.last = new Date().toISOString();
 }
+/** Namen nachschlagen, die beim Anfragen noch fehlten („Ohne Namen“): höchstens 5 pro Lauf, Fehler egal */
+async function refreshNames(env: Env, k: "followers" | "friendRequests") {
+  const list = await kvGetJson<Array<{ origin: string; token: string; name: string }>>(env, k, []);
+  const todo = list.filter((x) => !x.name || x.name === "Ohne Namen").slice(0, 5);
+  if (!todo.length) return;
+  let changed = false;
+  await Promise.all(todo.map(async (x) => { try { const n = await fetchName(x.origin, x.token); if (n && n !== x.name) { x.name = n; changed = true; } } catch { /* später erneut */ } }));
+  if (changed) await save(env, k, list);
+}
 /** Im Cron: Zusammenfassungen der angenommenen Freunde holen (höchstens alle 25 Minuten, höchstens 20 pro Lauf) */
 export async function refreshFriends(env: Env, force = false) {
+  await refreshNames(env, "followers");
+  await refreshNames(env, "friendRequests");
   const list = await kvGetJson<Friend[]>(env, "friends", []);
   const due = list.filter((f) => f.status === "ok" && (force || !f.last || Date.now() - Date.parse(f.last) > 25 * 60000)).slice(0, 20);
   if (!due.length) return;
@@ -194,7 +205,7 @@ export async function friendsRoute(req: Request, url: URL, env: Env, ctx: Execut
       me: await ownSummary(env, { umfang: true, best: true, watt: true, vo2: true, bild: true, akt: false }, fresh),
       friends: friends.map((f) => ({ id: fid(f.origin, f.token), name: f.name, status: f.status === "ok" ? "ok" : "pending", data: f.data || null, last: f.last || null, err: f.err || null })),
       // Profilbild und Profil eines Followers nur, wenn ich ihm auch folge (dann kenne ich seine Zusammenfassung)
-      followers: followers.map((f) => { const fr = friends.find((x) => x.origin === f.origin); return { id: fid(f.origin, f.token), name: f.name, at: f.at, following: !!fr, img: fr?.data?.img || undefined, friendId: fr && fr.status === "ok" && fr.data ? fid(fr.origin, fr.token) : undefined }; }),
+      followers: followers.map((f) => { const fr = friends.find((x) => x.origin === f.origin); return { id: fid(f.origin, f.token), name: fr?.name || f.name, at: f.at, following: !!fr, img: fr?.data?.img || undefined, friendId: fr && fr.status === "ok" && fr.data ? fid(fr.origin, fr.token) : undefined }; }),
       requests: reqs.map((r) => ({ id: fid(r.origin, r.token), name: r.name, at: r.at })),
     });
   };
