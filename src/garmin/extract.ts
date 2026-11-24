@@ -404,8 +404,13 @@ function hrHistFrom(raw: FitMsg[]): HrHist {
 export const STREAM_MAX_POINTS = 400;
 /** Verläufe einer Einheit als gleich lange Reihen. d Meter, t Sekunden ab Start (ohne Pausen über 10 s),
  *  v m/s, hr bpm, alt m, cad Umdrehungen bzw. Schritte je Bein pro Minute (wie in der .fit), pw Watt.
- *  Reihen ohne einen einzigen Wert fehlen. */
-export interface Streams { d?: Array<number | null>; t: number[]; v?: Array<number | null>; hr?: Array<number | null>; alt?: Array<number | null>; cad?: Array<number | null>; pw?: Array<number | null> }
+ *  Reihen ohne einen einzigen Wert fehlen. p (#152): Pausen als [Meter ab Start, Sekunden], nur mit Strecke. */
+export interface Streams { d?: Array<number | null>; t: number[]; v?: Array<number | null>; hr?: Array<number | null>; alt?: Array<number | null>; cad?: Array<number | null>; pw?: Array<number | null>; p?: Array<[number, number]> }
+
+/** Pausen ab so vielen Sekunden zählen (Ampel, Trinkpause); kürzere Stopps wären nur Rauschen auf der Karte */
+export const PAUSE_MIN_S = 20;
+/** Unter diesem Tempo (m/s) gilt man als stehend, auch wenn die Uhr weiter aufzeichnet (Auto-Pause aus) */
+const STAND_MPS = 0.5;
 
 /**
  * Messpunkte (Nachricht 20) → gemittelte Abschnitte. Mit Strecke wird nach Strecke eingeteilt (gleich lange
@@ -415,15 +420,21 @@ export interface Streams { d?: Array<number | null>; t: number[]; v?: Array<numb
 function streamsFrom(raw: FitMsg[], max = STREAM_MAX_POINTS): Streams | null {
   type P = { t: number; d: number | null; v: number | null; hr: number | null; alt: number | null; cad: number | null; pw: number | null };
   const pts: P[] = [];
-  let t0: number | null = null, tPrev: number | null = null, moving = 0;
+  // Pausen (#152): Lücken in der Aufzeichnung (Auto-Pause, Stopp-Taste) und Stehen bei laufender Uhr
+  const stops: Array<[number, number]> = [];
+  let t0: number | null = null, tPrev: number | null = null, moving = 0, dLast: number | null = null, standFrom: number | null = null, standD: number | null = null;
   for (const f of raw) {
     const t = ok(f[253], 0xffffffff);
     if (t == null) continue;
     if (t0 == null) t0 = t;
     // Laufende Zeit ohne Pausen: Lücken über 10 s zählen nicht
     if (tPrev != null && t - tPrev > 0 && t - tPrev <= 10) moving += t - tPrev;
+    if (tPrev != null && t - tPrev > 10 && dLast != null) stops.push([dLast, t - tPrev]);
     tPrev = t;
     const dRaw = ok(f[5], 0xffffffff), vRaw = ok(f[73], 0xffffffff) ?? ok(f[6], 0xffff);
+    if (dRaw != null) dLast = dRaw / 100;
+    if (vRaw != null && vRaw / 1000 < STAND_MPS) { if (standFrom == null) { standFrom = t; standD = dLast; } }
+    else if (vRaw != null && standFrom != null) { if (standD != null) stops.push([standD, t - standFrom]); standFrom = null; }
     const aRaw = ok(f[78], 0xffffffff) ?? ok(f[2], 0xffff);
     const hr = ok(f[3], 0xff), cad = ok(f[4], 0xff), pw = ok(f[7], 0xffff);
     pts.push({
@@ -445,7 +456,7 @@ function streamsFrom(raw: FitMsg[], max = STREAM_MAX_POINTS): Streams | null {
     bins[Math.min(n - 1, Math.floor((x / span) * n))].push(p);
   }
   const avg = (b: P[], k: keyof P, nd = 1) => { const v = b.map((p) => p[k]).filter((x): x is number => x != null); return v.length ? round(v.reduce((s, x) => s + x, 0) / v.length, nd) : null; };
-  const out: Required<Streams> = { d: [], t: [], v: [], hr: [], alt: [], cad: [], pw: [] };
+  const out: Required<Omit<Streams, "p">> = { d: [], t: [], v: [], hr: [], alt: [], cad: [], pw: [] };
   for (const b of bins) {
     if (!b.length) continue;
     const last = b[b.length - 1];
@@ -454,13 +465,116 @@ function streamsFrom(raw: FitMsg[], max = STREAM_MAX_POINTS): Streams | null {
   }
   const res: Streams = { t: out.t };
   for (const k of ["d", "v", "hr", "alt", "cad", "pw"] as const) if (out[k].some((x) => x != null && x !== 0)) res[k] = out[k];
+  if (byDist) {
+    const p = pausesFrom(stops, start, total);
+    if (p.length) res.p = p;
+  }
   return res;
 }
 
-/** Runden, Route, Puls-Histogramm und Verläufe in einem Durchgang über die Datei */
-export function fitParse(u8: Uint8Array): { laps: Lap[]; route: Route; hist: HrHist; streams: Streams | null } {
-  const m = fitScan(u8, { 19: [7, 8, 9, 15, 23, 24], 20: [0, 1, 2, 3, 4, 5, 6, 7, 73, 78, 253] });
-  return { laps: lapsFrom(m[19]), route: routeFrom(m[20]), hist: hrHistFrom(m[20]), streams: streamsFrom(m[20]) };
+/** Stopps an fast derselben Stelle (± 30 m) zusammenfassen, kurze weglassen, höchstens 60 (die längsten) */
+function pausesFrom(stops: Array<[number, number]>, start: number, total: number): Array<[number, number]> {
+  const merged: Array<[number, number]> = [];
+  for (const [d, s] of stops.sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    if (last && d - last[0] <= 30) last[1] += s;
+    else merged.push([d, s]);
+  }
+  return merged
+    .map(([d, s]): [number, number] => [Math.round(Math.max(0, Math.min(total, d - start))), Math.round(s)])
+    .filter(([, s]) => s >= PAUSE_MIN_S)
+    .sort((a, b) => b[1] - a[1]).slice(0, 60).sort((a, b) => a[0] - b[0]);
+}
+
+// ---------- Bestleistungen (wie bei Strava) ----------
+/** Strecken in Metern: Laufen (400 m bis Marathon) und Rad (bis 100 Meilen) in einer Liste; die Oberfläche wählt je Sportart */
+export const BEST_DISTANCES = [400, 805, 1000, 1609, 3219, 5000, 10000, 15000, 16093, 20000, 21097, 30000, 40000, 42195, 50000, 80000, 100000, 160934];
+/** Zeitfenster in Sekunden für die höchste Durchschnittsleistung (Watt) */
+export const BEST_POWER = [5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200];
+/** d: schnellste Zeit in Sekunden je Strecke (Meter), p: höchste Durchschnittsleistung je Zeitfenster (Sekunden) */
+export interface Best { d: Record<string, number>; p: Record<string, number> }
+
+/**
+ * Bestleistungen einer Einheit aus allen Messpunkten (Nachricht 20), in voller Auflösung, nicht aus den gemittelten Verläufen.
+ * Zeit ohne Pausen über 10 s (wie bei den Verläufen). Strecke: schnellster zusammenhängender Abschnitt, Start zwischen zwei
+ * Messpunkten linear eingepasst. Leistung: Sekundenreihe (letzter Wert gilt bis zum nächsten), gleitendes Fenster.
+ */
+export function bestFrom(raw: FitMsg[]): Best | null {
+  const pts: Array<{ t: number; d: number | null; pw: number | null }> = [];
+  let tPrev: number | null = null, moving = 0;
+  for (const f of raw) {
+    const t = ok(f[253], 0xffffffff);
+    if (t == null) continue;
+    if (tPrev != null && t <= tPrev) continue; // doppelte Zeitstempel überspringen
+    // Pause (Lücke über 10 s) zählt nicht, aber eine Sekunde weiter, damit vor und nach der Pause nicht in derselben Sekunde landen
+    if (tPrev != null) moving += t - tPrev <= 10 ? t - tPrev : 1;
+    tPrev = t;
+    const dRaw = ok(f[5], 0xffffffff), pw = ok(f[7], 0xffff);
+    pts.push({ t: moving, d: dRaw == null ? null : dRaw / 100, pw });
+  }
+  if (pts.length < 2) return null;
+  const out: Best = { d: {}, p: {} };
+  // Strecke: nur Punkte mit Strecke, die nicht zurückspringt
+  const ds: Array<{ t: number; d: number }> = [];
+  for (const p of pts) if (p.d != null && (!ds.length || p.d >= ds[ds.length - 1].d)) ds.push({ t: p.t, d: p.d });
+  const total = ds.length ? ds[ds.length - 1].d - ds[0].d : 0;
+  for (const D of BEST_DISTANCES) {
+    if (D > total) break;
+    let j = 0, best = Infinity;
+    for (let i = 1; i < ds.length; i++) {
+      const need = ds[i].d - D;
+      if (need < ds[0].d) continue;
+      while (j + 1 < i && ds[j + 1].d <= need) j++;
+      const a = ds[j], b = ds[j + 1];
+      const f = b.d > a.d ? (need - a.d) / (b.d - a.d) : 0;
+      const tStart = a.t + (b.t - a.t) * f;
+      const dt = ds[i].t - tStart;
+      if (dt > 0 && dt < best) best = dt;
+    }
+    // über 30 m/s (108 km/h) im Schnitt wäre ein GPS-Sprung
+    if (isFinite(best) && D / best < 30) out.d[String(D)] = Math.round(best);
+  }
+  // Leistung: Sekundenreihe über die Zeit ohne Pausen
+  if (pts.some((p) => p.pw != null && p.pw > 0)) {
+    const T = Math.floor(pts[pts.length - 1].t);
+    const sec = new Float64Array(T + 1);
+    let k = 0, cur = 0;
+    for (let s = 0; s <= T; s++) {
+      while (k < pts.length && pts[k].t <= s) { cur = pts[k].pw ?? 0; k++; }
+      sec[s] = cur;
+    }
+    const pre = new Float64Array(T + 2);
+    for (let s = 0; s <= T; s++) pre[s + 1] = pre[s] + sec[s];
+    for (const W of BEST_POWER) {
+      if (W > T + 1) break;
+      let best = 0;
+      for (let s = W; s <= T + 1; s++) { const v = pre[s] - pre[s - W]; if (v > best) best = v; }
+      // über 2.500 W im Schnitt wäre ein Messfehler
+      if (best > 0 && best / W < 2500) out.p[String(W)] = Math.round(best / W);
+    }
+  }
+  return Object.keys(out.d).length || Object.keys(out.p).length ? out : null;
+}
+
+/**
+ * VO2max aus der .fit-Datei: Garmin-Uhren schreiben sie in die nicht dokumentierte Nachricht 140, Feld 7, als
+ * METs × 65536 (VO2max = Wert × 3,5 / 65536). Die Personal API liefert `vO2MaxValue` in der Aktivitätsliste nicht
+ * bei allen Uhren (bei Eddie nie), deshalb dieser Weg. Unplausible Werte (außerhalb 20–95) = keine.
+ */
+export function vo2FromFit(raw: FitMsg[] | undefined): number | null {
+  for (const x of raw || []) {
+    const v = x[7];
+    if (v == null || v <= 0) continue;
+    const vo2 = Math.round(((v * 3.5) / 65536) * 10) / 10;
+    if (vo2 >= 20 && vo2 <= 95) return vo2;
+  }
+  return null;
+}
+
+/** Runden, Route, Puls-Histogramm, Verläufe, Bestleistungen und VO2max in einem Durchgang über die Datei */
+export function fitParse(u8: Uint8Array): { laps: Lap[]; route: Route; hist: HrHist; streams: Streams | null; best: Best | null; vo2: number | null } {
+  const m = fitScan(u8, { 19: [7, 8, 9, 15, 23, 24], 20: [0, 1, 2, 3, 4, 5, 6, 7, 73, 78, 253], 140: [7] });
+  return { laps: lapsFrom(m[19]), route: routeFrom(m[20]), hist: hrHistFrom(m[20]), streams: streamsFrom(m[20]), best: bestFrom(m[20]), vo2: vo2FromFit(m[140]) };
 }
 
 /** Je Zone [Sekunden, Meter, Sekunden in Bewegung]. `zones` sind die drei eigenen Bereiche Grundlage/Tempo/Schwelle;

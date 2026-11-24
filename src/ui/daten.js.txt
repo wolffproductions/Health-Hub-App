@@ -30,10 +30,15 @@ async function loadData() {
   S.today = S.daily.length ? S.daily[S.daily.length - 1].d : null;
   $('#updated').textContent = data.updated ? 'Stand ' + new Date(data.updated).toLocaleString('de-DE', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const exp = keyExpiry(status);
-  // Ohne Garmin, aber mit Strava, Withings oder WHOOP: kein Garmin-Hinweis, die App läuft mit den anderen Quellen
-  const otherSource = !!(status.strava?.connected || status.withings?.connected || status.whoop?.connected);
-  if (status.key === 'none' && otherSource) banner('');
-  else if (status.key === 'none') { banner('Verbinde zuerst eine Datenquelle: Garmin, Strava, Withings oder WHOOP (oben rechts unter Konto).', false); }
+  // Ohne Garmin, aber mit Strava, Withings, WHOOP oder Google Health: kein Garmin-Hinweis, die App läuft mit den anderen Quellen
+  const g = status.google || {};
+  const otherSource = !!(status.strava?.connected || status.withings?.connected || status.whoop?.connected || g.connected || g.expired);
+  const gLeft = g.connected && g.refreshExpires ? Math.floor((g.refreshExpires - Date.now()) / 864e5) : null;
+  // Google-Projekt im Testmodus: Verbindung läuft nach 7 Tagen ab (siehe Konto → Google Health)
+  if (g.expired) banner('Deine Google-Health-Verbindung ist abgelaufen. Bitte unter Konto → Datenquellen → Google Health neu verbinden.', true);
+  else if (gLeft != null && gLeft <= 1) banner(`Deine Google-Health-Verbindung läuft ${gLeft <= 0 ? 'heute' : 'morgen'} ab. Bitte unter Konto → Datenquellen → Google Health neu verbinden.`, false);
+  else if (status.key === 'none' && otherSource) banner('');
+  else if (status.key === 'none') { banner('Verbinde zuerst eine Datenquelle: Garmin, Strava, Withings, WHOOP oder Google Health (oben rechts unter Konto).', false); }
   else if (status.lastError && /abgelehnt|401|403/.test(status.lastError)) banner('Garmin lehnt deinen Schlüssel ab – vermutlich ist er abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.', true, GARMIN_KEY_LINK);
   else if (exp && exp.left < 0) banner(`Dein Garmin-Schlüssel ist am ${exp.label} abgelaufen. Erstelle einen neuen und trag ihn unter „Konto“ ein.`, true, GARMIN_KEY_LINK);
   else if (exp && exp.left <= KEY_WARN_DAYS) banner(`Dein Garmin-Schlüssel läuft ${exp.left === 0 ? 'heute' : exp.left === 1 ? 'morgen' : 'in ' + exp.left + ' Tagen'} ab (${exp.label}). Erstelle rechtzeitig einen neuen und trag ihn unter „Konto“ ein.`, false, GARMIN_KEY_LINK);
@@ -73,6 +78,12 @@ async function syncLoop(force) {
     const w = st.withings, sv = st.strava, wh = st.whoop;
     if (w && w.connected) { say('Lade Daten von Withings …'); await api('/api/withings/sync', { method: 'POST' }).catch(() => { err = err || 'Withings nicht erreichbar'; }); }
     if (sv && sv.connected) { say('Lade Daten von Strava …'); await api('/api/strava/sync', { method: 'POST' }).catch(() => { err = err || 'Strava nicht erreichbar'; }); }
+    if (st.google && st.google.connected) {
+      say('Lade Daten von Google Health …');
+      const r = await api('/api/google/sync', { method: 'POST' }).catch(() => null);
+      if (!r) err = err || 'Google Health nicht erreichbar';
+      else if (r.google && r.google.lastError && !r.google.paused && !/^Nicht lesbar/.test(r.google.lastError)) err = err || 'Google Health: ' + r.google.lastError;
+    }
     if (wh && wh.connected) {
       say('Lade Daten von WHOOP …');
       const r = await api('/api/whoop/sync', { method: 'POST' }).catch(() => null);
@@ -93,8 +104,8 @@ function renderRefreshState(err) {
   if (err) { node.textContent = 'Fehler: ' + err; node.className = 'note bad'; return; }
   node.className = 'note';
   // Ohne Garmin zählt der letzte WHOOP-Abruf (#119)
-  const lastRun = st.lastRun || (st.whoop && st.whoop.lastOk) || null;
-  if (!lastRun) { node.textContent = st.key === 'none' && !(st.whoop && st.whoop.connected) ? 'Noch keine Datenquelle verbunden.' : 'Noch nicht aktualisiert.'; return; }
+  const lastRun = st.lastRun || (st.whoop && st.whoop.lastOk) || (st.google && st.google.lastOk) || null;
+  if (!lastRun) { node.textContent = st.key === 'none' && !(st.whoop && st.whoop.connected) && !(st.google && st.google.connected) ? 'Noch keine Datenquelle verbunden.' : 'Noch nicht aktualisiert.'; return; }
   const t = new Date(lastRun), mins = Math.round((Date.now() - t) / 60000);
   let txt = 'Zuletzt aktualisiert ' + (mins < 1 ? 'gerade eben' : mins < 60 ? 'vor ' + mins + ' Min.' : relTime(lastRun));
   // Letzter Messpunkt der Body Battery: zeigt, wann die Uhr zuletzt Werte an Garmin geschickt hat

@@ -1,0 +1,16 @@
+  <!-- FREUNDE (#87): Rangliste mit Freunden, getrennt nach Laufen und Rad -->
+  <section data-tab="freunde" hidden>
+    <h2>Statistiken</h2>
+    <div class="seg" id="fr-sport" role="group" aria-label="Sportart">
+      <button type="button" data-v="run" aria-pressed="true">Laufen</button>
+      <button type="button" data-v="ride" aria-pressed="false">Rad</button>
+    </div>
+    <div id="fr-empty" class="card" hidden>
+      <h3>Noch keine Freunde</h3>
+      <p class="note">Schick deinen Freundeslink oder QR-Code an Freunde mit eigener Health-Hub-App. Folgst du ihnen mit ihrem Link, erscheint ihr hier in einer Rangliste. Was die anderen von dir sehen, legst du selbst fest.</p>
+      <div class="row"><button class="btn" type="button" data-fr-manage>Freunde und Freigaben</button></div>
+    </div>
+    <div id="fr-boards"></div>
+    <div class="row fr-foot"><button class="btn ghost" type="button" data-fr-manage>Freunde und Freigaben</button><button class="btn ghost" type="button" id="fr-refresh">Aktualisieren</button></div>
+    <p class="note" id="fr-note"></p>
+  </section>

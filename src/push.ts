@@ -4,11 +4,19 @@
 import type { Env } from "./env";
 import { b64u, decrypt, encrypt, kvGet, kvGetJson, kvPut } from "./util";
 import { encryptPayload, vapidAuth } from "./webpush";
+import type { PushKind } from "./mitteilungen";
 export { encryptPayload };
 
 export interface PushSub { endpoint: string; keys: { p256dh: string; auth: string }; added?: string; ua?: string }
-export interface PushCfg { on: boolean; time: string; origin?: string; lastSent?: string; lastTry?: string; lastResult?: string }
-export const DEFAULT_CFG: PushCfg = { on: false, time: "09:00" };
+// mode: „zeit“ = zur festen Uhrzeit (time), „auto“ = sobald der Schlaf der letzten Nacht da ist, spätestens um latest.
+// sleepSeen: wann der Schlaf heute zum ersten Mal da war (für die kurze Wartezeit auf die HRV)
+export interface PushCfg {
+  on: boolean; time: string; mode?: "zeit" | "auto"; latest?: string; origin?: string;
+  lastSent?: string; lastTry?: string; lastResult?: string; sleepSeenDay?: string; sleepSeenAt?: string;
+  // #161: welche Arten von Mitteilungen (fehlt = Standard aus mitteilungen.ts) und welcher „Was ist neu?“-Eintrag zuletzt kam
+  kinds?: Partial<Record<PushKind, boolean>>; newsSent?: string;
+}
+export const DEFAULT_CFG: PushCfg = { on: false, time: "09:00", mode: "zeit", latest: "11:00" };
 
 // ---------- VAPID-Schlüssel ----------
 async function vapid(env: Env): Promise<{ pub: string; priv: CryptoKey }> {

@@ -11,8 +11,49 @@ const addDays = (date: string, n: number) => { const d = new Date(date + "T12:00
 
 type Day = Record<string, any> & { d: string };
 export type Light = "g" | "y" | "r" | "";
-export interface AmpelItem { key: string; st: Light; name: string; val: string; why: string }
-export interface Ampel { day: string; light: Light; verdict: string; items: AmpelItem[] }
+/** actId: Einheit, auf die sich der Punkt bezieht (Erholung nach Training), zum Öffnen auf „Heute“ (#157) */
+export interface AmpelItem { key: string; st: Light; name: string; val: string; why: string; actId?: string }
+/** Baustein der Bereitschaft: pts von max Punkten (alle max zusammen = 100) */
+export interface ReadyPart { key: string; name: string; pts: number; max: number }
+/** score = Bereitschaft 0–100 (eigene Schätzung, keine Garmin Training Readiness), passt immer zur Farbe der Ampel */
+export interface Ampel { day: string; light: Light; verdict: string; items: AmpelItem[]; score?: number | null; parts?: ReadyPart[] }
+
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+/** Gewichte der Bausteine (wie Garmins Training Readiness: Schlaf, HRV, Erholungszeit, Last; dazu Ruhepuls, Body Battery) */
+export const READY_W = { hrv: 25, sleep: 25, recovery: 20, load: 15, rhr: 10, bb: 5 } as const;
+/**
+ * Bereitschaft 0–100 aus den Werten der Ampel. Fehlende Bausteine fallen heraus, die anderen werden hochgerechnet.
+ * Danach in den Bereich der Ampelfarbe gelegt (grün 70–100, gelb 40–69, rot 0–39), damit Zahl und Farbe nie widersprechen.
+ */
+export function readiness(x: { hrv?: number | null; hrvWk?: number | null; hrvLo?: number | null; rec?: number | null; score?: number | null; slp?: number | null;
+  recH?: number | null; ratio?: number | null; rhr?: number | null; rhrBase?: number | null; bb?: number | null }, light: Light): { score: number | null; parts: ReadyPart[] } {
+  const raw: Array<[keyof typeof READY_W, string, number]> = [];
+  // HRV: Wochenschnitt im Normalbereich = voll, 20 % darunter = nichts; eine schlechte Nacht kostet höchstens 20 %. WHOOP-Recovery ersetzt sie.
+  if (x.rec != null) raw.push(["hrv", "WHOOP-Recovery", clamp01(x.rec / 100)]);
+  else if (x.hrv != null && x.hrvLo != null && x.hrvLo > 0) {
+    const ref = x.hrvWk ?? x.hrv;
+    let v = ref >= x.hrvLo ? 1 : clamp01(1 - (x.hrvLo - ref) / (0.2 * x.hrvLo));
+    if (x.hrv < x.hrvLo) v = clamp01(v - 0.2);
+    raw.push(["hrv", "HRV", v]);
+  }
+  // Schlaf: Score 0–100, unter 7 Stunden je Stunde 10 % weniger
+  if (x.score != null || x.slp != null) {
+    const base = x.score != null ? x.score / 100 : clamp01((x.slp as number) / 8);
+    raw.push(["sleep", "Schlaf", clamp01(base * (x.slp != null && x.slp < 7 ? 1 - (7 - x.slp) * 0.1 : 1))]);
+  }
+  if (x.recH != null) raw.push(["recovery", "Erholung nach Training", clamp01(1 - x.recH / 48)]);
+  if (x.ratio != null) raw.push(["load", "Last", x.ratio > 1.3 ? clamp01(1 - (x.ratio - 1.3) / 0.7) : x.ratio < 0.8 ? clamp01(1 - (0.8 - x.ratio) * 0.5) : 1]);
+  if (x.rhr != null && x.rhrBase != null) raw.push(["rhr", "Ruhepuls", clamp01(1 - Math.max(0, x.rhr - x.rhrBase) / 5)]);
+  if (x.bb != null) raw.push(["bb", "Body Battery", clamp01(x.bb / 100)]);
+  if (raw.length < 2 || !light) return { score: null, parts: [] };
+  const wsum = raw.reduce((t, [k]) => t + READY_W[k], 0);
+  const parts = raw.map(([k, name, v]) => { const max = (READY_W[k] / wsum) * 100; return { key: k, name, pts: Math.round(v * max), max: Math.round(max) }; });
+  let score = Math.round(raw.reduce((t, [k, , v]) => t + READY_W[k] * v, 0) / wsum * 100);
+  const band: Record<string, [number, number]> = { g: [70, 100], y: [40, 69], r: [0, 39] };
+  const [lo, hi] = band[light];
+  score = Math.max(lo, Math.min(hi, score));
+  return { score, parts };
+}
 
 const DE = (x: number, d = 0) => x.toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d });
 const hm = (h: number) => { const m = Math.round(h * 60); return Math.floor(m / 60) + ":" + String(m % 60).padStart(2, "0"); };
@@ -35,7 +76,7 @@ export const median = (a: Array<number | null | undefined>) => {
 //   des Normalbereichs und Schlafscore ab 80) verkürzt den Rest um 15 %, eine schlechte (HRV unter dem Bereich oder
 //   Schlafscore unter 60) verlängert ihn um 15 %. Mehrere Einheiten: die längste zählt voll, die übrigen zu 30 %.
 //   Gelb ab 12 h offen, rot ab 48 h. Gelb heißt höchstens „Moderat trainieren“, rot „Erholung hat Vorrang“.
-export interface AmpelAct { date: string; start?: string | null; min?: number | null; te?: number | null; teAn?: number | null; load?: number | null; name?: string | null }
+export interface AmpelAct { id?: string; date: string; start?: string | null; min?: number | null; te?: number | null; teAn?: number | null; load?: number | null; name?: string | null }
 const TE_HOURS: Array<[number, number]> = [[1, 0], [2, 8], [3, 18], [4, 30], [5, 54]];
 export const REC_YELLOW = 12, REC_RED = 48, REC_MAX = 72;
 
@@ -122,6 +163,7 @@ export function assess(days: Day[], loadByDay: Map<string, number>, acts?: Ampel
   const rhrBase = median(days.filter((x) => x.d < d.d && x.d >= addDays(d.d, -30)).map((x) => x.rhr));
   const ratio = loadRatio(loadByDay, d.d);
   const items: AmpelItem[] = [];
+  let recH: number | null = null;
   if (d.hrv != null && d.hrvLo != null) {
     // Wie Garmins HRV-Status: bewertet wird der 7-Tage-Schnitt gegen den Normalbereich (im Bereich grün, darunter gelb,
     // mehr als 10 % darunter rot). Eine einzelne niedrige Nacht macht höchstens gelb; rot erst, wenn auch der
@@ -161,10 +203,12 @@ export function assess(days: Day[], loadByDay: Map<string, number>, acts?: Ampel
     const bad = (d.hrv != null && d.hrvLo != null && d.hrv < d.hrvLo) || (d.score != null && d.score < 60);
     const rec = openRecovery(acts, d.d, good ? 0.85 : bad ? 1.15 : 1, now);
     const h = Math.round(rec.hours);
+    recH = rec.hours;
     const src = rec.from ? `Nach „${rec.from.name || "Training"}“ am ${Number(rec.from.date.slice(8))}.${Number(rec.from.date.slice(5, 7))}. (Trainingseffekt ${DE(rec.from.te || 0, 1)}${rec.from.teAn ? " / " + DE(rec.from.teAn, 1) + " anaerob" : ""}). ` : "";
     items.push({ key: "recovery", st: h >= REC_RED ? "r" : h >= REC_YELLOW ? "y" : "g", name: "Erholung nach Training",
       val: h >= 1 ? `noch ca. ${h} h` : "abgeschlossen",
-      why: src + "Eigene Schätzung aus Trainingseffekt und Last, Stand " + (now ? now.slice(11, 16) + " Uhr" : "7 Uhr") + ". Gelb ab 12 h offen, rot ab 48 h." });
+      why: src + "Eigene Schätzung aus Trainingseffekt und Last, Stand " + (now ? now.slice(11, 16) + " Uhr" : "7 Uhr") + ". Gelb ab 12 h offen, rot ab 48 h.",
+      ...(rec.from && rec.from.id ? { actId: String(rec.from.id) } : {}) });
   }
   // Body Battery beim Aufwachen, nur wenn Garmin sie liefert
   if (d.bbWake != null) items.push({ key: "bb", st: d.bbWake < 30 ? "r" : d.bbWake < 50 ? "y" : "g", name: "Body Battery beim Aufwachen", val: String(d.bbWake), why: "Gelb unter 50, rot unter 30." });
@@ -178,7 +222,8 @@ export function assess(days: Day[], loadByDay: Map<string, number>, acts?: Ampel
   else if (yellows >= 2 || items.some((i) => i.key === "recovery" && i.st === "y")) { verdict = "Moderat trainieren"; light = "y"; }
   else if (yellows === 1) { verdict = "Training normal möglich"; light = "g"; }
   else { verdict = "Bereit für intensives Training"; light = "g"; }
-  return { day: d.d, light, verdict, items };
+  const r = readiness({ hrv: d.hrv, hrvWk: d.hrvWk, hrvLo: d.hrvLo, rec: d.rec, score: d.score, slp: d.slp, recH, ratio, rhr: d.rhr, rhrBase, bb: d.bbWake }, light);
+  return { day: d.d, light, verdict, items, score: r.score, parts: r.parts };
 }
 
 /** Text der Morgen-Meldung, z. B. „🟢 Training normal möglich“ / „HRV 62 ms · Ruhepuls 47 · Schlaf 7:12 h (Score 81) · Last 1,1“ */
@@ -193,7 +238,7 @@ export function pushText(a: Ampel, day: Day | undefined): { title: string; body:
   if (load && load.st) parts.push(`Last ${load.val}`);
   const rec = a.items.find((i) => i.key === "recovery");
   if (rec && (rec.st === "y" || rec.st === "r")) parts.push(`Erholung ${rec.val}`);
-  return { title: `${dot} ${a.verdict}`, body: parts.join(" · ") || "Tippe für Details." };
+  return { title: `${dot} ${a.score != null ? "Bereitschaft " + a.score + " · " : ""}${a.verdict}`, body: parts.join(" · ") || "Tippe für Details." };
 }
 
 // ---------- Zeitplan des Morgen-Pushs ----------
@@ -205,4 +250,23 @@ export function decide(cfg: { on: boolean; time: string; lastSent?: string }, to
   if (!cfg.on || cfg.lastSent === today || toMin(now) < toMin(cfg.time)) return "skip";
   if (ampelDay === today) return "send";
   return toMin(now) - toMin(cfg.time) >= WAIT_MIN ? "send-stale" : "wait";
+}
+
+// ---------- Automatisch nach dem Aufwachen ----------
+/** Vorher nie senden (die Nacht läuft noch), auch wenn schon Werte für heute da sind */
+export const AUTO_START = "03:00";
+/** Schlaf ist da, die HRV noch nicht: so lange auf sie warten, dann ohne sie senden */
+export const HRV_WAIT_MIN = 45;
+/** Stand der letzten Nacht in der bevorzugten Quelle (Garmin, WHOOP …) */
+export interface NightState { sleep: boolean; hrv: boolean; hrvUsual: boolean; sleepSeenMin: number | null }
+/**
+ * Morgen-Push im Modus „automatisch“: senden, sobald der Schlaf der letzten Nacht da ist (und die HRV, wenn die Person
+ * sonst eine hat). Kommt bis `latest` nichts, mit dem letzten Stand senden. Einmal am Tag, nicht vor AUTO_START.
+ */
+export function decideAuto(cfg: { on: boolean; latest: string; lastSent?: string }, today: string, now: string, night: NightState): "send" | "send-stale" | "wait" | "skip" {
+  if (!cfg.on || cfg.lastSent === today || toMin(now) < toMin(AUTO_START)) return "skip";
+  if (night.sleep && (night.hrv || !night.hrvUsual)) return "send";
+  if (night.sleep && night.sleepSeenMin != null && night.sleepSeenMin >= HRV_WAIT_MIN) return "send";
+  if (toMin(now) >= toMin(cfg.latest)) return night.sleep ? "send" : "send-stale";
+  return "wait";
 }

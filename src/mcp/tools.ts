@@ -1,15 +1,42 @@
-// Werkzeuge des MCP-Zugangs (#5). Alle nur lesend. Grundlage ist dieselbe Aufbereitung wie für die
+// Werkzeuge des MCP-Zugangs (#5). Alle nur lesend, außer dem Trainingsplan (#20, nur mit Freigabe „plan“). Grundlage ist dieselbe Aufbereitung wie für die
 // Oberfläche (buildData: Quellen-Priorität, Strava-Doppelungen zusammengeführt, Erholungs-Ampel).
 // Stimmung (Balance) nur, wenn unter Konto → Claude ausdrücklich freigegeben (CLAUDE.md).
 // WHOOP-Daten (#119) ebenso nur mit Freigabe: Die WHOOP-API-Bedingungen (4.2) verlangen für die Weitergabe an Dritte
 // die ausdrückliche Zustimmung der Person. Ohne Freigabe rechnet alles (auch die Ampel) ohne WHOOP.
+// Google Health ebenso: Googles Regeln für Nutzerdaten (Limited Use) erlauben die Weitergabe nur für eine Funktion,
+// die die Person selbst ausdrücklich will. Deshalb eigene Freigabe, Standard aus.
 import type { Env } from "../env";
 import { buildData } from "../data";
 import { addDays, isDay, kvGetJson, localDate, round } from "../util";
 import { ToolError, type McpTool } from "./server";
+import { cleanSession, mergeSessions, TYPES, type TSession } from "../training";
+import { loadPlan, savePlan, trainingView } from "../training-api";
 
-export interface McpSettings { mood: boolean; whoop?: boolean }
-export const DEFAULT_MCP_SETTINGS: McpSettings = { mood: false, whoop: false };
+/** plan = Claude darf den Trainingsplan schreiben */
+export interface McpSettings { mood: boolean; whoop?: boolean; google?: boolean; plan?: boolean }
+export const DEFAULT_MCP_SETTINGS: McpSettings = { mood: false, whoop: false, google: false, plan: false };
+async function mayWritePlan(env: Env) {
+  const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
+  if (!set.plan) throw new ToolError("Claude darf den Trainingsplan noch nicht schreiben. Die Person kann das in der App unter Konto → Claude freigeben („Claude darf meinen Trainingsplan schreiben“).");
+}
+const SESSION_SCHEMA = {
+  type: "object",
+  properties: {
+    date: { type: "string", description: "JJJJ-MM-TT" },
+    type: { type: "string", enum: [...TYPES], description: "easy locker · long langer Lauf · strides locker mit Steigerungen · tempo Schwelle · interval Intervalle · mp langer Lauf mit Wettkampftempo · race Wettkampf · recovery Regeneration · strength Kraft · cross Alternativtraining" },
+    title: { type: "string", description: "kurz, z. B. „Intervalle 5 × 1000 m“" },
+    detail: { type: "string", description: "Ablauf in 1–2 Sätzen mit Pace und Puls, Du-Form, z. B. „2 km einlaufen, 5 × 1000 m in 3:25–3:30 /km, 3 min Trab, auslaufen“" },
+    km: { type: "number", description: "Gesamtstrecke inkl. Ein-/Auslaufen" },
+    min: { type: "number", description: "Dauer in Minuten (statt km, z. B. Kraft)" },
+    reps: { type: "number", description: "Anzahl Wiederholungen harter Einheiten (fürs Abhaken in Prozent)" },
+    pace_per_km: { type: "string", description: "Zielpace der Belastung bzw. Obergrenze locker als „m:ss“" },
+    hr_max: { type: "number", description: "obere Pulsgrenze in bpm (z. B. lockere Läufe)" },
+  },
+  required: ["date", "type", "title", "detail"],
+  additionalProperties: false,
+};
+/** Quellen, die Claude ohne Freigabe nicht sieht */
+export const mcpExclude = (set: McpSettings) => [...(set.whoop ? [] : ["whoop"]), ...(set.google ? [] : ["google"])];
 
 const MAX_DAYS = 400;
 const METRICS_DOC =
@@ -37,7 +64,7 @@ async function load(env: Env, from?: string) {
   const profile = await kvGetJson<{ tz?: string } | null>(env, "profile", null);
   const today = localDate(profile?.tz || env.TIMEZONE || "Europe/Berlin");
   const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
-  const data = await buildData(env, from ? daysBack(today, from) : 60, { exclude: set.whoop ? [] : ["whoop"] });
+  const data = await buildData(env, from ? daysBack(today, from) : 60, { exclude: mcpExclude(set) });
   return { today, data };
 }
 
@@ -161,9 +188,10 @@ export const TOOLS: McpTool<Env>[] = [
       const row = await env.DB.prepare("SELECT source, data, laps FROM activities WHERE external_id = ? LIMIT 1").bind(id).first<{ source: string; data: string; laps: string | null }>();
       // WHOOP-Einheiten nur mit Freigabe (#119)
       const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
-      if (!row || (row.source === "whoop" && !set.whoop)) throw new ToolError("Keine Einheit mit dieser id.");
+      if (!row || mcpExclude(set).includes(row.source)) throw new ToolError("Keine Einheit mit dieser id.");
       const a = JSON.parse(row.data);
-      const laps = row.laps ? (JSON.parse(row.laps) as any[]) : [];
+      // Runden von Strava nicht an Claude (Strava-Bedingungen, Issue 50)
+      const laps = row.laps && row.source !== "strava" ? (JSON.parse(row.laps) as any[]) : [];
       return {
         ...summary(a),
         cadence: a.cad ?? undefined, groundContactMs: a.gct ?? undefined, verticalOscillationCm: a.vo ?? undefined,
@@ -262,4 +290,80 @@ export const TOOLS: McpTool<Env>[] = [
       return results.map((r) => ({ date: r.day, mood: r.value, tags: r.tags ? JSON.parse(r.tags) : [], note: r.note || undefined }));
     },
   },
+  {
+    name: "get_training_plan",
+    title: "Trainingsplan lesen",
+    description: "Der Trainingsplan in der App mit Ziel, Wochen-Notiz und Einheiten. Vergangene Einheiten sind mit der gelaufenen " +
+      "Einheit abgeglichen: done.pct = Erfüllung in % (locker/lang: Strecke und Puls über 79 % HFmax; Schwelle/Intervalle: " +
+      "Wiederholungen und Tempo zu pace_per_km), done.why = Begründung, missed = nicht gelaufen. Standard: 14 Tage zurück bis 28 Tage voraus. " +
+      "Vor dem Anpassen eines Plans zuerst lesen.",
+    inputSchema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, additionalProperties: false },
+    async run(env, args) {
+      const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
+      const pre = await load(env);
+      const from = isDay(args.from) ? args.from : addDays(pre.today, -14), to = isDay(args.to) ? args.to : addDays(pre.today, 28);
+      const v = await trainingView(env, { from, to, exclude: mcpExclude(set) });
+      return {
+        today: v.today, goal: v.goal, weekNote: v.note, canWrite: !!set.plan, updated: v.updated || null,
+        sessions: v.sessions.map(({ index, moved, pace, hrMax, done, ...s }) => ({
+          ...s, pace_per_km: pace ? Math.floor(pace / 60) + ":" + String(pace % 60).padStart(2, "0") : undefined, hr_max: hrMax ?? undefined,
+          movedInApp: moved || undefined,
+          done: done ? { pct: done.pct, why: done.why, km: done.km, activityId: done.id || undefined, manual: done.manual || undefined } : undefined,
+        })),
+      };
+    },
+  },
+  {
+    name: "set_training_plan",
+    title: "Trainingsplan schreiben",
+    write: true,
+    description: "Einheiten in den Trainingsplan der App schreiben (nur mit Freigabe unter Konto → Claude). Ersetzt alle Einheiten ab " +
+      "replace_from (Standard: frühester Tag der neuen Einheiten) bis replace_to (Standard: Ende des Plans); ältere bleiben als Verlauf. " +
+      "Ruhetage einfach weglassen. Die App zeigt die Einheit des Tages auf „Heute“ und im Morgen-Push und hakt gelaufene Einheiten ab. " +
+      "Paces und Pulsgrenzen aus den echten Daten der Person ableiten (get_activities, get_race_predictions), Umfang vorsichtig steigern. " +
+      "Strava- und WHOOP-Daten nicht zum Planen verwenden. Optional goal (Ziel als Satz) und note (kurze Wochen-Notiz, Du-Form).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessions: { type: "array", items: SESSION_SCHEMA, maxItems: 200 },
+        replace_from: { type: "string", description: "JJJJ-MM-TT" },
+        replace_to: { type: "string", description: "JJJJ-MM-TT" },
+        goal: { type: "string", description: "z. B. „Halbmarathon Berlin 7.3.2027 in 1:12“" },
+        note: { type: "string", description: "kurze Notiz zur Woche, erscheint auf „Heute“" },
+      },
+      required: ["sessions"],
+      additionalProperties: false,
+    },
+    async run(env, args) {
+      await mayWritePlan(env);
+      const raw = Array.isArray(args.sessions) ? args.sessions : null;
+      if (!raw) throw new ToolError("sessions fehlt.");
+      if (raw.length > 200) throw new ToolError("Höchstens 200 Einheiten auf einmal.");
+      const add: TSession[] = [];
+      for (const x of raw) { const s = cleanSession(x); if (typeof s === "string") throw new ToolError(s); add.push(s); }
+      const rf = isDay(args.replace_from) ? args.replace_from : null, rt = isDay(args.replace_to) ? args.replace_to : null;
+      if (!add.length && !rf) throw new ToolError("Keine Einheiten: Zum Leeren eines Zeitraums replace_from (und replace_to) angeben.");
+      const { today } = await load(env);
+      let plan = mergeSessions(await loadPlan(env), add, rf, rt);
+      if (typeof args.goal === "string") plan = { ...plan, goal: args.goal.trim().slice(0, 200) || null };
+      if (typeof args.note === "string") plan = { ...plan, note: args.note.trim() ? { date: today, text: args.note.trim().slice(0, 600) } : null };
+      await savePlan(env, plan);
+      return { ok: true, saved: add.length, totalSessions: plan.sessions.length, first: plan.sessions[0]?.date || null, last: plan.sessions[plan.sessions.length - 1]?.date || null };
+    },
+  },
+  {
+    name: "set_plan_note",
+    title: "Wochen-Notiz schreiben",
+    write: true,
+    description: "Kurze Notiz zum Plan (z. B. Wochenrückblick und was sich ändert), erscheint in der App auf „Heute“. Leerer Text löscht sie. Nur mit Freigabe.",
+    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
+    async run(env, args) {
+      await mayWritePlan(env);
+      const { today } = await load(env);
+      const t = typeof args.text === "string" ? args.text.trim().slice(0, 600) : "";
+      await savePlan(env, { ...(await loadPlan(env)), note: t ? { date: today, text: t } : null });
+      return { ok: true };
+    },
+  },
 ];
+

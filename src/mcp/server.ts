@@ -9,6 +9,8 @@ export interface McpTool<C> {
   title: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** schreibt (nur der Trainingsplan, mit Freigabe unter Konto → Claude) */
+  write?: boolean;
   run: (ctx: C, args: Record<string, unknown>) => Promise<unknown>;
 }
 
@@ -19,7 +21,8 @@ export class ToolError extends Error {}
 
 const INSTRUCTIONS =
   "Persönliche Gesundheits- und Trainingsdaten einer einzelnen Person aus ihrer eigenen Health-Hub-Instanz " +
-  "(Garmin, Strava, Withings). Nur lesend. Datumsangaben im Format JJJJ-MM-TT, Ortszeit der Person. " +
+  "(Garmin, Strava, Withings). Nur lesend – einzige Ausnahme ist der Trainingsplan (set_training_plan, set_plan_note), " +
+  "wenn die Person das unter Konto → Claude freigegeben hat. Datumsangaben im Format JJJJ-MM-TT, Ortszeit der Person. " +
   "Für einen schnellen Überblick zuerst get_overview. Keine medizinischen Diagnosen stellen; " +
   "die Erholungs-Ampel ist eine eigene, offengelegte Regel der App, keine Garmin-Berechnung.";
 
@@ -50,7 +53,7 @@ export async function handleRpc<C>(msg: RpcMsg, tools: McpTool<C>[], ctx: C, ver
       return ok(msg.id, {
         tools: tools.map((t) => ({
           name: t.name, title: t.title, description: t.description, inputSchema: t.inputSchema,
-          annotations: { readOnlyHint: true, openWorldHint: false },
+          annotations: t.write ? { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } : { readOnlyHint: true, openWorldHint: false },
         })),
       });
     case "tools/call": {

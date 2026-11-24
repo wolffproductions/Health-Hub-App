@@ -20,4 +20,7 @@ export interface Env {
   /** Optional statt Eintrag in der App: eigene WHOOP-App (#119) */
   WHOOP_CLIENT_ID?: string;
   WHOOP_CLIENT_SECRET?: string;
+  /** Optional statt Eintrag in der App: eigenes Google-Cloud-Projekt für die Google Health API */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
 }

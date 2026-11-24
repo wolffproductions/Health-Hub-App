@@ -22,7 +22,8 @@ import {
 const CHUNK_DAYS = 28;
 const RECENT_DAYS = 7;
 const RECENT_EVERY_MS = 3 * 3600 * 1000;
-const LAPS_PER_RUN = 2;
+// Dateien pro Sync-Lauf; 4, damit die Bestleistungen der älteren Einheiten in ein paar Tagen nachgeholt sind
+const LAPS_PER_RUN = 4;
 // Routen nur für die letzten 90 Tage nachladen; neue Aktivitäten bekommen ihre immer
 // (früher ROUTE_DAYS = 90) Route und Puls-Histogramm jetzt für die ganze Historie bis BACKFILL_DAYS
 
@@ -48,8 +49,9 @@ const nowS = () => Math.floor(Date.now() / 1000);
 // alle gespeicherten Rohdaten (raw_records) neu aus, ohne Garmin erneut abzufragen.
 // 2: Puls im Schlaf aus averageSpO2HRSleep, SpO2 im Schlaf
 // 3: Stress-Höchstwert, Zeit je Stressstufe, Body Battery geladen/verbraucht (Balance)
-// 4: VO2max je Einheit · 5: Kalorien je Einheit (#17) · 6: Runden mit Intensität und Auslöser (#105)
-const EXTRACT_VERSION = 6;
+// 4: VO2max je Einheit · 5: Kalorien je Einheit (#17) · 6: Runden mit Intensität und Auslöser (#105) · 8: VO2max aus der .fit
+// 7: Pausen in den Verläufen (#152, Karte)
+const EXTRACT_VERSION = 8;
 const EXTRACTORS: Record<string, (json: unknown) => MetricRow[]> = {
   dailysummaries: extractDailySummaries,
   sleep: extractSleep,
@@ -82,6 +84,17 @@ async function reextract(env: Env): Promise<boolean> {
   if (done < 6) {
     await env.DB.prepare("UPDATE activities SET laps_done = 0 WHERE source = 'garmin' AND type LIKE '%running%' AND day >= date('now', '-60 days')").run();
   }
+  // Version 7 (#152): Verläufe kennen jetzt Pausen. Einheiten mit Verläufen der letzten 60 Tage werten ihre .fit-Datei
+  // noch einmal aus (aus R2, sonst von Garmin), neueste zuerst, im üblichen Takt des Datei-Abrufs
+  if (done < 7) {
+    await env.DB.prepare("UPDATE activities SET route_done = 0 WHERE source = 'garmin' AND streams IS NOT NULL AND day >= date('now', '-60 days')").run();
+  }
+  // Version 8: VO2max aus der .fit (Nachricht 140). Läufe des letzten Jahres ohne VO2max holen ihre Datei noch einmal
+  // (aus R2, sonst von Garmin; 2 pro Sync-Lauf, neueste zuerst), Radfahrten der letzten 60 Tage ebenso
+  if (done < 8) {
+    await env.DB.prepare("UPDATE activities SET laps_done = 0 WHERE source = 'garmin' AND type LIKE '%running%' AND day >= date('now', '-365 days') AND json_extract(data, '$.vo2') IS NULL").run();
+    await env.DB.prepare("UPDATE activities SET route_done = 0 WHERE source = 'garmin' AND (type LIKE '%cycl%' OR type LIKE '%biking%') AND day >= date('now', '-60 days') AND json_extract(data, '$.vo2') IS NULL").run();
+  }
   await kvPut(env, "extractVersion", String(EXTRACT_VERSION));
   return true;
 }
@@ -111,7 +124,10 @@ async function saveActivities(env: Env, list: unknown) {
   const stmt = env.DB.prepare(
     `INSERT INTO activities (source, external_id, day, type, data, payload, updated_at)
      VALUES ('garmin', ?1, ?2, ?3, ?4, ?5, ?6)
-     ON CONFLICT(source, external_id) DO UPDATE SET day = ?2, type = ?3, data = ?4, payload = ?5, updated_at = ?6`,
+     ON CONFLICT(source, external_id) DO UPDATE SET day = ?2, type = ?3, payload = ?5, updated_at = ?6,
+       -- VO2max aus der .fit behalten, wenn die Aktivitätsliste keine liefert
+       data = CASE WHEN json_extract(?4, '$.vo2') IS NULL AND json_extract(activities.data, '$.vo2') IS NOT NULL
+                   THEN json_set(?4, '$.vo2', json_extract(activities.data, '$.vo2')) ELSE ?4 END`,
   );
   const ts = nowS();
   const rows = list.map((a) => [a, normalizeActivity(a)] as const).filter(([, n]) => n);
@@ -168,7 +184,7 @@ async function fetchFiles(env: Env, token: string, max: number, routeFrom: strin
   const { results } = await env.DB.prepare(`SELECT external_id, type, file_key ${FILES_PENDING} ORDER BY day DESC LIMIT ?`)
     .bind(routeFrom, max).all<{ external_id: string; type: string | null; file_key: string | null }>();
   for (const { external_id: id, type, file_key: stored } of results) {
-    let parsed: ReturnType<typeof fitParse> = { laps: [], route: [], hist: [], streams: null };
+    let parsed: ReturnType<typeof fitParse> = { laps: [], route: [], hist: [], streams: null, best: null, vo2: null };
     let fileKey: string | null = null;
     // Schon in R2 gespeichert? Dann ohne erneute Garmin-Anfrage neu auswerten
     if (stored && env.FILES) {
@@ -203,9 +219,31 @@ async function fetchFiles(env: Env, token: string, max: number, routeFrom: strin
 async function saveFileResult(env: Env, id: string, type: string | null, parsed: ReturnType<typeof fitParse>, fileKey: string | null) {
   const laps = type && type.includes("running") ? JSON.stringify(parsed.laps) : null;
   await env.DB.prepare(
-    "UPDATE activities SET laps = COALESCE(?, laps), laps_done = 1, route = ?, hr_hist = ?, streams = ?, route_done = 1, file_key = COALESCE(?, file_key) " +
+    "UPDATE activities SET laps = COALESCE(?, laps), laps_done = 1, route = ?, hr_hist = ?, streams = ?, best = ?, route_done = 1, file_key = COALESCE(?, file_key) " +
       "WHERE source = 'garmin' AND external_id = ?",
-  ).bind(laps, JSON.stringify(parsed.route), JSON.stringify(parsed.hist), parsed.streams ? JSON.stringify(parsed.streams) : null, fileKey, id).run();
+  ).bind(laps, JSON.stringify(parsed.route), JSON.stringify(parsed.hist), parsed.streams ? JSON.stringify(parsed.streams) : null,
+    parsed.best ? JSON.stringify(parsed.best) : null, fileKey, id).run();
+  // VO2max aus der .fit nur, wenn Garmins Aktivitätsliste keine hatte (nur Lauf und Rad)
+  if (parsed.vo2 != null && type && /running|cycl|biking|ride/.test(type)) {
+    await env.DB.prepare("UPDATE activities SET data = json_set(data, '$.vo2', ?) WHERE source = 'garmin' AND external_id = ? AND json_extract(data, '$.vo2') IS NULL")
+      .bind(parsed.vo2, id).run();
+  }
+}
+
+/**
+ * Morgen-Push „automatisch“ (#13): zwischen den Sync-Läufen nur Schlaf und HRV der letzten Nacht holen (2 Anfragen),
+ * damit der Bericht kurz nach dem Aufwachen kommt. Schlaf zählt bei Garmin zum Tag des Aufwachens.
+ */
+export async function nightCheck(env: Env): Promise<void> {
+  const token = await getToken(env);
+  const profile = await kvGetJson<Profile | null>(env, "profile", null);
+  const today = localDate(profile?.tz || env.TIMEZONE || "Europe/Berlin");
+  const [sleep, hrv] = await Promise.all([
+    api(token, "/sleep-service/sleep/dailySleepSummariesByDate", { startDate: today, endDate: today }),
+    api(token, `/hrv-service/hrv/daily/${today}/${today}`),
+  ]);
+  await Promise.all([saveRaw(env, "sleep", today, today, sleep), saveRaw(env, "hrv", today, today, hrv)]);
+  await saveMetrics(env, "garmin", [...extractSleep(sleep), ...extractHrv(hrv)]);
 }
 
 export async function syncStep(env: Env, force = false): Promise<Meta> {

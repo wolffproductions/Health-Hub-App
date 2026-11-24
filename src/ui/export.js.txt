@@ -1,0 +1,613 @@
+// ---------- TEILEN: Route als Grafik (#151) ----------
+// Aus einer Einheit eine Grafik machen: nur die Linie auf transparentem Hintergrund (zum Drüberlegen auf eigene Fotos
+// oder Videos), mit Kennzahlen, mit Höhenprofil, auf der Karte oder die aktuelle Ansicht der Vollbild-Karte (auch 3D).
+// Gezeichnet wird selbst (Projektion wie Web-Mercator, keine Karte nötig); nur die Karten-Vorlagen rendern eine
+// unsichtbare MapLibre-Karte in Zielgröße. Start und Ziel lassen sich kürzen, damit die Haustür nicht auf dem Bild landet.
+// Teilen über das Teilen-Menü des Geräts (Fotos, Instagram, AirDrop), sonst Download. Optional SVG (Druck, Weiterbearbeitung).
+
+const EXP_FORMATS = { '9:16': [1080, 1920], '4:5': [1080, 1350], '1:1': [1080, 1080], '16:9': [1920, 1080] };
+const EXP_PREF_KEY = 'expPrefs';
+const EXP_DEF = { tpl: 'stats', fmt: '9:16', color: 'white', custom: '#ff9f0a', width: 6, glow: true, ends: true, trim: true, trimM: 300, bg: 'none', mapBase: 'dark', stats: true, textScale: 1, wx: true };
+function expPrefs() { try { return { ...EXP_DEF, ...JSON.parse(localStorage.getItem(EXP_PREF_KEY) || '{}') }; } catch { return { ...EXP_DEF }; } }
+function saveExpPrefs(p) { try { localStorage.setItem(EXP_PREF_KEY, JSON.stringify(p)); } catch { /* privates Fenster */ } }
+
+const EXP_FONT = 'Inter, -apple-system, "SF Pro Text", system-ui, sans-serif';
+
+/** Route und Verläufe einer Einheit laden */
+async function expData(a) {
+  const route = await loadRoute(a.id);
+  if (!Array.isArray(route) || route.length < 2) return null;
+  let st = null;
+  if (a.st && typeof loadStreams === 'function') {
+    const s = await loadStreams(a.id).catch(() => null);
+    if (s && s.t && s.t.length > 1) st = s;
+  }
+  const run = sportOf(a.type || '').key === 'run' || /walk|hik/.test(a.type || '');
+  return { a, route, cum: routeCum(route), st, maxD: stMaxD(st), run };
+}
+
+/**
+ * Datenschutz: die ersten und letzten m Meter weglassen (höchstens je 20 % der Strecke).
+ * Ergebnis: Punkte [Breite, Länge] und für jeden Punkt der Anteil an der ganzen Strecke (für Farben und Profil).
+ */
+function expTrim(D, m) {
+  const total = D.cum[D.cum.length - 1];
+  const cut = Math.min(m || 0, total * 0.2);
+  const d0 = cut, d1 = total - cut;
+  const pts = [pointAt(D.route, D.cum, d0)], shares = [d0 / total];
+  D.route.forEach((p, i) => { if (D.cum[i] > d0 && D.cum[i] < d1) { pts.push(p); shares.push(D.cum[i] / total); } });
+  pts.push(pointAt(D.route, D.cum, d1)); shares.push(d1 / total);
+  return { pts, shares };
+}
+
+// Web-Mercator (ohne Kachel-Maßstab): gleiche Form wie auf der Karte
+const mercX = (lo) => lo * Math.PI / 180;
+const mercY = (la) => Math.log(Math.tan(Math.PI / 4 + la * Math.PI / 360));
+/** Punkte in ein Rechteck einpassen (Seitenverhältnis bleibt, mittig) → [[x, y], …] */
+function expProject(pts, box) {
+  const xs = pts.map(([, lo]) => mercX(lo)), ys = pts.map(([la]) => mercY(la));
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const k = Math.min(box.w / ((x1 - x0) || 1e-9), box.h / ((y1 - y0) || 1e-9));
+  const ox = box.x + (box.w - (x1 - x0) * k) / 2, oy = box.y + (box.h - (y1 - y0) * k) / 2;
+  return xs.map((x, i) => [ox + (x - x0) * k, oy + (y1 - ys[i]) * k]);
+}
+
+/** Linienfarbe(n): eine Farbe oder je Punkt eine Farbe (Verlauf nach Tempo, Puls, Höhe) */
+function expColors(D, opts, shares) {
+  if (['speed', 'hr', 'alt'].includes(opts.color) && D.st) {
+    const se = routeSeries(D.st, D.maxD, opts.color, D.run);
+    if (se) {
+      const f = seriesColor(se, D.st, D.maxD);
+      let last = d3.interpolateRgbBasis(se.ramp)(0.5);
+      return { colors: shares.map((s) => (last = f(s) || last)), solid: '#ffffff', se };
+    }
+  }
+  const solid = opts.color === 'black' ? '#111111' : opts.color === 'accent' ? (css('--accent') || '#2f5bff') : opts.color === 'custom' ? opts.custom : '#ffffff';
+  return { colors: null, solid };
+}
+
+// ---- Zeichnen: eine Beschreibung, zwei Ausgaben (Canvas für PNG, Text für SVG) ----
+function canvasPainter(ctx) {
+  const shadow = (on, c = 'rgba(0,0,0,.35)', b = 10) => { ctx.shadowColor = on ? c : 'transparent'; ctx.shadowBlur = on ? b : 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = on ? 1 : 0; };
+  return {
+    path(pts, { color, colors, width, glow }) {
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      const stroke = (w, alpha, blur) => {
+        ctx.globalAlpha = alpha;
+        if (!colors) {
+          shadow(blur > 0, color, blur);
+          ctx.strokeStyle = color; ctx.lineWidth = w;
+          ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+        } else {
+          for (let i = 1; i < pts.length; i++) {
+            shadow(blur > 0, colors[i], blur);
+            ctx.strokeStyle = colors[i]; ctx.lineWidth = w;
+            ctx.beginPath(); ctx.moveTo(pts[i - 1][0], pts[i - 1][1]); ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke();
+          }
+        }
+        ctx.globalAlpha = 1; shadow(false);
+      };
+      if (glow) stroke(width * 2.2, 0.35, width * 3);
+      stroke(width, 1, 0);
+    },
+    circle(x, y, r, fill, stroke, sw) {
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill();
+      if (stroke) { ctx.lineWidth = sw; ctx.strokeStyle = stroke; ctx.stroke(); }
+    },
+    // Ziel: Kreis mit Schachbrett (Zielflagge), weißer Rand
+    finish(x, y, r) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y, r * 0.8, 0, Math.PI * 2); ctx.clip();
+      const n = 4, c = (r * 1.6) / n;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { ctx.fillStyle = (i + j) % 2 ? '#ffffff' : '#111111'; ctx.fillRect(x - r * 0.8 + i * c, y - r * 0.8 + j * c, c + 0.5, c + 0.5); }
+      ctx.restore();
+    },
+    text(str, x, y, { size, weight = 400, color, align = 'left', shade = false }) {
+      ctx.font = `${weight} ${size}px ${EXP_FONT}`; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'alphabetic';
+      shadow(shade, 'rgba(0,0,0,.45)', size * 0.35); ctx.fillText(str, x, y); shadow(false);
+    },
+    measure(str, size, weight = 400) { ctx.font = `${weight} ${size}px ${EXP_FONT}`; return ctx.measureText(str).width; },
+    area(pts, base, color, opacity) {
+      ctx.globalAlpha = opacity; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], base); for (const [x, y] of pts) ctx.lineTo(x, y); ctx.lineTo(pts[pts.length - 1][0], base); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 1;
+    },
+    line(pts, color, width) {
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round';
+      ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+    },
+    fill(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); },
+    scrim(y0, y1, w, alpha) {
+      const g = ctx.createLinearGradient(0, y0, 0, y1); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${alpha})`);
+      ctx.fillStyle = g; ctx.fillRect(0, y0, w, y1 - y0);
+    },
+    image(img, w, h) { ctx.drawImage(img, 0, 0, w, h); },
+    // Symbol (Tabler, 24 × 24) als Linien zeichnen, oben links bei x, y
+    icon(name, x, y, size, color, shade) {
+      ctx.save(); shadow(shade, 'rgba(0,0,0,.45)', size * 0.3);
+      ctx.translate(x, y); ctx.scale(size / 24, size / 24);
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (const d of iconPaths(name)) ctx.stroke(new Path2D(d));
+      ctx.restore();
+    },
+  };
+}
+
+function svgPainter(W, H) {
+  const out = [], esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const f = (v) => +v.toFixed(1);
+  const d = (pts) => pts.map(([x, y], i) => (i ? 'L' : 'M') + f(x) + ' ' + f(y)).join('');
+  let glowUsed = false;
+  // Textbreite grob schätzen (für Einheiten hinter Zahlen); Inter ≈ 0,56 × Schriftgröße je Zeichen
+  const measure = (str, size, weight = 400) => String(str).length * size * (weight >= 600 ? 0.6 : 0.56);
+  return {
+    path(pts, { color, colors, width, glow }) {
+      const segs = (w, extra) => (colors
+        ? pts.slice(1).map((p, i) => `<path d="${d([pts[i], p])}" stroke="${colors[i + 1]}" stroke-width="${f(w)}" ${extra}/>`).join('')
+        : `<path d="${d(pts)}" stroke="${color}" stroke-width="${f(w)}" ${extra}/>`);
+      const base = 'fill="none" stroke-linecap="round" stroke-linejoin="round"';
+      if (glow) { glowUsed = true; out.push(`<g filter="url(#glow)" opacity="0.35">${segs(width * 2.2, base)}</g>`); }
+      out.push(segs(width, base));
+    },
+    circle(x, y, r, fill, stroke, sw) { out.push(`<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="${fill}"${stroke ? ` stroke="${stroke}" stroke-width="${f(sw)}"` : ''}/>`); },
+    finish(x, y, r) {
+      const n = 4, c = (r * 1.6) / n, cells = [];
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((i + j) % 2 === 0) cells.push(`<rect x="${f(x - r * 0.8 + i * c)}" y="${f(y - r * 0.8 + j * c)}" width="${f(c)}" height="${f(c)}" fill="#111111"/>`);
+      const id = 'zc' + out.length;
+      out.push(`<clipPath id="${id}"><circle cx="${f(x)}" cy="${f(y)}" r="${f(r * 0.8)}"/></clipPath><circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="#ffffff"/><g clip-path="url(#${id})">${cells.join('')}</g>`);
+    },
+    text(str, x, y, { size, weight = 400, color, align = 'left' }) {
+      const anchor = align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start';
+      out.push(`<text x="${f(x)}" y="${f(y)}" font-family='${EXP_FONT}' font-size="${f(size)}" font-weight="${weight}" fill="${color}" text-anchor="${anchor}">${esc(str)}</text>`);
+    },
+    measure,
+    area(pts, base, color, opacity) { out.push(`<path d="${d([[pts[0][0], base], ...pts, [pts[pts.length - 1][0], base]])}Z" fill="${color}" opacity="${opacity}"/>`); },
+    line(pts, color, width) { out.push(`<path d="${d(pts)}" fill="none" stroke="${color}" stroke-width="${f(width)}" stroke-linejoin="round"/>`); },
+    fill(x, y, w, h, color) { out.push(`<rect x="${f(x)}" y="${f(y)}" width="${f(w)}" height="${f(h)}" fill="${color}"/>`); },
+    scrim() {}, image() {},
+    icon(name, x, y, size, color) {
+      out.push(`<g transform="translate(${f(x)} ${f(y)}) scale(${+(size / 24).toFixed(4)})" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconPaths(name).map((d) => `<path d="${d}"/>`).join('')}</g>`);
+    },
+    toString() {
+      const defs = glowUsed ? `<defs><filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${f(Math.min(W, H) / 120)}"/></filter></defs>` : '';
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${defs}${out.join('')}</svg>`;
+    },
+  };
+}
+
+/** Aufteilung der Fläche je Vorlage und Format: Route, Kennzahlen, Höhenprofil */
+function expLayout(tpl, W, H, withStats) {
+  const wide = W > H * 1.2, u = Math.min(W, H), pad = u * 0.08;
+  const L = { pad, u, route: { x: pad, y: pad, w: W - 2 * pad, h: H - 2 * pad }, stats: null, profile: null, footer: false };
+  if (tpl === 'route') return L;
+  if (tpl === 'map' || tpl === 'view') {
+    if (!withStats) return L;
+    // Kennzahlen als Leiste unten auf der Karte
+    const fh = wide ? H * 0.3 : H * 0.2;
+    L.footer = true;
+    L.stats = { x: pad, y: H - fh, w: W - 2 * pad, h: fh - pad * 0.7 };
+    L.route = { x: pad, y: pad * 1.2, w: W - 2 * pad, h: H - fh - pad * 1.6 };
+    return L;
+  }
+  if (wide) {
+    L.route = { x: pad, y: pad, w: W * 0.52 - pad, h: H - 2 * pad };
+    const rx = W * 0.58, rw = W - rx - pad;
+    if (tpl === 'profile') { L.stats = { x: rx, y: pad, w: rw, h: H * 0.5 }; L.profile = { x: rx, y: H * 0.62, w: rw, h: H * 0.38 - pad }; }
+    else L.stats = { x: rx, y: pad, w: rw, h: H - 2 * pad };
+    return L;
+  }
+  const square = H < W * 1.3;
+  if (tpl === 'profile') {
+    L.route = { x: pad, y: pad, w: W - 2 * pad, h: H * (square ? 0.44 : 0.5) - pad };
+    L.profile = { x: pad, y: H * (square ? 0.5 : 0.56), w: W - 2 * pad, h: H * (square ? 0.14 : 0.13) };
+    L.stats = { x: pad, y: H * (square ? 0.7 : 0.74), w: W - 2 * pad, h: H * (square ? 0.3 : 0.26) - pad * 0.6 };
+  } else {
+    L.route = { x: pad, y: pad, w: W - 2 * pad, h: H * (square ? 0.58 : 0.62) - pad };
+    L.stats = { x: pad, y: H * (square ? 0.66 : 0.7), w: W - 2 * pad, h: H * (square ? 0.34 : 0.3) - pad * 0.6 };
+  }
+  return L;
+}
+
+/** Kennzahlen der Einheit für die Grafik: [Wert, Einheit, Beschriftung] */
+function expStats(D) {
+  const a = D.a, sp = sportOf(a.type || ''), out = [];
+  if (a.km) out.push([num(a.km, a.km < 10 ? 2 : 1), 'km', 'Distanz']);
+  if (a.min) out.push([duration(a.min), '', 'Zeit']);
+  if (a.spd) out.push(sp.key === 'swim' ? [pace(100 / a.spd), '/100 m', 'Pace'] : D.run ? [pace(1000 / a.spd), '/km', 'Pace'] : [num(a.spd * 3.6, 1), 'km/h', 'Tempo']);
+  if (a.elev != null && a.km) out.push([num(a.elev), 'm', 'Höhenmeter']);
+  return out.slice(0, 4);
+}
+
+/** Wetter zur Einheit für die Grafik (#54): Symbol und kurze Zeile, z. B. „Bewölkt · 12 °C · Wind 14 km/h NW“ */
+function expWx(w) {
+  const [ic, label] = wxKind(w.c);
+  const parts = [num(w.t) + ' °C'];
+  if (label) parts.unshift(label);
+  if (w.ws != null) parts.push('Wind ' + num(w.ws) + ' km/h' + (w.wd != null ? ' ' + windDir(w.wd) : ''));
+  return { ic, text: parts.join(' · ') };
+}
+/** Pfade eines Symbols aus icons.js.txt (24 × 24, Linien) */
+const iconPaths = (name) => [...String(ICONS[name] || '').matchAll(/ d="([^"]+)"/g)].map((m) => m[1]);
+
+/** Eine Vorlage zeichnen (ohne Karte; Karten-Bild kommt vorher als Hintergrund) */
+function expPaint(P, D, opts, W, H, mapImg) {
+  const L = expLayout(opts.tpl, W, H, opts.stats);
+  const onMap = opts.tpl === 'map' || opts.tpl === 'view';
+  const u = L.u;
+  // Hintergrund
+  if (onMap && mapImg) P.image(mapImg, W, H);
+  else if (opts.bg === 'dark') P.fill(0, 0, W, H, '#0b0b0c');
+  else if (opts.bg === 'light') P.fill(0, 0, W, H, '#f3f5f8');
+  // Schriftfarbe: auf transparentem Grund wie die Linie (schwarz bleibt schwarz, sonst weiß mit Schatten)
+  const dark = opts.bg === 'dark' || onMap || (opts.bg === 'none' && opts.color !== 'black');
+  const fg = dark ? '#ffffff' : '#0b1220', muted = dark ? 'rgba(255,255,255,.72)' : 'rgba(11,18,32,.6)';
+  const shade = opts.bg === 'none' || onMap;
+
+  const tr = expTrim(D, opts.trim ? opts.trimM : 0);
+  const C = expColors(D, opts, tr.shares);
+  let solid = C.solid;
+  // weiße Linie auf hellem Grund unsichtbar: dann dunkel
+  if (!C.colors && opts.bg === 'light' && opts.color === 'white') solid = '#0b1220';
+  const lw = opts.width * (u / 1080);
+  if (!onMap) {
+    const xy = expProject(tr.pts, L.route);
+    P.path(xy, { color: solid, colors: C.colors, width: lw, glow: opts.glow });
+    if (opts.ends) {
+      const r = Math.max(lw * 1.6, u * 0.014);
+      const s = xy[0], e = xy[xy.length - 1];
+      const sFill = C.colors ? C.colors[0] : solid;
+      P.circle(s[0], s[1], r, sFill, sFill === '#ffffff' ? '#111111' : '#ffffff', r * 0.35);
+      P.finish(e[0], e[1], r * 1.25);
+    }
+  }
+  if (L.footer) P.scrim(L.stats.y - H * 0.12, H, W, 0.62);
+
+  // Höhenprofil als Band
+  if (L.profile && D.st && D.st.alt) {
+    const b = L.profile, st = D.st, n = st.t.length;
+    const alts = st.alt.map((v, i) => (v == null ? null : [D.maxD ? (st.d[i] ?? 0) / D.maxD : i / (n - 1), v])).filter(Boolean);
+    if (alts.length > 1) {
+      let lo = Math.min(...alts.map((p) => p[1])), hi = Math.max(...alts.map((p) => p[1]));
+      if (hi - lo < 20) { const m = (hi + lo) / 2; lo = m - 10; hi = m + 10; }
+      const pts = alts.map(([s, v]) => [b.x + s * b.w, b.y + b.h - ((v - lo) / (hi - lo)) * b.h * 0.85]);
+      const pc = C.colors || (solid === '#111111' && dark) ? fg : solid;
+      P.area(pts, b.y + b.h, pc, 0.22);
+      P.line(pts, pc, Math.max(2, lw * 0.5));
+      const sz = u * 0.026;
+      P.text('HÖHE ' + num(lo) + '–' + num(hi) + ' m', b.x, b.y - sz * 0.6, { size: sz, weight: 500, color: muted, shade });
+    }
+  }
+
+  // Kennzahlen
+  if (L.stats && (opts.tpl === 'stats' || opts.tpl === 'profile' || opts.stats)) {
+    const b = L.stats, a = D.a, cells = expStats(D);
+    const wide = W > H * 1.2;
+    const title = a.name || sportOf(a.type || '').label;
+    const sub = dayLabel(a.date) + ' ' + a.date.slice(0, 4) + (a.start ? ' · ' + a.start + ' Uhr' : '');
+    const wx = opts.wx && a.wx ? expWx(a.wx) : null;
+    // Grundgrößen, mal der gewählten Schriftgröße
+    const ts = opts.textScale || 1, gapX = u * 0.045;
+    const base = { t: u * (L.footer ? 0.04 : 0.048) * ts, s: u * 0.028 * ts, v: u * (L.footer ? 0.052 : wide ? 0.06 : 0.07) * ts, l: u * 0.024 * ts };
+    // Passt eine Spaltenzahl? Höhe (Titel, Datum, Wetter, Reihen) und Breite (breiteste Zahl samt Einheit bzw. Beschriftung)
+    const fit = (cols) => {
+      const rows = Math.ceil(cells.length / cols);
+      const need = base.t + base.s * 1.6 * (wx ? 2 : 1) + base.v * 1.5 + (rows - 1) * base.v * 2.1 + base.l * 2.2;
+      const cellW = (b.w - gapX * (cols - 1)) / cols;
+      let widest = 1;
+      for (const [v, unit, label] of cells) {
+        widest = Math.max(widest, P.measure(v, base.v, 600) + (unit ? base.v * 0.18 + P.measure(unit, base.v * 0.45) : 0), P.measure(label.toUpperCase(), base.l, 500));
+      }
+      return { cols, cellW, k: Math.min(1, b.h / need, cellW / widest) };
+    };
+    // Mögliche Aufteilungen; genommen wird die, bei der die Zahlen am größten bleiben (z. B. 4:5 lieber 2 × 2 als zu eng in einer Reihe)
+    const cands = L.footer ? [Math.min(4, cells.length), 2] : wide ? [1, 2] : H < W * 1.3 ? [Math.min(4, cells.length), 2] : [2];
+    let best = null;
+    for (const c of cands) { const f = fit(c); if (!best || f.k > best.k + 0.02) best = f; }
+    const k = best.k;
+    let tSize = base.t * k; const sSize = base.s * k, vSize = base.v * k, lSize = base.l * k;
+    const tw = P.measure(title, tSize, 600); if (tw > b.w) tSize *= b.w / tw;
+    let y = b.y + tSize;
+    P.text(title, b.x, y, { size: tSize, weight: 600, color: fg, shade });
+    y += sSize * 1.6;
+    P.text(sub, b.x, y, { size: sSize, color: muted, shade });
+    if (wx) {
+      y += sSize * 1.6;
+      const is = sSize * 1.15;
+      P.icon(wx.ic, b.x, y - is * 0.82, is, muted, shade);
+      P.text(wx.text, b.x + is * 1.3, y, { size: sSize, color: muted, shade });
+    }
+    const top = y + vSize * 1.5, cellH = vSize * 2.1;
+    cells.forEach(([v, unit, label], i) => {
+      const cx = b.x + (i % best.cols) * (best.cellW + gapX), cy = top + Math.floor(i / best.cols) * cellH;
+      P.text(v, cx, cy, { size: vSize, weight: 600, color: fg, shade });
+      if (unit) P.text(unit, cx + P.measure(v, vSize, 600) + vSize * 0.18, cy, { size: vSize * 0.45, color: muted, shade });
+      P.text(label.toUpperCase(), cx, cy + lSize * 1.7, { size: lSize, weight: 500, color: muted, shade });
+    });
+  }
+  return L;
+}
+
+/**
+ * Karte in Zielgröße rendern (unsichtbar), mit der Route als Ebene (liegt bei 3D auf dem Gelände).
+ * cam = Kamera der Vollbild-Karte (Vorlage „Ansicht“), sonst wird die Route eingepasst.
+ */
+async function expMapImage(D, opts, W, H, cam) {
+  await loadMapLibre();
+  const ml = window.maplibregl;
+  const base = cam ? cam.base : opts.mapBase === 'sat' ? 'satellit' : 'standard';
+  const mode = cam ? (cam.base === 'topo' ? 'light' : mapPal() === MAP_PAL.dark ? 'dark' : 'light') : opts.mapBase === 'light' ? 'light' : 'dark';
+  const style = await darkStyle(mode);
+  const box = el('div', 'exp-offscreen');
+  const cw = Math.round(W / 2), ch = Math.round(H / 2);
+  box.style.cssText = `position:fixed;left:-20000px;top:0;width:${cw}px;height:${ch}px;pointer-events:none;`;
+  document.body.append(box);
+  const L = expLayout(opts.tpl, W, H, opts.stats);
+  const tr = expTrim(D, opts.trim ? opts.trimM : 0);
+  const coords = tr.pts.map(([la, lo]) => [lo, la]);
+  const lo = coords.map((c) => c[0]), la = coords.map((c) => c[1]);
+  const bounds = [[Math.min(...lo), Math.min(...la)], [Math.max(...lo), Math.max(...la)]];
+  const padding = { top: L.route.y / 2, left: L.route.x / 2, right: (W - L.route.x - L.route.w) / 2, bottom: (H - L.route.y - L.route.h) / 2 };
+  const map = new ml.Map({ container: box, style, interactive: false, attributionControl: false, preserveDrawingBuffer: true, pixelRatio: 2, fadeDuration: 0, bounds, fitBoundsOptions: { padding }, maxPitch: 85 });
+  try {
+    // einzelne Kachel-Fehler sind kein Abbruch; nur wenn der Stil gar nicht lädt
+    await new Promise((res, rej) => { map.once('load', res); setTimeout(() => rej(new Error('Zeit')), 15000); });
+    const layers = map.getStyle().layers;
+    const firstVec = layers.find((l) => l.type !== 'background');
+    if (base === 'satellit' || base === 'topo') {
+      map.addSource('base', MAP_SOURCES[base]);
+      map.addLayer({ id: 'base', type: 'raster', source: 'base' }, firstVec && firstVec.id);
+      for (const l of layers) {
+        if (l.type === 'background') continue;
+        const keep = base === 'satellit' && l.type === 'symbol' && !(l.layout && l.layout.visibility === 'none');
+        map.setLayoutProperty(l.id, 'visibility', keep ? 'visible' : 'none');
+        if (keep) { map.setPaintProperty(l.id, 'text-color', '#ffffff'); map.setPaintProperty(l.id, 'text-halo-color', 'rgba(0,0,0,0.75)'); }
+      }
+    }
+    if (cam && cam.terrain) { map.addSource('dem', { ...MAP_SOURCES.dem }); map.setTerrain({ source: 'dem', exaggeration: 1.4 }); }
+    if (cam) {
+      // gleicher Ausschnitt wie im Vollbild, auf die Zielgröße umgerechnet
+      const zoom = cam.zoom + Math.log2(Math.min(cw, ch) / Math.max(1, Math.min(cam.w, cam.h)));
+      map.jumpTo({ center: cam.center, zoom, bearing: cam.bearing, pitch: cam.pitch });
+    }
+    // Route als Ebene: Farbe bzw. Verlauf, Glow, Start und Ziel
+    const C = expColors(D, opts, tr.shares);
+    map.addSource('r', { type: 'geojson', lineMetrics: true, data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } });
+    const total = tr.shares[tr.shares.length - 1] - tr.shares[0] || 1;
+    const grad = C.colors ? ['interpolate', ['linear'], ['line-progress'], ...C.colors.flatMap((c, i) => {
+      const s = (tr.shares[i] - tr.shares[0]) / total; return i && s <= (tr.shares[i - 1] - tr.shares[0]) / total ? [] : [s, c];
+    })] : null;
+    const lw = opts.width / 2;
+    const layout = { 'line-join': 'round', 'line-cap': 'round' };
+    if (opts.glow) map.addLayer({ id: 'r-glow', type: 'line', source: 'r', layout, paint: { 'line-color': C.solid, 'line-width': lw * 3.2, 'line-blur': lw * 2.4, 'line-opacity': 0.4, ...(grad ? { 'line-gradient': grad } : {}) } });
+    map.addLayer({ id: 'r-line', type: 'line', source: 'r', layout, paint: { 'line-color': C.solid, 'line-width': lw, ...(grad ? { 'line-gradient': grad } : {}) } });
+    if (opts.ends) {
+      map.addSource('e', { type: 'geojson', data: featColl([ptFeat(tr.pts[0], { k: 's' }), ptFeat(tr.pts[tr.pts.length - 1], { k: 'z' })]) });
+      map.addLayer({ id: 'e-s', type: 'circle', source: 'e', filter: ['==', ['get', 'k'], 's'], paint: { 'circle-radius': Math.max(5, lw * 1.4), 'circle-color': C.colors ? C.colors[0] : C.solid, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 } });
+      map.addImage('ziel', finishFlag(22), { pixelRatio: 2 });
+      map.addLayer({ id: 'e-z', type: 'symbol', source: 'e', filter: ['==', ['get', 'k'], 'z'], layout: { 'icon-image': 'ziel', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
+    }
+    await new Promise((res) => { map.once('idle', res); setTimeout(res, 15000); });
+    const img = document.createElement('canvas'); img.width = W; img.height = H;
+    img.getContext('2d').drawImage(map.getCanvas(), 0, 0, W, H);
+    const credit = ['© OpenStreetMap-Mitwirkende', 'OpenFreeMap'];
+    if (base === 'satellit') credit.push('Luftbild © Esri, Maxar, Earthstar Geographics');
+    if (base === 'topo') credit.push('OpenTopoMap (CC-BY-SA)');
+    if (cam && cam.terrain) credit.push('Höhen: Terrain Tiles');
+    return { img, credit: credit.join(' · ') };
+  } finally {
+    map.remove(); box.remove();
+  }
+}
+
+/** Fertige Grafik als Canvas */
+async function expRender(D, opts, cam) {
+  const [W, H] = EXP_FORMATS[opts.fmt] || EXP_FORMATS['9:16'];
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  if (document.fonts && document.fonts.load) await document.fonts.load('600 40px Inter').catch(() => {});
+  let mapImg = null, credit = '';
+  if (opts.tpl === 'map' || opts.tpl === 'view') ({ img: mapImg, credit } = await expMapImage(D, opts, W, H, opts.tpl === 'view' ? cam : null));
+  const P = canvasPainter(ctx);
+  expPaint(P, D, opts, W, H, mapImg);
+  // Quellenangabe der Karte muss auf dem Bild stehen
+  if (credit) P.text(credit, W - Math.min(W, H) * 0.03, H - Math.min(W, H) * 0.025, { size: Math.min(W, H) * 0.017, color: 'rgba(255,255,255,.8)', align: 'right', shade: true });
+  return cv;
+}
+function expSvg(D, opts) {
+  const [W, H] = EXP_FORMATS[opts.fmt] || EXP_FORMATS['9:16'];
+  const P = svgPainter(W, H);
+  expPaint(P, D, opts, W, H, null);
+  return P.toString();
+}
+
+/** Datei teilen (Teilen-Menü des Geräts) oder herunterladen */
+async function expDeliver(blob, name, preferShare) {
+  const file = new File([blob], name, { type: blob.type });
+  if (preferShare && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return 'geteilt'; } catch (e) { if (e && e.name === 'AbortError') return ''; }
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a'); link.href = url; link.download = name;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return 'gesichert';
+}
+
+/** Teilen-Ansicht öffnen. ctx.map = Vollbild-Karte (dann gibt es die Vorlage „Ansicht“ mit Neigung und 3D) */
+async function openExport(a, ctx = {}) {
+  if (document.querySelector('.exp')) return;
+  const view = el('div', 'exp');
+  view.setAttribute('role', 'dialog'); view.setAttribute('aria-modal', 'true'); view.setAttribute('aria-label', 'Als Grafik teilen');
+  const bar = el('div', 'mf-bar'), title = el('div', 'ap-title');
+  title.append(el('div', 'ap-name', 'Teilen'), el('div', 'note', a.name || sportOf(a.type || '').label));
+  const done = el('button', 'btn small', 'Fertig'); done.type = 'button';
+  bar.append(title, done);
+  const stage = el('div', 'exp-stage'); const frame = el('div', 'exp-frame'); stage.append(frame);
+  const status = el('div', 'exp-status', 'Lade Route …'); stage.append(status);
+  const panel = el('div', 'exp-panel');
+  const actions = el('div', 'exp-actions');
+  view.append(bar, stage, panel, actions);
+  document.body.append(view);
+  document.body.classList.add('mapfull-open');
+  const close = (fromHistory) => {
+    if (!view.isConnected) return;
+    view.remove();
+    if (!document.querySelector('.mapfull')) document.body.classList.remove('mapfull-open');
+    window.removeEventListener('popstate', onPop);
+    if (!fromHistory) history.back();
+  };
+  const onPop = () => { if (history.state && history.state.exp) return; close(true); };
+  history.pushState({ exp: true }, '');
+  window.addEventListener('popstate', onPop);
+  done.addEventListener('click', () => close(false));
+
+  const D = await expData(a).catch(() => null);
+  if (!view.isConnected) return;
+  if (!D) { status.textContent = 'Für diese Einheit gibt es keine Route.'; return; }
+  const opts = expPrefs();
+  // Kamera der Vollbild-Karte für „Ansicht“ merken (Ausschnitt, Drehung, Neigung, 3D, Kartenstil)
+  let cam = null;
+  if (ctx.map && ctx.map._hh) {
+    const m = ctx.map, c = m.getCenter(), cv = m.getContainer();
+    cam = { center: [c.lng, c.lat], zoom: m.getZoom(), bearing: m.getBearing(), pitch: m.getPitch(), terrain: !!m._hh.is3d, base: m._hh.base, w: cv.clientWidth, h: cv.clientHeight };
+    opts.tpl = 'view';
+  } else if (opts.tpl === 'view') opts.tpl = 'stats';
+  const hasProfile = !!(D.st && D.st.alt);
+  if (opts.tpl === 'profile' && !hasProfile) opts.tpl = 'stats';
+  if (['speed', 'hr', 'alt'].includes(opts.color) && !routeSeries(D.st, D.maxD, opts.color, D.run)) opts.color = 'white';
+
+  // ---- Bedienung ----
+  const sec = (t) => { const s = el('div', 'exp-sec'); s.append(el('div', 'mf-sh-h', t)); panel.append(s); return s; };
+  const chips = (parent, items, key, after) => {
+    const box = el('div', 'mf-opts');
+    for (const [k, l] of items) {
+      const b = el('button', null, l); b.type = 'button'; b.dataset.k = k; b.setAttribute('aria-pressed', String(opts[key] === k));
+      b.addEventListener('click', () => { opts[key] = k; for (const x of box.children) x.setAttribute('aria-pressed', String(x.dataset.k === k)); after && after(); changed(); });
+      box.append(b);
+    }
+    parent.append(box); return box;
+  };
+  const seg = (parent, items, key) => {
+    const box = el('div', 'seg');
+    for (const [k, l] of items) {
+      const b = el('button', null, l); b.type = 'button'; b.dataset.k = String(k); b.setAttribute('aria-pressed', String(opts[key] === k));
+      b.addEventListener('click', () => { opts[key] = k; for (const x of box.children) x.setAttribute('aria-pressed', String(x.dataset.k === String(k))); changed(); });
+      box.append(b);
+    }
+    parent.append(box); return box;
+  };
+  const toggle = (parent, label, key, after) => {
+    const row = el('label', 'mf-tog'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!opts[key];
+    cb.addEventListener('change', () => { opts[key] = cb.checked; after && after(); changed(); });
+    row.append(el('span', null, label), cb); parent.append(row); return row;
+  };
+
+  const tpls = [['route', 'Nur Route'], ['stats', 'Kennzahlen'], ...(hasProfile ? [['profile', 'Höhenprofil']] : []), ['map', 'Karte'], ...(cam ? [['view', 'Ansicht']] : [])];
+  const sTpl = sec('Vorlage'); chips(sTpl, tpls, 'tpl', () => sync());
+  const sFmt = sec('Format'); seg(sFmt, Object.keys(EXP_FORMATS).map((k) => [k, k]), 'fmt');
+  const sCol = sec('Farbe');
+  const colors = [['white', 'Weiß'], ['black', 'Schwarz'], ['accent', 'Akzent'], ['custom', 'Eigene']];
+  for (const m of ['speed', 'hr', 'alt']) { const se = D.st && routeSeries(D.st, D.maxD, m, D.run); if (se) colors.push([m, m === 'speed' ? (D.run ? 'Verlauf Pace' : 'Verlauf Tempo') : 'Verlauf ' + se.name]); }
+  chips(sCol, colors, 'color', () => sync());
+  const pick = el('label', 'mf-tog exp-pick'); const pickIn = el('input'); pickIn.type = 'color'; pickIn.value = opts.custom;
+  pickIn.addEventListener('input', () => { opts.custom = pickIn.value; changed(); });
+  pick.append(el('span', null, 'Eigene Farbe'), pickIn); sCol.append(pick);
+  const sBg = sec('Hintergrund'); seg(sBg, [['none', 'Transparent'], ['dark', 'Dunkel'], ['light', 'Hell']], 'bg');
+  const sMap = sec('Karte'); seg(sMap, [['light', 'Hell'], ['dark', 'Dunkel'], ['sat', 'Satellit']], 'mapBase');
+  const sLine = sec('Linie');
+  const wRow = el('label', 'mf-tog exp-range'); const wIn = el('input'); wIn.type = 'range'; wIn.min = '2'; wIn.max = '16'; wIn.step = '1'; wIn.value = String(opts.width);
+  wIn.addEventListener('input', () => { opts.width = Number(wIn.value); changed(); });
+  wRow.append(el('span', null, 'Stärke'), wIn); sLine.append(wRow);
+  toggle(sLine, 'Glow', 'glow'); toggle(sLine, 'Start und Ziel markieren', 'ends');
+  // Text: Schriftgröße der Kennzahlen (passt sich trotzdem dem Platz an, nie überlappend) und Wetter an/aus
+  const sText = sec('Text');
+  const statsRow = toggle(sText, 'Kennzahlen auf der Karte', 'stats', () => sync());
+  const tRow = el('label', 'mf-tog exp-range'); const tIn = el('input'); tIn.type = 'range'; tIn.min = '70'; tIn.max = '140'; tIn.step = '5'; tIn.value = String(Math.round((opts.textScale || 1) * 100));
+  const tVal = el('span', 'exp-val', tIn.value + ' %');
+  tIn.addEventListener('input', () => { opts.textScale = Number(tIn.value) / 100; tVal.textContent = tIn.value + ' %'; changed(); });
+  const tLbl = el('span', 'exp-lbl'); tLbl.append(el('span', null, 'Schriftgröße'), tVal);
+  tRow.append(tLbl, tIn); sText.append(tRow);
+  const wxRow = a.wx ? toggle(sText, 'Wetter zeigen', 'wx') : null;
+  const sPriv = sec('Datenschutz');
+  toggle(sPriv, 'Start und Ziel kürzen', 'trim', () => sync());
+  const trimSeg = seg(sPriv, [[200, '200 m'], [300, '300 m'], [500, '500 m']], 'trimM');
+  sPriv.append(el('p', 'mf-sh-note', 'Lässt die ersten und letzten Meter der Strecke weg, damit deine Haustür nicht auf dem Bild landet. Auf der Karte siehst du sonst genau, wo du gestartet bist.'));
+  // Nur zeigen, was zur Vorlage passt
+  const sync = () => {
+    const onMap = opts.tpl === 'map' || opts.tpl === 'view';
+    sBg.hidden = onMap; sMap.hidden = opts.tpl !== 'map'; statsRow.hidden = !onMap;
+    // Text-Einstellungen nur, wenn Kennzahlen im Bild stehen
+    const withText = opts.tpl === 'stats' || opts.tpl === 'profile' || (onMap && opts.stats);
+    sText.hidden = opts.tpl === 'route'; tRow.hidden = !withText; if (wxRow) wxRow.hidden = !withText;
+    pick.hidden = opts.color !== 'custom'; trimSeg.hidden = !opts.trim;
+  };
+  sync();
+
+  const bShare = el('button', 'btn exp-share'); bShare.type = 'button'; bShare.innerHTML = icon('teilen'); bShare.append('Teilen');
+  const bSave = el('button', 'btn ghost'); bSave.type = 'button'; bSave.innerHTML = icon('sichern'); bSave.append('PNG');
+  const bSvg = el('button', 'btn ghost'); bSvg.type = 'button'; bSvg.innerHTML = icon('sichern'); bSvg.append('SVG');
+  // Kopieren: PNG direkt in die Zwischenablage (zum Einfügen mit ⌘V / Strg+V). Nur, wo der Browser Bilder kopieren kann.
+  const canCopy = !!(window.isSecureContext && navigator.clipboard && navigator.clipboard.write && window.ClipboardItem);
+  const bCopy = el('button', 'btn ghost'); bCopy.type = 'button'; bCopy.innerHTML = icon('kopieren'); bCopy.append('Kopieren');
+  bCopy.hidden = !canCopy;
+  // Hat der Browser das Schreiben in die Zwischenablage ausdrücklich gesperrt, den Knopf gar nicht erst zeigen
+  // (Safari und Firefox kennen die Abfrage nicht, dort bleibt er sichtbar)
+  if (canCopy && navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: 'clipboard-write' }).then((p) => { if (p.state === 'denied') bCopy.hidden = true; }).catch(() => {});
+  }
+  const msg = el('div', 'note exp-msg'); msg.setAttribute('aria-live', 'polite');
+  actions.append(bShare, bCopy, bSave, bSvg, msg);
+
+  // Vorschau so groß wie möglich im Seitenverhältnis der Grafik
+  const fitFrame = () => {
+    const cv = frame.firstChild; if (!cv || !cv.width) return;
+    const cs = getComputedStyle(stage);
+    const aw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const ah = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const k = Math.min(aw / cv.width, ah / cv.height);
+    frame.style.width = Math.floor(cv.width * k) + 'px'; frame.style.height = Math.floor(cv.height * k) + 'px';
+  };
+  new ResizeObserver(fitFrame).observe(stage);
+  // ---- Vorschau: bei jeder Änderung neu zeichnen, die PNG-Datei liegt danach fertig bereit ----
+  let token = 0, blob = null, timer = 0;
+  const fileName = (ext) => 'route-' + (a.date || 'einheit') + '-' + opts.tpl + '.' + ext;
+  const render = async () => {
+    const my = ++token; blob = null;
+    bShare.disabled = bSave.disabled = bCopy.disabled = true;
+    const onMap = opts.tpl === 'map' || opts.tpl === 'view';
+    status.textContent = onMap ? 'Karte wird gezeichnet …' : ''; status.hidden = !onMap;
+    try {
+      const cv = await expRender(D, opts, cam);
+      if (my !== token || !view.isConnected) return;
+      cv.className = 'exp-canvas';
+      frame.classList.toggle('transparent', !onMap && opts.bg === 'none');
+      frame.replaceChildren(cv);
+      fitFrame();
+      status.hidden = true;
+      blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+      if (my !== token) return;
+      bShare.disabled = bSave.disabled = bCopy.disabled = !blob;
+    } catch {
+      if (my !== token) return;
+      status.hidden = false; status.textContent = 'Die Karte konnte nicht geladen werden. Versuch es gleich noch einmal oder nimm eine Vorlage ohne Karte.';
+    }
+    bSvg.disabled = opts.tpl === 'map' || opts.tpl === 'view';
+    bSvg.title = bSvg.disabled ? 'SVG gibt es nur ohne Karte' : '';
+  };
+  const changed = () => { saveExpPrefs({ ...opts, tpl: opts.tpl === 'view' ? 'stats' : opts.tpl }); msg.textContent = ''; clearTimeout(timer); timer = setTimeout(render, 180); };
+  bShare.addEventListener('click', async () => { if (blob) msg.textContent = (await expDeliver(blob, fileName('png'), true)) === 'gesichert' ? 'Gesichert.' : ''; });
+  bCopy.addEventListener('click', async () => {
+    if (!blob) return;
+    // Safari verlangt, dass write() direkt im Antippen aufgerufen wird; die Datei liegt deshalb schon fertig bereit
+    try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); msg.textContent = 'In die Zwischenablage kopiert.'; }
+    catch { msg.textContent = 'Kopieren hat nicht geklappt. Nimm „Teilen“ oder „PNG“.'; }
+  });
+  bSave.addEventListener('click', async () => { if (blob) msg.textContent = (await expDeliver(blob, fileName('png'), false)) ? 'Gesichert.' : ''; });
+  bSvg.addEventListener('click', async () => {
+    if (bSvg.disabled) return;
+    const svg = new Blob([expSvg(D, opts)], { type: 'image/svg+xml' });
+    msg.textContent = (await expDeliver(svg, fileName('svg'), false)) ? 'Gesichert.' : '';
+  });
+  render();
+}

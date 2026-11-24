@@ -44,7 +44,7 @@ function renderSleep() {
     yAxis(f, y, ml, f.w - 28, 5, (v) => v + ' h'); xTime(f, x, f.h - 22);
     for (const v of [50, 100]) f.svg.append('text').attr('x', f.w - 24).attr('y', y2(v)).attr('dy', '0.32em').text(v);
     const bw = Math.max(1.5, (f.w - ml - 28) / (S.days + 2) - 1);
-    f.svg.append('g').selectAll('rect').data(Z).join('rect').attr('x', (d) => x(parse(d.d)) - bw / 2).attr('width', bw).attr('y', (d) => y(d.slp)).attr('height', (d) => y(0) - y(d.slp)).attr('rx', Math.min(3, bw / 2)).attr('class', 'bar')
+    f.svg.append('g').selectAll('rect').data(Z).join('rect').attr('x', (d) => x(parse(d.d)) - bw / 2).attr('width', bw).attr('y', (d) => y(d.slp)).attr('height', (d) => y(0) - y(d.slp)).attr('rx', Math.min(1.5, bw / 2)).attr('class', 'bar')
       // Stil B: Historie grau, die letzte Nacht in der Akzentfarbe
       .style('fill', (d, i) => (i === Z.length - 1 ? css('--accent') : css('--prev')));
     glowLine(f, Z.filter((d) => d.score != null), { x: (d) => x(parse(d.d)), y: (d) => y2(d.score), color: css('--accent-2'), area: false, dot: true });

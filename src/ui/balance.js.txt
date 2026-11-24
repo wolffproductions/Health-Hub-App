@@ -134,7 +134,7 @@ function renderBalance() {
     const bw = Math.max(1.5, (f.w - ml - 28) / ((parse(cur[1]) - parse(cur[0])) / 864e5 + 3) - 1.5);
     f.svg.append('g').selectAll('rect').data(R.filter((d) => d.stress != null)).join('rect')
       .attr('x', (d) => x(parse(d.d)) - bw / 2).attr('width', bw).attr('y', (d) => y(d.stress)).attr('height', (d) => y(0) - y(d.stress))
-      .attr('rx', Math.min(3, bw / 2)).style('fill', (d) => css('--b-' + stressLevel(d.stress))).style('opacity', .85);
+      .attr('rx', Math.min(1.5, bw / 2)).style('fill', (d) => css('--b-' + stressLevel(d.stress))).style('opacity', .85);
     if (M.length) {
       glowLine(f, M, { x: (m) => x(parse(m.d)), y: (m) => ym(m.v), base: f.h - 22, color: css('--fg'), width: 2, area: false });
       f.svg.append('g').selectAll('circle').data(M).join('circle').attr('cx', (m) => x(parse(m.d))).attr('cy', (m) => ym(m.v)).attr('r', 3.5)

@@ -1,34 +1,31 @@
 // ---------- Ablauf ----------
-// Wochen-Navigation unter dem Segmented Control: nur bei „1 W“ sichtbar
+// Wochen-Navigation unter dem Segmented Control: nur bei „1 W“ sichtbar, blättert in 7-Tage-Schritten (#156)
 function renderWeekNav() {
   const nav = $('#weeknav');
   nav.hidden = S.days !== 7 || $('#seg').hidden || !S.today;
   if (nav.hidden) return;
-  const r = ranges(), mon = r.cur[0], sun = addDays(mon, 6), a = parse(mon), b = parse(sun);
+  const r = ranges(), from = r.cur[0], a = parse(from), b = parse(r.cur[1]);
   const span = a.getUTCMonth() === b.getUTCMonth() ? a.getUTCDate() + '.–' + b.getUTCDate() + '. ' + MONTHS[b.getUTCMonth()]
     : a.getUTCDate() + '. ' + MONTHS[a.getUTCMonth()] + ' – ' + b.getUTCDate() + '. ' + MONTHS[b.getUTCMonth()];
-  $('#wk-label').textContent = 'KW ' + isoWeek(mon) + ' · ' + span;
-  const day = Math.round((parse(r.cur[1]) - a) / 864e5) + 1;
-  $('#wk-sub').textContent = r.running
-    ? 'läuft noch, Tag ' + day + ' von 7 · Vergleich mit Mo–' + WD[parse(r.cur[1]).getUTCDay()] + ' der Vorwoche'
-    : S.weekOffset === 0 ? 'diese Woche' : S.weekOffset === -1 ? 'letzte Woche · Vergleich mit der Woche davor' : 'Vergleich mit der Woche davor';
+  $('#wk-label').textContent = (S.weekOffset === 0 ? 'Letzte 7 Tage' : '7 Tage') + ' · ' + span;
+  $('#wk-sub').textContent = (S.weekOffset === 0 ? 'bis heute · ' : '') + 'Vergleich mit den 7 Tagen davor';
   $('#wk-next').disabled = S.weekOffset >= 0;
-  $('#wk-prev').disabled = !S.daily.length || addDays(mon, -7) < S.daily[0].d;
+  $('#wk-prev').disabled = !S.daily.length || addDays(from, -7) < S.daily[0].d;
 }
 
 function renderAll() {
   if (!S.today) return;
   renderWeekNav();
-  const fns = { heute: renderToday, training: () => { renderLoad(); renderForm(); renderVolume(); }, leistung: () => { renderPerf(); renderFitAge(); renderBody(); }, schlaf: renderSleep, einheiten: () => { renderStats(); renderGear(); }, konto: renderAccount, einheit: renderUnit, diagramm: renderDiagram, balance: renderBalance };
+  const fns = { heute: () => { renderToday(); renderTodayPlan(true); }, training: () => { renderLoad(); renderForm(); renderVolume(); }, leistung: () => { renderPerf(); renderBest(); renderWeatherPace(); renderFitAge(); renderBody(); }, schlaf: renderSleep, freunde: renderFriends, einheiten: () => { renderStats(); renderTraining(); renderGear(); }, konto: renderAccount, einheit: renderUnit, freund: renderFriendProfile, diagramm: renderDiagram, balance: renderBalance, radwetter: renderRadwetter };
   try { fns[S.tab](); } catch (e) { console.error(e); }
 }
 
 // Navigation (#18, #59): unten Heute · Statistiken · Einheiten, Konto rechts neben dem Titel.
 // „Statistiken“ fasst die Bereiche Training, Leistung und Schlaf zusammen (umschaltbar oben).
-const STAT_TABS = ['training', 'leistung', 'schlaf'];
-const TAB_TITLES = { heute: 'Heute', training: 'Statistiken', leistung: 'Statistiken', schlaf: 'Statistiken', einheiten: 'Einheiten', balance: 'Balance', konto: 'Konto', einheit: 'Einheit', diagramm: 'Diagramm' };
+const STAT_TABS = ['training', 'leistung', 'schlaf', 'freunde'];
+const TAB_TITLES = { heute: 'Heute', training: 'Statistiken', leistung: 'Statistiken', schlaf: 'Statistiken', freunde: 'Statistiken', einheiten: 'Einheiten', balance: 'Balance', konto: 'Konto', einheit: 'Einheit', freund: 'Freund', diagramm: 'Diagramm', radwetter: 'Rad-Wetter' };
 // Unterseiten: eigene Seite mit „‹ Zurück“ statt Konto-Symbol; zählen nicht als „letzter Reiter“
-const SUB_TABS = ['konto', 'einheit', 'diagramm'];
+const SUB_TABS = ['konto', 'einheit', 'diagramm', 'radwetter', 'freund'];
 const tabGroup = (name) => (SUB_TABS.includes(name) && name !== 'konto' ? tabGroup(S.lastTab || 'heute') : STAT_TABS.includes(name) ? 'stats' : name);
 // Großer Titel jedes Bereichs bekommt eine Titelzeile; Konto-Symbol rechts daneben, im Konto „Zurück“ darüber
 function placeNavButtons(name) {
@@ -49,7 +46,6 @@ function showTab(name) {
   document.querySelectorAll('section[data-tab]').forEach((s) => { s.hidden = s.dataset.tab !== name; });
   document.querySelectorAll('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.go === tabGroup(name))));
   document.querySelectorAll('#statseg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stat === name)));
-  if (!SUB_TABS.includes(name)) try { localStorage.setItem('tab', name); } catch {}
   $('#navTitle').textContent = TAB_TITLES[name];
   if (name === 'konto') showKontoView(S.kontoView || 'main');
   // Unterseiten: Zurück-Pfeil links statt Konto-Symbol rechts
@@ -60,7 +56,7 @@ function showTab(name) {
   const sec = document.querySelector(`section[data-tab="${name}"]`), seg = $('#seg'), statseg = $('#statseg');
   statseg.hidden = !STAT_TABS.includes(name);
   // Zeitraum nur unter Statistiken (#14: nicht unter „Heute“) und im Diagramm-Vollbild (#61)
-  seg.hidden = !STAT_TABS.includes(name) && name !== 'diagramm' && name !== 'balance';
+  seg.hidden = (!STAT_TABS.includes(name) || name === 'freunde') && name !== 'diagramm' && name !== 'balance';
   const head = sec.querySelector('.subtitle') || sec.querySelector('.titlerow') || sec.querySelector('h2');
   head.after(statseg);
   statseg.after(seg);
@@ -90,7 +86,7 @@ function leaveSub() {
 }
 // Zurück: über den Browserverlauf, wenn die Seite dort einen Eintrag hat (dann folgt popstate)
 function goBack() {
-  if (S.tab === 'konto') { if (S.kontoView && S.kontoView !== 'main') showKontoView('main'); else showTab(S.lastTab && !SUB_TABS.includes(S.lastTab) ? S.lastTab : 'heute'); return; }
+  if (S.tab === 'konto') { if (S.kontoView && S.kontoView !== 'main') showKontoView(KONTO_PARENT[S.kontoView] || 'main'); else showTab(S.lastTab && !SUB_TABS.includes(S.lastTab) ? S.lastTab : 'heute'); return; }
   if (history.state && history.state.sub === S.tab) history.back(); else leaveSub();
 }
 window.addEventListener('popstate', () => {

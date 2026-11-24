@@ -9,7 +9,9 @@
 //     Quelle zählt nur noch sie (fehlende Nächte bleiben leer statt mit der anderen Quelle aufgefüllt). Wochenschnitt
 //     und Normalbereich (hrvWk/hrvLo/hrvHi) kommen immer aus derselben Quelle wie der HRV-Wert. `hrvSrc` sagt, welche.
 
-export type NightPref = "whoop" | "garmin";
+// Google Health (Fitbit, Pixel Watch) kommt nach Garmin: Wer beides trägt, hat die Uhr meist fürs Training und
+// misst nachts mit ihr; wer nur Fitbit nutzt, bekommt die Werte ohnehin von dort. Umstellbar wie WHOOP.
+export type NightPref = "whoop" | "garmin" | "google";
 export interface SrcCfg { night: NightPref }
 export const DEFAULT_SRC_CFG: SrcCfg = { night: "whoop" };
 
@@ -17,12 +19,15 @@ export const DEFAULT_SRC_CFG: SrcCfg = { night: "whoop" };
 export const NIGHT_METRICS = ["hrv", "rhr", "slp", "deep", "rem", "awake", "score", "resp", "bed", "wake", "spo2"];
 const HRV_FAMILY = ["hrvWk", "hrvLo", "hrvHi"];
 
+const NIGHT_DEFAULT = ["whoop", "garmin", "google", "withings", "strava", "manual"];
 export function priority(metric: string, cfg: SrcCfg = DEFAULT_SRC_CFG): string[] {
-  if (metric === "kg" || metric === "fat") return ["withings", "garmin", "whoop", "manual"];
-  if (NIGHT_METRICS.includes(metric) || HRV_FAMILY.includes(metric)) {
-    return cfg.night === "garmin" ? ["garmin", "whoop", "withings", "strava", "manual"] : ["whoop", "garmin", "withings", "strava", "manual"];
+  if (metric === "kg" || metric === "fat") return ["withings", "garmin", "google", "whoop", "manual"];
+  if (NIGHT_METRICS.includes(metric) || HRV_FAMILY.includes(metric) || metric === "skinT") {
+    // Gewählte Quelle zuerst, danach die übliche Reihenfolge
+    const pref = NIGHT_DEFAULT.includes(cfg.night) ? cfg.night : "whoop";
+    return [pref, ...NIGHT_DEFAULT.filter((s) => s !== pref)];
   }
-  return ["garmin", "withings", "strava", "whoop", "manual"];
+  return ["garmin", "withings", "strava", "google", "whoop", "manual"];
 }
 const rank = (metric: string, source: string, cfg: SrcCfg) => {
   const list = priority(metric, cfg);

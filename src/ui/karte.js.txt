@@ -1,11 +1,20 @@
 // ---------- KARTE (Route einer Aktivität) ----------
-// Dunkler, fast einfarbiger Kartenstil (angelehnt an das Pollar-Prinzip) mit MapLibre und
-// Vektorkarten von OpenFreeMap (OpenStreetMap-Daten, kein Schlüssel nötig). Rote Route, dünn,
-// mit sanftem Glow. Vorschau unter „Heute“ ist fest, die Vollbild-Ansicht lässt sich zoomen.
+// Fast einfarbiger Kartenstil (Look „Ausgabe“, #117) mit MapLibre und Vektorkarten von OpenFreeMap
+// (OpenStreetMap-Daten, kein Schlüssel nötig): dunkel fast schwarz, hell wie eine Blaupause, je nach
+// Hell/Dunkel des Geräts. Blaue Route, dünn, mit sanftem Glow. Vorschau unter „Heute“ ist fest, die Vollbild-Ansicht lässt sich zoomen.
 // MapLibre und der Stil werden erst geladen, wenn eine Route angezeigt wird.
+// Vollbild (#152): Kompass, Kartenstil (Standard, Satellit, Topo), Einblendungen (Schummerung, Kilometer, Richtung, Runden,
+// Pausen), Route nach Tempo/Puls/Höhe/Steigung einfärben, Antippen zeigt die Werte an der Stelle, Höhenprofil darunter
+// mit der Karte verknüpft, eigener Standort. Die Wahl merkt sich jedes Gerät selbst (localStorage).
 const MAPLIBRE = 'https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/';
 const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
-const ROUTE = { color: '#ff3b3b', width: 2.8, opacity: 0.85, casing: 5, casingOpacity: 0.5, glow: 14, glowBlur: 8, glowOpacity: 0.2 };
+const ROUTE = { width: 2.8, opacity: 0.85, casing: 5, glow: 14, glowBlur: 8, glowOpacity: 0.2 };
+// Farben je Modus: Fläche, Wasser, Gebäude, Grün, große und kleine Straßen, Bahn, Schrift, Route
+const MAP_PAL = {
+  dark: { bg: '#0b0b0c', water: '#15233a', bld: '#1e1e20', bldLine: '#2c2c2f', green: '#141615', major: '#5b5b60', minor: '#38383c', rail: '#2e2e32', text: '#d8d8dc', route: '#6798ff', casing: '#000000', casingOpacity: 0.5 },
+  light: { bg: '#eef1f5', water: '#cddbef', bld: '#e1e6ed', bldLine: '#d2d9e3', green: '#e4eae6', major: '#c3cbd7', minor: '#ffffff', rail: '#cfd5de', text: '#566072', route: '#2f5bff', casing: '#ffffff', casingOpacity: 0.8 },
+};
+const mapPal = () => (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? MAP_PAL.dark : MAP_PAL.light);
 
 let mapLibReady = null;
 function loadMapLibre() {
@@ -25,31 +34,32 @@ function loadMapLibre() {
   return mapLibReady;
 }
 
-// Grundstil „dark“ von OpenFreeMap, umgefärbt: fast schwarz, graue Straßen, blaues Wasser,
-// Namen in Großbuchstaben; Symbole (POIs, Schilder) ausgeblendet
-let mapStyle = null;
-function darkStyle() {
-  if (mapStyle) return mapStyle;
-  mapStyle = fetch(MAP_STYLE_URL).then((r) => r.json()).then((s) => {
+// Grundstil „dark“ von OpenFreeMap, umgefärbt nach MAP_PAL: Straßen grau bzw. weiß, Wasser blau,
+// Namen in Großbuchstaben; Symbole (POIs, Schilder) ausgeblendet. Ein Stil je Modus im Zwischenspeicher.
+const mapStyles = {};
+function darkStyle(mode) {
+  const P = mode ? MAP_PAL[mode] : mapPal(), key = P === MAP_PAL.dark ? 'dark' : 'light';
+  if (mapStyles[key]) return mapStyles[key];
+  mapStyles[key] = fetch(MAP_STYLE_URL).then((r) => r.json()).then((s) => {
     for (const l of s.layers) {
       const id = l.id; l.paint ||= {}; l.layout ||= {};
-      if (l.type === 'background') l.paint['background-color'] = '#0b0b0c';
-      else if (/water/.test(id) && l.type === 'fill') l.paint['fill-color'] = '#1d3654';
-      else if (/water/.test(id) && l.type === 'line') l.paint['line-color'] = '#1d3654';
-      else if (/building/.test(id) && l.type === 'fill') { l.paint['fill-color'] = '#1e1e20'; l.paint['fill-outline-color'] = '#2c2c2f'; }
-      else if (/park|landcover|landuse|wood|grass/.test(id) && l.type === 'fill') { l.paint['fill-color'] = '#141615'; l.paint['fill-opacity'] = 1; }
-      else if (l.type === 'line' && /motorway|trunk|primary/.test(id)) l.paint['line-color'] = '#5b5b60';
-      else if (l.type === 'line' && /road|highway|street|path|minor|secondary|tertiary|service|track/.test(id)) l.paint['line-color'] = '#38383c';
-      else if (l.type === 'line' && /rail/.test(id)) l.paint['line-color'] = '#2e2e32';
+      if (l.type === 'background') l.paint['background-color'] = P.bg;
+      else if (/water/.test(id) && l.type === 'fill') l.paint['fill-color'] = P.water;
+      else if (/water/.test(id) && l.type === 'line') l.paint['line-color'] = P.water;
+      else if (/building/.test(id) && l.type === 'fill') { l.paint['fill-color'] = P.bld; l.paint['fill-outline-color'] = P.bldLine; }
+      else if (/park|landcover|landuse|wood|grass/.test(id) && l.type === 'fill') { l.paint['fill-color'] = P.green; l.paint['fill-opacity'] = 1; }
+      else if (l.type === 'line' && /motorway|trunk|primary/.test(id)) l.paint['line-color'] = P.major;
+      else if (l.type === 'line' && /road|highway|street|path|minor|secondary|tertiary|service|track/.test(id)) l.paint['line-color'] = P.minor;
+      else if (l.type === 'line' && /rail/.test(id)) l.paint['line-color'] = P.rail;
       if (l.type === 'symbol') {
         if (/poi|icon|shield/.test(id)) l.layout.visibility = 'none';
         l.layout['text-transform'] = 'uppercase'; l.layout['text-letter-spacing'] = 0.14;
-        l.paint['text-color'] = '#d8d8dc'; l.paint['text-halo-color'] = '#0b0b0c'; l.paint['text-halo-width'] = 1.2;
+        l.paint['text-color'] = P.text; l.paint['text-halo-color'] = P.bg; l.paint['text-halo-width'] = 1.2;
       }
     }
     return s;
-  }).catch((e) => { mapStyle = null; throw e; });
-  return mapStyle;
+  }).catch((e) => { mapStyles[key] = null; throw e; });
+  return mapStyles[key];
 }
 
 const routeCache = new Map();
@@ -58,29 +68,67 @@ const loadRoute = (id) => {
   return routeCache.get(id);
 };
 
-/** Karte mit Route in `node`; `interactive` = zoom- und verschiebbar (Vollbild) */
+/** Karte mit Route in `node`; `interactive` = zoom-, dreh- und neigbar (Vollbild) */
 async function routeMap(node, route, interactive) {
   const [style] = await Promise.all([darkStyle(), loadMapLibre()]);
+  const P = mapPal();
   const ml = window.maplibregl;
   const lo = route.map(([la, ln]) => ln), la = route.map(([l]) => l);
   const bounds = [[Math.min(...lo), Math.min(...la)], [Math.max(...lo), Math.max(...la)]];
-  const pad = interactive ? 32 : 14;
-  const map = new ml.Map({ container: node, style, bounds, fitBoundsOptions: { padding: pad }, interactive, attributionControl: false });
+  // Vollbild: oben Platz für Legende, rechts für die Knöpfe, unten für „Abspielen“ (#152)
+  const pad = interactive ? { top: 76, right: 68, bottom: 72, left: 28 } : 14;
+  const map = new ml.Map({ container: node, style, bounds, fitBoundsOptions: { padding: pad }, interactive, attributionControl: false, maxPitch: 70 });
   map.addControl(new ml.AttributionControl({ compact: true }));
-  if (interactive) map.addControl(new ml.NavigationControl({ showCompass: false }));
+  // Gemeinsamer Zustand der Karte: Route mit aufsummierter Strecke, Farben, Kartenstil, Ebenen des Grundstils
+  const cum = routeCum(route);
+  const h = map._hh = { route, cum, total: cum[cum.length - 1], interactive, pal: P, base: 'standard', vec: [], font: ['Noto Sans Regular'], node };
+  h.ready = new Promise((res) => { h.setReady = res; });
   const fit = () => { map.resize(); map.fitBounds(bounds, { padding: pad, animate: false }); };
   map.on('load', () => {
     fit();
     node.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
-    map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: route.map(([a, b]) => [b, a]) } } });
+    // Ebenen des Grundstils merken (für Satellit/Topo ein- und ausblenden), dazu die Schrift für eigene Beschriftungen
+    h.vec = map.getStyle().layers.map((l) => ({ id: l.id, type: l.type, vis: !(l.layout && l.layout.visibility === 'none') }));
+    const sym = map.getStyle().layers.find((l) => l.type === 'symbol' && l.layout && l.layout['text-font']);
+    if (sym) h.font = sym.layout['text-font'];
+    map.addSource('route', { type: 'geojson', lineMetrics: true, data: { type: 'Feature', geometry: { type: 'LineString', coordinates: route.map(([a, b]) => [b, a]) } } });
     const layout = { 'line-join': 'round', 'line-cap': 'round' };
-    map.addLayer({ id: 'r-glow', type: 'line', source: 'route', layout, paint: { 'line-color': ROUTE.color, 'line-width': ROUTE.glow, 'line-blur': ROUTE.glowBlur, 'line-opacity': ROUTE.glowOpacity } });
-    map.addLayer({ id: 'r-casing', type: 'line', source: 'route', layout, paint: { 'line-color': '#000', 'line-width': ROUTE.casing, 'line-opacity': ROUTE.casingOpacity } });
-    map.addLayer({ id: 'r-line', type: 'line', source: 'route', layout, paint: { 'line-color': ROUTE.color, 'line-width': ROUTE.width, 'line-opacity': ROUTE.opacity } });
+    map.addLayer({ id: 'r-glow', type: 'line', source: 'route', layout, paint: { 'line-color': P.route, 'line-width': ROUTE.glow, 'line-blur': ROUTE.glowBlur, 'line-opacity': ROUTE.glowOpacity } });
+    map.addLayer({ id: 'r-casing', type: 'line', source: 'route', layout, paint: { 'line-color': P.casing, 'line-width': ROUTE.casing, 'line-opacity': P.casingOpacity } });
+    map.addLayer({ id: 'r-line', type: 'line', source: 'route', layout, paint: { 'line-color': P.route, 'line-width': ROUTE.width, 'line-opacity': ROUTE.opacity } });
+    // Start und Ziel wie bei Strava: Start als blauer Punkt mit weißem Rand, Ziel als Kreis mit Zielflaggen-Muster.
+    // Beide genau an ihrer Stelle auf der Strecke; bei Runden überlappen sie (Ziel liegt oben), wie bei Strava.
+    const pt = ([la2, ln2], k) => ({ type: 'Feature', properties: { k }, geometry: { type: 'Point', coordinates: [ln2, la2] } });
+    map.addSource('ends', { type: 'geojson', data: { type: 'FeatureCollection', features: [pt(route[0], 'start'), pt(route[route.length - 1], 'ziel')] } });
+    map.addLayer({ id: 'r-start', type: 'circle', source: 'ends', filter: ['==', ['get', 'k'], 'start'],
+      paint: { 'circle-radius': interactive ? 7 : 5.5, 'circle-color': P.route, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': interactive ? 2.5 : 2 } });
+    if (!map.hasImage('ziel')) map.addImage('ziel', finishFlag(interactive ? 22 : 17), { pixelRatio: 2 });
+    map.addLayer({ id: 'r-ziel', type: 'symbol', source: 'ends', filter: ['==', ['get', 'k'], 'ziel'],
+      layout: { 'icon-image': 'ziel', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
+    h.setReady();
   });
+  // Vorschau: kleine Nordnadel (die Vorschau ist immer genordet) und eine Markierung, die die Diagramme setzen können
+  if (!interactive) {
+    const north = el('div', 'map-north'); north.innerHTML = icon('norden'); north.setAttribute('aria-hidden', 'true');
+    node.append(north);
+    node._mark = (share) => h.ready.then(() => setCursor(map, share == null ? null : share * h.total));
+  }
   // Breite ändert sich (Handy drehen, Fenster): Vorschau neu einpassen, Vollbild nur Größe anpassen
   new ResizeObserver(() => (interactive ? map.resize() : fit())).observe(node);
   return map;
+}
+
+// Zielmarke: kleiner Kreis mit schwarz-weißem Schachbrett (Zielflagge), weißer Rand und feine dunkle Kante,
+// damit sie auf heller und dunkler Karte gleich gut zu sehen ist. In doppelter Auflösung gezeichnet.
+function finishFlag(size) {
+  const px = size * 2, c = document.createElement('canvas'); c.width = c.height = px;
+  const g = c.getContext('2d'), r = px / 2, ring = px * 0.12, n = 4, cell = (px - 2 * ring) / n;
+  g.beginPath(); g.arc(r, r, r - 1, 0, Math.PI * 2); g.fillStyle = 'rgba(0,0,0,.55)'; g.fill();
+  g.beginPath(); g.arc(r, r, r - 2, 0, Math.PI * 2); g.fillStyle = '#ffffff'; g.fill();
+  g.save(); g.beginPath(); g.arc(r, r, r - ring, 0, Math.PI * 2); g.clip();
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { g.fillStyle = (i + j) % 2 ? '#ffffff' : '#111111'; g.fillRect(ring + i * cell, ring + j * cell, cell + .5, cell + .5); }
+  g.restore();
+  return g.getImageData(0, 0, px, px);
 }
 
 /** Vorschau-Karte unter „Heute“ (fest, nicht zoombar) */
@@ -108,14 +156,15 @@ async function openRouteFull(a, card) {
   view.append(bar, mapNode, stats);
   document.body.append(view);
   document.body.classList.add('mapfull-open');
-  let map = null;
+  let map = null, cleanup = null;
   const close = (fromHistory) => {
     if (!view.isConnected) return;
-    map?.remove(); view.remove(); document.body.classList.remove('mapfull-open');
+    cleanup?.(); map?.remove(); view.remove(); document.body.classList.remove('mapfull-open');
     window.removeEventListener('popstate', onPop);
     if (!fromHistory) history.back();
   };
-  const onPop = () => close(true);
+  // Schließt nur, wenn der eigene Verlaufseintrag verlassen wird (nicht, wenn „Teilen“ darüber zugeht)
+  const onPop = () => { if (history.state && history.state.mapfull) return; close(true); };
   // Eigener Verlaufseintrag, damit die Zurück-Taste die Ansicht schließt statt die App
   history.pushState({ mapfull: true }, '');
   window.addEventListener('popstate', onPop);
@@ -123,8 +172,885 @@ async function openRouteFull(a, card) {
   done.focus();
   try {
     const route = await loadRoute(a.id);
-    if (Array.isArray(route) && route.length > 1) map = await routeMap(mapNode, route, true);
+    if (Array.isArray(route) && route.length > 1) {
+      map = await routeMap(mapNode, route, true);
+      if (!view.isConnected) { map.remove(); return; }
+      cleanup = mapControls(mapNode, map, a);
+      addPlayback(mapNode, map, route, a);
+    }
   } catch {
     mapNode.replaceChildren(el('div', 'empty', 'Karte konnte nicht geladen werden.'));
   }
+}
+
+// ---------- Route abspielen (Live-Ansicht) ----------
+// Im Vollbild zeichnet „Abspielen“ die Route vom Start bis zum Ziel nach: die Linie wächst, ein Punkt läuft vorne mit,
+// die Karte ist geneigt und folgt ihm. Unten laufen die Werte an genau dieser Stelle mit (Distanz, Zeit, Pace bzw.
+// Tempo, Puls, Höhe, Kadenz, Leistung aus den Verläufen der .fit-Datei, #17). „Stopp“ hält an Ort und Stelle an,
+// „Weiter“ fährt von dort weiter, „Von vorn“ beginnt neu. Am Ziel springt die Karte zurück zur ganzen Strecke.
+// Mit „Bewegung reduzieren“ bleibt die Karte stehen, nur die Linie wächst.
+// Dieselbe Wertezeile läuft auch beim Streichen über das Profil unter der Karte mit (`map._hh.live`, von mapControls genutzt).
+const toRad = (x) => x * Math.PI / 180;
+function geoDist([la1, lo1], [la2, lo2]) {
+  const dLa = toRad(la2 - la1), dLo = toRad(lo2 - lo1);
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(toRad(la1)) * Math.cos(toRad(la2)) * Math.sin(dLo / 2) ** 2;
+  return 12742000 * Math.asin(Math.sqrt(h));
+}
+function geoBearing([la1, lo1], [la2, lo2]) {
+  const y = Math.sin(toRad(lo2 - lo1)) * Math.cos(toRad(la2));
+  const x = Math.cos(toRad(la1)) * Math.sin(toRad(la2)) - Math.sin(toRad(la1)) * Math.cos(toRad(la2)) * Math.cos(toRad(lo2 - lo1));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+// Index des letzten Werts ≤ x in einer aufsteigenden Liste (Lücken = null zählen wie der Wert davor)
+function seekIdx(arr, x) {
+  let lo = 0, hi = arr.length - 1;
+  while (lo < hi) {
+    const m = (lo + hi + 1) >> 1;
+    let k = m; while (k > 0 && arr[k] == null) k--;
+    if (arr[k] != null && arr[k] <= x) lo = m; else hi = m - 1;
+  }
+  return lo;
+}
+
+function addPlayback(node, map, route, a) {
+  const cum = [0];
+  for (let i = 1; i < route.length; i++) cum.push(cum[i - 1] + geoDist(route[i - 1], route[i]));
+  const total = cum[cum.length - 1];
+  if (!(total > 0)) return;
+  const view = node.closest('.mapfull');
+  const statsStatic = view && view.querySelector('.ap-stats');
+  // Werte zum Mitlaufen: gleiche Optik wie die Kennzahlen darunter
+  const liveStats = el('div', 'ap-stats mf-livestats'); liveStats.hidden = true;
+  if (statsStatic) statsStatic.after(liveStats); else if (view) view.append(liveStats);
+  const btn = el('button', 'btn mf-play'); btn.type = 'button';
+  const again = el('button', 'btn ghost mf-again'); again.type = 'button'; again.hidden = true;
+  again.innerHTML = icon('aktualisieren'); again.append('Von vorn');
+  const ctl = el('div', 'mf-ctl'); ctl.append(btn, again); node.append(ctl);
+  const label = (txt, ic) => { btn.innerHTML = icon(ic); btn.append(txt); };
+  label('Abspielen', 'abspielen');
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const km = total / 1000;
+  const zoom = km < 15 ? 15 : km < 50 ? 13.8 : 12.6;
+  const dur = Math.min(16000, 8000 + km * 500);
+  const run = sportOf(a.type || '').key === 'run' || /walk|hik/.test(a.type || '');
+  // Punkt auf der Strecke nach d Metern (zwischen zwei Messpunkten linear)
+  const at = (d) => {
+    const lo = Math.min(seekIdx(cum, d), cum.length - 2), hi = lo + 1;
+    const f = cum[hi] > cum[lo] ? Math.max(0, Math.min(1, (d - cum[lo]) / (cum[hi] - cum[lo]))) : 0;
+    return { i: lo, p: [route[lo][0] + (route[hi][0] - route[lo][0]) * f, route[lo][1] + (route[hi][1] - route[lo][1]) * f] };
+  };
+  const ll = ([la, lo]) => [lo, la];
+
+  // Verläufe (.fit) laden, wenn vorhanden; sonst nur Distanz und Zeit anteilig zur Strecke
+  let st = null, maxD = null;
+  if (a.st && typeof loadStreams === 'function') {
+    loadStreams(a.id).then((s) => {
+      if (!s || !s.t || s.t.length < 2) return;
+      st = s;
+      const ds = (s.d || []).filter((v) => v != null);
+      maxD = ds.length ? Math.max(...ds) : null;
+    }).catch(() => {});
+  }
+  const cells = {};
+  const cell = (k, l) => { const c = el('div'); const b = el('b'); c.append(b, el('span', null, l)); liveStats.append(c); cells[k] = b; };
+  const setCell = (k, v, u) => { const b = cells[k]; if (!b) return; b.textContent = v; if (u) b.append(el('small', null, u)); };
+  const buildCells = () => {
+    liveStats.replaceChildren(); for (const k in cells) delete cells[k];
+    cell('km', 'Distanz'); cell('t', 'Zeit');
+    if (!st) return;
+    if (st.v) cell('v', run ? 'Pace' : 'Tempo');
+    if (st.hr) cell('hr', 'Puls');
+    if (st.alt) cell('alt', 'Höhe');
+    if (st.cad) cell('cad', 'Kadenz');
+    if (st.pw) cell('pw', 'Leistung');
+  };
+  // Mittel über ein paar Messpunkte, damit Pace und Puls nicht springen
+  const near = (arr, i) => {
+    let s = 0, n = 0;
+    for (let k = Math.max(0, i - 2); k <= Math.min(arr.length - 1, i + 2); k++) if (arr[k] != null) { s += arr[k]; n++; }
+    return n ? s / n : null;
+  };
+  let built = null, lastOut = 0;
+  const readout = (d, force) => {
+    // höchstens etwa zehnmal pro Sekunde neu schreiben
+    const now = performance.now();
+    if (!force && now - lastOut < 90) return;
+    lastOut = now;
+    // Verläufe, die mapControls schon geladen hat, gleich mitnutzen
+    if (!st && map._hh && map._hh.st) { st = map._hh.st; maxD = map._hh.maxD; }
+    if (built !== !!st) { buildCells(); built = !!st; }
+    const share = d / total;
+    const dist = (a.km || km) * share;
+    let sec = a.min ? a.min * 60 * share : null, i = -1;
+    if (st) {
+      i = maxD != null ? seekIdx(st.d, share * maxD) : Math.round(share * (st.t.length - 1));
+      if (st.t[i] != null) sec = st.t[i];
+    }
+    setCell('km', num(dist, dist < 10 ? 2 : 1), ' km');
+    setCell('t', sec == null ? '–' : duration(sec / 60), '');
+    if (!st || i < 0) return;
+    if (cells.v) {
+      const v = near(st.v, i);
+      if (run) setCell('v', v && v > 0.8 ? pace(1000 / v) : '–', ' /km');
+      else setCell('v', v == null ? '–' : num(v * 3.6, 1), ' km/h');
+    }
+    if (cells.hr) { const h = near(st.hr, i); setCell('hr', h == null ? '–' : num(h), ' bpm'); }
+    if (cells.alt) { const h = st.alt[i] != null ? st.alt[i] : near(st.alt, i); setCell('alt', h == null ? '–' : num(h), ' m'); }
+    if (cells.cad) { const c = near(st.cad, i); setCell('cad', c == null ? '–' : num(run ? c * 2 : c), run ? ' spm' : ' rpm'); }
+    if (cells.pw) { const p = near(st.pw, i); setCell('pw', p == null ? '–' : num(p), ' W'); }
+  };
+  // Werte unten tauschen, ohne dass die Karte ihre Höhe ändert: Kartenhöhe beim Abspielen festhalten und den Platz der
+  // Zusammenfassung freihalten. Sonst wird die Karte erst größer (anfangs nur Distanz und Zeit) und nach dem Nachladen
+  // der Verläufe wieder kleiner, und MapLibre springt mitten in der Fahrt (Eddies „fetter Ruckler“ nach den ersten Metern).
+  const showLive = (on) => {
+    if (on) {
+      node.style.flex = '0 0 ' + node.getBoundingClientRect().height + 'px';
+      if (statsStatic) liveStats.style.minHeight = statsStatic.getBoundingClientRect().height + 'px';
+    } else node.style.flex = '';
+    liveStats.hidden = !on; if (statsStatic) statsStatic.hidden = on;
+  };
+
+  // active: Abspielen läuft oder steht an einer Stelle (Wertezeile gehört dem Abspielen); playing: Punkt fährt gerade
+  let raf = 0, playing = false, active = false, pos = 0, bearing = 0;
+  const ensureLayers = () => {
+    if (map.getSource('live')) return;
+    const P = map._hh ? map._hh.pal : mapPal();
+    map.addSource('live', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [ll(route[0]), ll(route[0])] } } });
+    map.addSource('runner', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'Point', coordinates: ll(route[0]) } } });
+    const layout = { 'line-join': 'round', 'line-cap': 'round' };
+    map.addLayer({ id: 'live-glow', type: 'line', source: 'live', layout, paint: { 'line-color': P.route, 'line-width': ROUTE.glow, 'line-blur': ROUTE.glowBlur, 'line-opacity': ROUTE.glowOpacity } }, 'r-start');
+    map.addLayer({ id: 'live-line', type: 'line', source: 'live', layout, paint: { 'line-color': P.route, 'line-width': ROUTE.width + 0.6, 'line-opacity': 1 } }, 'r-start');
+    map.addLayer({ id: 'runner', type: 'circle', source: 'runner', paint: { 'circle-radius': 7, 'circle-color': P.route, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 } });
+  };
+  const dim = (on) => {
+    if (map._hh) map._hh.dimmed = on;
+    const P = map._hh ? map._hh.pal : mapPal();
+    for (const id of ['r-line', 'r-glow', 'r-casing']) if (map.getLayer(id)) map.setPaintProperty(id, 'line-opacity', on ? 0.22 : id === 'r-line' ? ROUTE.opacity : id === 'r-glow' ? ROUTE.glowOpacity : P.casingOpacity);
+    for (const id of ['live-glow', 'live-line', 'runner']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+  };
+  // Anflug beim Start (#117): Kamera gleitet in INTRO ms von der Übersicht zum Startpunkt und neigt sich, in derselben
+  // Animation wie die Fahrt. Ab der Hälfte des Anflugs rollt der Punkt schon langsam los (ANLAUF_START), kein Übergabe-Ruck.
+  const INTRO = 1800, ANLAUF_START = 1200;
+  let intro = null; // { f: Kamera vorher, t: vergangene ms }
+  const lerp = (x, y, k) => x + (y - x) * k;
+  const lerpAng = (x, y, k) => (x + ((((y - x) % 360) + 540) % 360 - 180) * k + 360) % 360;
+  // Stand bei d Metern zeichnen: Linie, Punkt, Werte und (beim Fahren) die Kamera
+  const draw = (d, follow, force, dt = 16.7) => {
+    const h = at(d);
+    const coords = route.slice(0, h.i + 1).map(ll); coords.push(ll(h.p));
+    map.getSource('live').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords.length > 1 ? coords : [coords[0], coords[0]] } });
+    map.getSource('runner').setData({ type: 'Feature', geometry: { type: 'Point', coordinates: ll(h.p) } });
+    readout(d, force);
+    if (follow && !reduce) {
+      // Blickrichtung weich nachführen: Richtung zu einem Punkt etwas voraus
+      const want = geoBearing(h.p, at(Math.min(total, d + 250)).p);
+      const diff = ((want - bearing + 540) % 360) - 180;
+      bearing = (bearing + diff * (1 - Math.pow(0.94, dt / 16.7)) + 360) % 360;
+      if (!intro) { map.jumpTo({ center: ll(h.p), zoom, pitch: 55, bearing }); return; }
+      intro.t += dt;
+      const k = smooth(Math.min(1, intro.t / INTRO)), f = intro.f, c = ll(h.p);
+      map.jumpTo({ center: [lerp(f.c[0], c[0], k), lerp(f.c[1], c[1], k)], zoom: lerp(f.z, zoom, k), pitch: lerp(f.p, 55, k), bearing: lerpAng(f.b, bearing, k) });
+      if (k >= 1) intro = null;
+    }
+  };
+  // Sanft anfahren und abbremsen (#117, Eddies Wunsch): die Geschwindigkeit wächst in ANLAUF ms auf das volle Tempo
+  // und fällt beim Stopp in BREMS ms auf null. Ein schneller Wechsel Stopp/Weiter kehrt nur die Richtung um, ohne Sprung.
+  const ANLAUF = 450, BREMS = 350, speed = total / dur; // Meter pro Millisekunde, gleiches Tempo wie bisher
+  let gain = 0, braking = false, last = 0, startRamp = false;
+  function smooth(k) { return k * k * (3 - 2 * k); }
+  // Stopp: an Ort und Stelle stehen bleiben (Kamera schräg, Werte dieser Stelle sichtbar)
+  const stopped = () => {
+    cancelAnimationFrame(raf); playing = false; braking = false; gain = 0; intro = null; startRamp = false;
+    if (!node.isConnected) return;
+    draw(pos, false, true);
+  };
+  const pause = () => { braking = true; label('Weiter', 'abspielen'); again.hidden = false; };
+  // Ziel erreicht: zurück zur ganzen Strecke, unten wieder die Zusammenfassung
+  const finish = () => {
+    cancelAnimationFrame(raf); playing = false; active = false; braking = false; gain = 0; pos = 0; intro = null; startRamp = false;
+    if (!node.isConnected) return; // Vollbild schon geschlossen, Karte ist weg
+    label('Abspielen', 'abspielen'); again.hidden = true; dim(false); showLive(false);
+    const lo = route.map((r) => r[1]), la = route.map((r) => r[0]);
+    map.fitBounds([[Math.min(...lo), Math.min(...la)], [Math.max(...lo), Math.max(...la)]], { padding: { top: 76, right: 68, bottom: 72, left: 28 }, pitch: 0, bearing: 0, duration: reduce ? 0 : 1800 });
+  };
+  const drive = () => {
+    last = performance.now();
+    const step = (now) => {
+      if (!playing || !node.isConnected) return;
+      const dt = Math.min(now - last, 50); last = now;
+      // im Anflug erst ab der Hälfte und langsamer anfahren
+      const wait = intro && intro.t < INTRO * 0.5;
+      gain = braking ? Math.max(0, gain - dt / BREMS) : wait ? 0 : Math.min(1, gain + dt / (intro || gain < 1 && startRamp ? ANLAUF_START : ANLAUF));
+      if (gain >= 1) startRamp = false;
+      // Ende sanft: auf den letzten Metern gleichmäßig abbremsen (Tempo ~ Wurzel der Reststrecke), wie der Anlauf am Start
+      const rest = total - pos, AUSLAUF = speed * 900;
+      const endF = rest < AUSLAUF ? Math.max(0.03, Math.sqrt(rest / AUSLAUF)) : 1;
+      pos = Math.min(total, pos + speed * dt * smooth(gain) * endF);
+      if (total - pos < 0.5) pos = total;
+      draw(pos, true, pos >= total, dt);
+      if (pos >= total) { playing = false; label('Abspielen', 'abspielen'); setTimeout(finish, 700); return; }
+      if (braking && gain === 0) { stopped(); return; }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  };
+  const play = (fromStart) => {
+    // Während des Abbremsens wieder „Weiter“: einfach weiterfahren, die Schleife läuft noch
+    if (playing && braking && !fromStart) { braking = false; label('Stopp', 'stopp'); again.hidden = true; return; }
+    cancelAnimationFrame(raf);
+    ensureLayers(); dim(true); showLive(true);
+    if (fromStart || pos >= total) pos = 0;
+    playing = true; active = true; braking = false; gain = 0; label('Stopp', 'stopp'); again.hidden = true;
+    // gleiche Vorausschau wie beim Fahren, damit die Blickrichtung nach dem Anflug nicht nachdreht
+    if (pos === 0) bearing = geoBearing(route[0], at(Math.min(total, 250)).p);
+    draw(pos, false, true);
+    // Start: Anflug und Fahrt in einer Animation; „Weiter“: Kamera steht schon dort, sofort (sanft) losfahren
+    if (pos === 0 && !reduce) {
+      const c = map.getCenter();
+      intro = { f: { c: [c.lng, c.lat], z: map.getZoom(), p: map.getPitch(), b: map.getBearing() }, t: 0 };
+      startRamp = true;
+    }
+    drive();
+  };
+  // Erst loslegen, wenn die Route auf der Karte liegt (map.loaded() ist beim Kachel-Nachladen kurz falsch)
+  const go = (fromStart) => (map._hh ? map._hh.ready.then(() => play(fromStart)) : play(fromStart));
+  btn.addEventListener('click', (e) => { e.stopPropagation(); if (playing && !braking) pause(); else go(false); });
+  again.addEventListener('click', (e) => { e.stopPropagation(); go(true); });
+
+  // Streichen über das Profil: dieselbe Wertezeile zeigt die Werte der Stelle. Fährt der Punkt gerade, bleibt die Zeile
+  // beim Abspielen. Steht das Abspielen, zeigt sie beim Streichen die Stelle und danach wieder die des Punkts. Sonst
+  // bleibt nach dem Loslassen der letzte Stand stehen (der Finger verdeckt die Werte beim Streichen), bis die Markierung
+  // weggeht; dann kommt die Zusammenfassung zurück.
+  if (map._hh) map._hh.live = {
+    at: (d) => { if (playing || !node.isConnected) return; if (liveStats.hidden) showLive(true); readout(Math.max(0, Math.min(total, d)), true); },
+    end: () => { if (active && !playing && node.isConnected) readout(pos, true); },
+    clear: () => { if (!active && node.isConnected && !liveStats.hidden) showLive(false); },
+  };
+}
+
+// ---------- Vollbild-Karte: Kompass, Kartenstil, Einblendungen, Einfärben, Antippen, Standort (#152) ----------
+
+// Kachelquellen, die nur geladen werden, wenn man sie auswählt. Alle für private Nutzung frei, Hinweis steht auf der Karte.
+// Die Anbieter sehen dabei den Kartenausschnitt (wie heute OpenFreeMap), nie die Route selbst.
+const MAP_SOURCES = {
+  satellit: { type: 'raster', tileSize: 256, maxzoom: 19,
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    attribution: 'Luftbild © Esri, Maxar, Earthstar Geographics, GIS User Community' },
+  topo: { type: 'raster', tileSize: 256, maxzoom: 17,
+    tiles: ['a', 'b', 'c'].map((x) => 'https://' + x + '.tile.opentopomap.org/{z}/{x}/{y}.png'),
+    attribution: 'Karte © <a href="https://opentopomap.org" target="_blank" rel="noopener">OpenTopoMap</a> (CC-BY-SA), Daten © OpenStreetMap-Mitwirkende, SRTM' },
+  // Höhenmodell für die Schummerung (und später die 3D-Ansicht, #151): Terrain Tiles, offen auf AWS (Terrarium-Format)
+  dem: { type: 'raster-dem', tileSize: 256, maxzoom: 15, encoding: 'terrarium',
+    tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
+    attribution: 'Höhen: Terrain Tiles (Mapzen, AWS Open Data)' },
+};
+// Routenfarben je Kartenstil: auf dem Luftbild hell und kräftig, auf Topo wie die helle Karte
+MAP_PAL.sat = { ...MAP_PAL.dark, route: '#64d2ff', casingOpacity: 0.65 };
+const routePal = (base) => (base === 'satellit' ? MAP_PAL.sat : base === 'topo' ? MAP_PAL.light : mapPal());
+
+// Einstellungen je Gerät. laps: null = automatisch (an bei echten Runden/Intervallen, aus bei Auto-Runden je km);
+// km: null = automatisch (an, außer echte Runden sind eingeblendet, sonst stehen zwei Zahlenreihen auf der Route)
+const MAP_PREF_KEY = 'mapPrefs';
+const MAP_PREF_DEF = { base: 'standard', hill: false, km: null, arrows: false, laps: null, pauses: true, color: 'none' };
+function mapPrefs() {
+  try { return { ...MAP_PREF_DEF, ...JSON.parse(localStorage.getItem(MAP_PREF_KEY) || '{}') }; } catch { return { ...MAP_PREF_DEF }; }
+}
+function saveMapPrefs(p) { try { localStorage.setItem(MAP_PREF_KEY, JSON.stringify(p)); } catch { /* privates Fenster: nur für diese Sitzung */ } }
+
+// Strecke entlang der Route in Metern (aufsummiert) und der Punkt nach d Metern
+function routeCum(route) {
+  const cum = [0];
+  for (let i = 1; i < route.length; i++) cum.push(cum[i - 1] + geoDist(route[i - 1], route[i]));
+  return cum;
+}
+function pointAt(route, cum, d) {
+  const lo = Math.min(seekIdx(cum, d), cum.length - 2), hi = lo + 1;
+  const f = cum[hi] > cum[lo] ? Math.max(0, Math.min(1, (d - cum[lo]) / (cum[hi] - cum[lo]))) : 0;
+  return [route[lo][0] + (route[hi][0] - route[lo][0]) * f, route[lo][1] + (route[hi][1] - route[lo][1]) * f];
+}
+const ptFeat = ([la, lo], props) => ({ type: 'Feature', properties: props || {}, geometry: { type: 'Point', coordinates: [lo, la] } });
+const featColl = (features) => ({ type: 'FeatureCollection', features });
+
+/** Markierung auf der Route nach d Metern (null = weg). Von Diagrammen, Profil und Antippen genutzt. */
+function setCursor(map, d) {
+  const h = map._hh;
+  if (!h || !h.vec.length) return;
+  if (!map.getSource('cur')) {
+    map.addSource('cur', { type: 'geojson', data: featColl([]) });
+    map.addLayer({ id: 'cur', type: 'circle', source: 'cur', paint: { 'circle-radius': h.interactive ? 7.5 : 6, 'circle-color': '#ffffff', 'circle-stroke-color': h.pal.route, 'circle-stroke-width': h.interactive ? 3.5 : 3 } });
+  }
+  map.getSource('cur').setData(featColl(d == null ? [] : [ptFeat(pointAt(h.route, h.cum, Math.max(0, Math.min(h.total, d))))]));
+}
+/** Diagramme auf der Einheiten-Seite markieren die Stelle auf der Karte oben (share 0–1, null = weg) */
+function markUnitMap(share) {
+  const n = document.querySelector('#u-body .u-map');
+  if (n && n._mark) n._mark(share);
+}
+
+// Bild für die Richtungspfeile: weißer Winkel mit dunklem Rand, zeigt nach rechts (= entlang der Linie)
+function arrowImg() {
+  const px = 28, c = document.createElement('canvas'); c.width = c.height = px;
+  const g = c.getContext('2d');
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const path = () => { g.beginPath(); g.moveTo(10, 7); g.lineTo(18, 14); g.lineTo(10, 21); };
+  g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = 7; path(); g.stroke();
+  g.strokeStyle = '#ffffff'; g.lineWidth = 3.5; path(); g.stroke();
+  return g.getImageData(0, 0, px, px);
+}
+
+// Schummerung: auf dunklen Karten zarte Schatten, auf hellen kühles Grau
+const hillPaint = (dark) => (dark
+  ? { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': '#000000', 'hillshade-highlight-color': 'rgba(255,255,255,0.16)', 'hillshade-accent-color': '#000000' }
+  : { 'hillshade-exaggeration': 0.35, 'hillshade-shadow-color': '#56627a', 'hillshade-highlight-color': '#ffffff', 'hillshade-accent-color': '#8a93a3' });
+
+// Farbverläufe für die Route: wenig → viel (blau, grün, gelb, orange, rot); Steigung: bergab blau, eben grün, bergauf rot
+const RAMP_SEQ = ['#0a84ff', '#30d158', '#ffd60a', '#ff9f0a', '#ff453a'];
+const RAMP_GRADE = ['#0a84ff', '#5ac8fa', '#30d158', '#ffd60a', '#ff9f0a', '#ff453a'];
+
+/** Kartenstil wechseln: Luftbild bzw. Topo unter alle Ebenen legen, Vektorkarte aus- oder (für Namen) einblenden */
+function applyBase(map, base) {
+  const h = map._hh;
+  h.base = base;
+  const firstVec = h.vec.find((l) => l.type !== 'background');
+  for (const b of ['satellit', 'topo']) {
+    const id = 'base-' + b;
+    if (b === base && !map.getLayer(id)) {
+      if (!map.getSource(id)) map.addSource(id, MAP_SOURCES[b]);
+      map.addLayer({ id, type: 'raster', source: id, paint: { 'raster-fade-duration': 200 } }, firstVec && firstVec.id);
+    }
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', b === base ? 'visible' : 'none');
+  }
+  const P0 = mapPal();
+  for (const l of h.vec) {
+    if (l.type === 'background' || !l.vis) continue;
+    // Satellit = „Hybrid“ wie in Apple Karten: Luftbild mit Ortsnamen darüber; Topo bringt eigene Namen mit
+    const show = base === 'standard' || (base === 'satellit' && l.type === 'symbol');
+    map.setLayoutProperty(l.id, 'visibility', show ? 'visible' : 'none');
+    if (l.type === 'symbol') {
+      map.setPaintProperty(l.id, 'text-color', base === 'satellit' ? '#ffffff' : P0.text);
+      map.setPaintProperty(l.id, 'text-halo-color', base === 'satellit' ? 'rgba(0,0,0,0.75)' : P0.bg);
+    }
+  }
+  paintRoute(map);
+}
+
+/** Route und Markierungen in den Farben des Kartenstils, mit Farbverlauf, wenn eingefärbt */
+function paintRoute(map) {
+  const h = map._hh, P = h.pal = routePal(h.base);
+  const set = (id, k, v) => { if (map.getLayer(id)) map.setPaintProperty(id, k, v); };
+  for (const id of ['r-line', 'r-glow']) { set(id, 'line-color', P.route); set(id, 'line-gradient', h.grad || undefined); }
+  set('r-casing', 'line-color', P.casing);
+  if (!h.dimmed) set('r-casing', 'line-opacity', P.casingOpacity);
+  set('r-start', 'circle-color', P.route);
+  set('live-line', 'line-color', P.route); set('live-glow', 'line-color', P.route); set('runner', 'circle-color', P.route);
+  set('cur', 'circle-stroke-color', P.route);
+  set('ov-km-dot', 'circle-color', P.route);
+  set('ov-lap-dot', 'circle-stroke-color', ['case', ['get', 'rest'], '#8e8e93', P.route]);
+  set('ov-lap-txt', 'text-color', ['case', ['get', 'rest'], '#6e6e73', P.route]);
+  if (map.getLayer('hill')) for (const [k, v] of Object.entries(hillPaint(h.base === 'satellit' || (h.base === 'standard' && mapPal() === MAP_PAL.dark)))) set('hill', k, v);
+}
+
+// Ebene ein- oder ausblenden (nur wenn es sie gibt)
+const showLayer = (map, id, on) => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); };
+
+// ---- Verläufe entlang der Route (für Karte, Profil und Export #151) ----
+/** Mittel über ein paar Abschnitte, damit Pace und Puls nicht springen */
+const stNear = (arr, i) => {
+  let s = 0, n = 0;
+  for (let k = Math.max(0, i - 2); k <= Math.min(arr.length - 1, i + 2); k++) if (arr[k] != null) { s += arr[k]; n++; }
+  return n ? s / n : null;
+};
+/** Abschnitt der Verläufe zum Anteil share (0–1) der Strecke */
+const stIndex = (st, maxD, share) => (maxD ? seekIdx(st.d, share * maxD) : Math.round(share * (st.t.length - 1)));
+/** Steigung in Prozent um den Abschnitt i (über rund 100 m gemittelt) */
+function stGrade(st, maxD, i) {
+  if (!st || !st.alt || !maxD || st.d[i] == null) return null;
+  const j1 = seekIdx(st.d, Math.max(0, st.d[i] - 50)), j2 = seekIdx(st.d, st.d[i] + 50);
+  if (j2 <= j1 || st.alt[j1] == null || st.alt[j2] == null || st.d[j2] - st.d[j1] < 20) return null;
+  return Math.max(-40, Math.min(40, (st.alt[j2] - st.alt[j1]) / (st.d[j2] - st.d[j1]) * 100));
+}
+/** Größte Strecke in den Verläufen (Meter), null ohne Strecke */
+const stMaxD = (st) => { const ds = (st && st.d || []).filter((v) => v != null); return ds.length ? Math.max(...ds) : null; };
+/** Werte je Abschnitt für eine Einfärbung (speed, hr, alt, grade), dazu Grenzen, Beschriftung und Farbverlauf */
+function routeSeries(st, maxD, mode, run) {
+  if (!st) return null;
+  const n = st.t.length;
+  let vals, fmt, unit = '', name;
+  if (mode === 'speed' && st.v) { vals = st.v.map((_, i) => stNear(st.v, i)); name = run ? 'Pace' : 'Tempo'; fmt = run ? (v) => (v > 0.8 ? pace(1000 / v) : '–') : (v) => num(v * 3.6, 1); unit = run ? ' /km' : ' km/h'; }
+  else if (mode === 'hr' && st.hr) { vals = st.hr.map((_, i) => stNear(st.hr, i)); name = 'Puls'; fmt = (v) => num(v); unit = ' bpm'; }
+  else if (mode === 'alt' && st.alt) { vals = st.alt.slice(); name = 'Höhe'; fmt = (v) => num(v); unit = ' m'; }
+  else if (mode === 'grade' && st.alt && maxD) { vals = Array.from({ length: n }, (_, i) => stGrade(st, maxD, i)); name = 'Steigung'; fmt = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + num(Math.abs(v)); unit = ' %'; }
+  else return null;
+  const ok = vals.filter((v) => v != null && (mode !== 'speed' || v > 0.3)).sort((x, y) => x - y);
+  if (ok.length < 2) return null;
+  let lo = ok[Math.floor(ok.length * 0.05)], hi = ok[Math.min(ok.length - 1, Math.floor(ok.length * 0.95))];
+  if (mode === 'grade') { lo = -10; hi = 10; }
+  if (mode === 'alt' && hi - lo < 20) { const m = (hi + lo) / 2; lo = m - 10; hi = m + 10; }
+  if (hi <= lo) hi = lo + 1;
+  return { vals, lo, hi, fmt, unit, name, ramp: mode === 'grade' ? RAMP_GRADE : RAMP_SEQ };
+}
+/** Farbe an der Stelle share (0–1) der Strecke für eine Reihe aus routeSeries; Lücken = null */
+function seriesColor(se, st, maxD) {
+  const col = d3.interpolateRgbBasis(se.ramp);
+  return (share) => { const v = se.vals[stIndex(st, maxD, share)]; return v == null ? null : col(Math.max(0, Math.min(1, (v - se.lo) / (se.hi - se.lo)))); };
+}
+
+/**
+ * Bedienelemente der Vollbild-Karte. Gibt eine Aufräum-Funktion zurück (Standort-Abfrage beenden).
+ * Rechts oben: Kompass, Ebenen, Standort. Links oben: Legende beim Einfärben. Unten: Werte an der gewählten Stelle.
+ */
+function mapControls(node, map, a) {
+  const h = map._hh, view = node.closest('.mapfull');
+  const prefs = mapPrefs();
+  const run = sportOf(a.type || '').key === 'run' || /walk|hik/.test(a.type || '');
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  h.a = a; h.run = run; h.st = null; h.maxD = null;
+  // Klicks auf Bedienelemente nicht an die Karte weitergeben
+  // touchmove gehört dazu, sonst greift die Karte beim Scrollen in der Ebenen-Auswahl nach der Geste
+  const shield = (e) => { for (const t of ['pointerdown', 'mousedown', 'touchstart', 'touchmove', 'click', 'dblclick', 'wheel']) e.addEventListener(t, (ev) => ev.stopPropagation(), { passive: true }); return e; };
+  const iconBtn = (ic, label) => {
+    const b = el('button', 'mf-ibtn'); b.type = 'button'; b.innerHTML = icon(ic);
+    b.setAttribute('aria-label', label); b.title = label; return b;
+  };
+  const stack = shield(el('div', 'mf-stack mf-glass'));
+  const bCompass = iconBtn('norden', 'Karte nach Norden ausrichten');
+  const bLayers = iconBtn('ebenen', 'Kartenstil und Einblendungen');
+  const bLoc = iconBtn('standort', 'Mein Standort');
+  // 3D (#151): Gelände echt in 3D, Kamera schräg; „Rundflug“ dreht langsam um die Route. Teilen öffnet den Export.
+  const b3d = el('button', 'mf-ibtn mf-3d', '3D'); b3d.type = 'button';
+  b3d.setAttribute('aria-label', '3D-Ansicht'); b3d.setAttribute('aria-pressed', 'false'); b3d.title = '3D-Ansicht';
+  const bOrbit = iconBtn('rundflug', 'Rundflug um die Route'); bOrbit.hidden = true;
+  const bShare = iconBtn('teilen', 'Als Grafik teilen');
+  bLayers.setAttribute('aria-expanded', 'false');
+  stack.append(bCompass, bLayers, b3d, bOrbit, bLoc, bShare);
+  const legend = shield(el('div', 'mf-legend mf-glass')); legend.hidden = true;
+  const info = shield(el('div', 'mf-info mf-glass')); info.hidden = true;
+  info.setAttribute('aria-live', 'polite');
+  node.append(stack, legend, info);
+
+  // ---- Kompass: Nadel dreht mit der Karte, Antippen richtet nach Norden aus und stellt die Karte gerade ----
+  const needle = bCompass.querySelector('svg');
+  const turn = () => {
+    needle.style.transform = 'rotate(' + (-map.getBearing()) + 'deg)';
+    bCompass.classList.toggle('on', Math.abs(map.getBearing()) > 0.5 || map.getPitch() > 0.5);
+  };
+  map.on('rotate', turn); map.on('pitch', turn); turn();
+  bCompass.addEventListener('click', () => map.easeTo({ bearing: 0, pitch: 0, duration: reduce ? 0 : 500 }));
+
+  // ---- Werte an einer Stelle (unten auf der Karte) ----
+  const hideInfo = () => { info.hidden = true; info.replaceChildren(); info.dataset.kind = ''; };
+  const showInfo = (title, cells, kind) => {
+    info.replaceChildren();
+    const head = el('div', 'mf-info-head'); head.append(el('b', null, title));
+    const x = el('button', 'mf-info-x'); x.type = 'button'; x.setAttribute('aria-label', 'Schließen'); x.innerHTML = icon('schliessen');
+    x.addEventListener('click', () => { hideInfo(); clearMark(); });
+    head.append(x); info.append(head);
+    if (cells && cells.length) {
+      const g = el('div', 'mf-info-stats');
+      for (const [v, u, l] of cells) { const c = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u)); c.append(b, el('span', null, l)); g.append(c); }
+      info.append(g);
+    }
+    info.dataset.kind = kind || ''; info.hidden = false;
+  };
+  const kmOf = (d) => (a.km || h.total / 1000) * (d / h.total);
+  const kmTxt = (km) => num(km, km < 10 ? 2 : 1);
+  const stIdx = (share) => stIndex(h.st, h.maxD, share);
+  const near = stNear;
+  const speedCell = (v, label) => (run ? [v && v > 0.8 ? pace(1000 / v) : '–', ' /km', label || 'Pace'] : [v == null ? '–' : num(v * 3.6, 1), ' km/h', label || 'Tempo']);
+  /** Kennzahlen an der Stelle d (Meter entlang der Route) */
+  const valuesAt = (d) => {
+    const share = h.total ? d / h.total : 0;
+    const cells = [[kmTxt(kmOf(d)), ' km', 'Distanz']];
+    if (!h.st) { if (a.min) cells.push([duration(a.min * share), '', 'Zeit (ca.)']); return cells; }
+    const i = stIdx(share), st = h.st;
+    if (st.t[i] != null) cells.push([duration(st.t[i] / 60), '', 'Zeit']);
+    if (st.v) cells.push(speedCell(near(st.v, i)));
+    if (st.hr) { const v = near(st.hr, i); cells.push([v == null ? '–' : num(v), ' bpm', 'Puls']); }
+    if (st.alt) { const v = st.alt[i] != null ? st.alt[i] : near(st.alt, i); cells.push([v == null ? '–' : num(v), ' m', 'Höhe']); }
+    const g = gradeAt(i); if (g != null) cells.push([(g > 0 ? '+' : '') + num(g, 1), ' %', 'Steigung']);
+    return cells;
+  };
+  const gradeAt = (i) => stGrade(h.st, h.maxD, i);
+  /** Markierung auf Karte und Profil weg, unten wieder die Zusammenfassung */
+  const clearMark = () => { setCursor(map, null); prof.mark(null); h.live?.clear(); };
+  const showAt = (d, fromProfile) => {
+    setCursor(map, d);
+    // Beim Ziehen im Profil stehen die Werte unten in der Wertezeile (wie beim Abspielen); die Karte bleibt frei,
+    // damit man den Punkt wandern sieht
+    if (fromProfile) { if (info.dataset.kind !== 'standort') hideInfo(); h.live?.at(d); return; }
+    h.live?.clear();
+    showInfo('Bei km ' + kmTxt(kmOf(d)), valuesAt(d), 'punkt');
+    prof.mark(d / h.total);
+    keepVisible(d);
+  };
+  /** Liegt die Stelle unter der Werte-Karte, die Karte ein Stück nach oben schieben */
+  const keepVisible = (d) => {
+    const q = map.project((([la, lo]) => [lo, la])(pointAt(h.route, h.cum, d)));
+    const top = info.offsetTop;
+    if (q.y > top - 24) map.panBy([0, q.y - top + 56], { duration: reduce ? 0 : 300 });
+  };
+
+  // ---- Einfärben nach Tempo, Puls, Höhe oder Steigung ----
+  const colorModes = () => {
+    const m = [['none', 'Einfarbig']];
+    if (!h.st) return m;
+    if (h.st.v) m.push(['speed', run ? 'Pace' : 'Tempo']);
+    if (h.st.hr) m.push(['hr', 'Puls']);
+    if (h.st.alt) m.push(['alt', 'Höhe']);
+    if (h.st.alt && h.maxD) m.push(['grade', 'Steigung']);
+    return m;
+  };
+  const series = (mode) => routeSeries(h.st, h.maxD, mode, run);
+  const applyColor = () => {
+    const se = prefs.color !== 'none' && series(prefs.color);
+    if (!se) { h.grad = null; legend.hidden = true; paintRoute(map); return; }
+    const col = d3.interpolateRgbBasis(se.ramp);
+    // Verlauf entlang der Linie: 120 Stützstellen über die Strecke, Lücken übernehmen die letzte Farbe
+    const K = 120, stops = [];
+    let lastC = col(0.5);
+    for (let k = 0; k <= K; k++) {
+      const v = se.vals[stIdx(k / K)];
+      if (v != null) lastC = col(Math.max(0, Math.min(1, (v - se.lo) / (se.hi - se.lo))));
+      stops.push(k / K, lastC);
+    }
+    h.grad = ['interpolate', ['linear'], ['line-progress'], ...stops];
+    paintRoute(map);
+    legend.replaceChildren();
+    const bar = el('i', 'mf-legend-bar'); bar.style.background = 'linear-gradient(90deg, ' + se.ramp.join(', ') + ')';
+    const row = el('div', 'mf-legend-row');
+    row.append(el('span', null, se.fmt(se.lo)), bar, el('span', null, se.fmt(se.hi) + se.unit));
+    legend.append(el('b', null, se.name), row);
+    legend.hidden = false;
+  };
+
+  // ---- Einblendungen ----
+  const ensureKm = () => {
+    if (map.getSource('ov-km')) return;
+    const kmTotal = a.km || h.total / 1000, f = h.total / (kmTotal * 1000);
+    const step = kmTotal <= 25 ? 1 : kmTotal <= 80 ? 5 : 10;
+    const feats = [];
+    for (let k = step; k < kmTotal - step * 0.3; k += step) feats.push(ptFeat(pointAt(h.route, h.cum, k * 1000 * f), { n: k, step, d: k * 1000 * f }));
+    map.addSource('ov-km', { type: 'geojson', data: featColl(feats) });
+    map.addLayer({ id: 'ov-km-dot', type: 'circle', source: 'ov-km', paint: { 'circle-radius': 9, 'circle-color': h.pal.route, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 } });
+    map.addLayer({ id: 'ov-km-txt', type: 'symbol', source: 'ov-km',
+      layout: { 'text-field': ['to-string', ['get', 'n']], 'text-font': h.font, 'text-size': 10.5, 'text-allow-overlap': true, 'text-ignore-placement': true },
+      paint: { 'text-color': '#ffffff' } });
+  };
+  const ensureArrows = () => {
+    if (map.getLayer('ov-arrows')) return;
+    if (!map.hasImage('pfeil')) map.addImage('pfeil', arrowImg(), { pixelRatio: 2 });
+    map.addLayer({ id: 'ov-arrows', type: 'symbol', source: 'route',
+      layout: { 'symbol-placement': 'line', 'symbol-spacing': 110, 'icon-image': 'pfeil', 'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true } }, 'r-start');
+  };
+  // Runden: Marke am Ende jeder Runde (Lage anteilig zur Rundenlänge), Erholungsrunden grau
+  const laps = Array.isArray(a.laps) ? a.laps : [];
+  const lapLen = (l) => l.m ?? (l.v && l.s ? l.v * l.s : 0);
+  const lapsReal = laps.some((l) => (l.tg != null && ![1, 2, 7].includes(l.tg)) || l.it === 1 || l.it === 4);
+  const lapsOn = () => (prefs.laps == null ? lapsReal : prefs.laps);
+  const kmOn = () => (prefs.km == null ? !(lapsOn() && laps.length > 1) : prefs.km);
+  const ensureLaps = () => {
+    if (map.getSource('ov-laps') || laps.length < 2) return;
+    const sumL = laps.reduce((s, l) => s + lapLen(l), 0);
+    if (!(sumL > 0)) return;
+    const feats = [];
+    let acc = 0;
+    laps.forEach((l, i) => {
+      acc += lapLen(l);
+      if (i === laps.length - 1) return;
+      const d = acc / sumL * h.total;
+      feats.push(ptFeat(pointAt(h.route, h.cum, d), { n: i + 1, i, d, rest: l.it === 1 || l.it === 4 }));
+    });
+    map.addSource('ov-laps', { type: 'geojson', data: featColl(feats) });
+    map.addLayer({ id: 'ov-lap-dot', type: 'circle', source: 'ov-laps', paint: { 'circle-radius': 9, 'circle-color': '#ffffff', 'circle-stroke-width': 2.5, 'circle-stroke-color': ['case', ['get', 'rest'], '#8e8e93', h.pal.route] } });
+    map.addLayer({ id: 'ov-lap-txt', type: 'symbol', source: 'ov-laps',
+      layout: { 'text-field': ['to-string', ['get', 'n']], 'text-font': h.font, 'text-size': 10.5, 'text-allow-overlap': true, 'text-ignore-placement': true },
+      paint: { 'text-color': ['case', ['get', 'rest'], '#6e6e73', h.pal.route] } });
+  };
+  const ensurePauses = () => {
+    if (map.getSource('ov-pause') || !h.st || !h.st.p || !h.maxD) return;
+    const feats = h.st.p.map(([pd, sec]) => { const d = Math.min(1, pd / h.maxD) * h.total; return ptFeat(pointAt(h.route, h.cum, d), { d, sec }); });
+    map.addSource('ov-pause', { type: 'geojson', data: featColl(feats) });
+    map.addLayer({ id: 'ov-pause', type: 'circle', source: 'ov-pause', paint: { 'circle-radius': 6, 'circle-color': '#8e8e93', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+  };
+  const ensureHill = () => {
+    if (map.getLayer('hill')) return;
+    if (!map.getSource('dem')) map.addSource('dem', MAP_SOURCES.dem);
+    const firstSym = h.vec.find((l) => l.type === 'symbol');
+    map.addLayer({ id: 'hill', type: 'hillshade', source: 'dem', paint: hillPaint(true) }, firstSym ? firstSym.id : 'r-glow');
+  };
+  const applyOverlays = () => {
+    if (prefs.hill) ensureHill();
+    showLayer(map, 'hill', prefs.hill);
+    if (prefs.arrows) ensureArrows();
+    showLayer(map, 'ov-arrows', prefs.arrows);
+    if (kmOn()) ensureKm();
+    for (const id of ['ov-km-dot', 'ov-km-txt']) showLayer(map, id, kmOn());
+    if (lapsOn()) ensureLaps();
+    for (const id of ['ov-lap-dot', 'ov-lap-txt']) showLayer(map, id, lapsOn());
+    if (prefs.pauses) ensurePauses();
+    showLayer(map, 'ov-pause', prefs.pauses);
+    // Markierungen über der Route, die Positionsmarke ganz oben
+    for (const id of ['ov-pause', 'ov-lap-dot', 'ov-lap-txt', 'ov-km-dot', 'ov-km-txt', 'cur', 'runner']) if (map.getLayer(id)) map.moveLayer(id);
+    paintRoute(map);
+  };
+
+  // ---- Antippen: Marke (Kilometer, Runde, Pause) oder die Route selbst ----
+  map.on('click', (e) => {
+    if (sheet) { closeSheet(); return; }
+    const box = [[e.point.x - 14, e.point.y - 14], [e.point.x + 14, e.point.y + 14]];
+    const layers = ['ov-pause', 'ov-lap-dot', 'ov-km-dot'].filter((id) => map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== 'none');
+    const hit = layers.length ? map.queryRenderedFeatures(box, { layers })[0] : null;
+    if (hit) {
+      const p = hit.properties, d = Number(p.d);
+      setCursor(map, d); prof.mark(d / h.total); h.live?.clear();
+      if (hit.layer.id === 'ov-pause') showInfo('Pause', [[duration(Number(p.sec) / 60), ' min', 'Dauer'], [kmTxt(kmOf(d)), ' km', 'Bei']], 'pause');
+      else if (hit.layer.id === 'ov-lap-dot') {
+        const l = laps[Number(p.i)], m = lapLen(l);
+        showInfo('Runde ' + p.n + (p.rest ? ' · Erholung' : ''), [
+          [m < 995 ? String(Math.round(m / 10) * 10) : num(m / 1000, 2), m < 995 ? ' m' : ' km', 'Länge'],
+          speedCell(l.v), [l.hr ? String(l.hr) : '–', ' bpm', 'Puls'], [l.s ? duration(l.s / 60) : '–', '', 'Zeit'],
+        ], 'runde');
+      } else showInfo('Kilometer ' + p.n, splitAt(d, Number(p.step)), 'km');
+      keepVisible(d);
+      return;
+    }
+    // Nächster Routenpunkt auf dem Bildschirm, höchstens 28 px entfernt
+    let best = Infinity, bi = -1;
+    h.route.forEach(([la, lo], i) => { const q = map.project([lo, la]); const dd = (q.x - e.point.x) ** 2 + (q.y - e.point.y) ** 2; if (dd < best) { best = dd; bi = i; } });
+    if (bi >= 0 && best <= 28 * 28) { showAt(h.cum[bi]); return; }
+    if (info.dataset.kind !== 'standort') { hideInfo(); clearMark(); }
+  });
+  /** Zwischenzeit des Kilometers, der bei d endet (aus den Verläufen) */
+  const splitAt = (d, step) => {
+    const cells = [];
+    if (!h.st || !h.maxD) return cells;
+    const share1 = d / h.total, share0 = Math.max(0, (d - step * 1000 * (h.total / ((a.km || h.total / 1000) * 1000))) / h.total);
+    const i0 = stIdx(share0), i1 = stIdx(share1), st = h.st;
+    const dt = st.t[i1] - (share0 > 0 ? st.t[i0] : 0), dd = st.d[i1] - (share0 > 0 ? st.d[i0] : 0);
+    if (dt > 0 && dd > 0) cells.push([duration(dt / 60), '', step === 1 ? 'Zeit für den km' : 'Zeit']);
+    if (dt > 0 && dd > 0) cells.push(speedCell(dd / dt, run ? 'Ø Pace' : 'Ø Tempo'));
+    if (st.hr) { const hs = st.hr.slice(share0 > 0 ? i0 + 1 : 0, i1 + 1).filter((v) => v != null); if (hs.length) cells.push([num(mean(hs)), ' bpm', 'Ø Puls']); }
+    cells.push([duration(st.t[i1] / 60), '', 'Gesamtzeit']);
+    return cells;
+  };
+
+  // ---- Höhenprofil (bzw. eingefärbter Wert) unter der Karte, mit der Karte verknüpft ----
+  const prof = { node: null, mark: () => {} };
+  const buildProfile = () => {
+    prof.node?.remove(); prof.node = null; prof.mark = () => {};
+    const mode = prefs.color !== 'none' && series(prefs.color) ? prefs.color : h.st && h.st.alt ? 'alt' : h.st && h.st.v ? 'speed' : h.st && h.st.hr ? 'hr' : null;
+    const se = mode && series(mode);
+    if (!se || !view) return;
+    const box = el('div', 'mf-prof'); shield(box);
+    const head = el('div', 'mf-prof-head');
+    const name = el('b', null, se.name), val = el('span', 'note', 'Antippen oder ziehen zeigt die Stelle');
+    head.append(name, val);
+    const chartNode = el('div', 'mf-prof-chart');
+    box.append(head, chartNode);
+    node.after(box);
+    prof.node = box;
+    const draw = () => {
+      const w = Math.max(200, Math.round(chartNode.clientWidth || 320)), H = 56;
+      chartNode.replaceChildren();
+      const svg = d3.select(chartNode).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${w} ${H}`).attr('preserveAspectRatio', 'none');
+      const n = h.st.t.length;
+      const xs = (i) => (h.maxD ? (h.st.d[i] ?? 0) / h.maxD : i / (n - 1));
+      const yv = (v) => Math.max(0, Math.min(1, (v - se.lo) / (se.hi - se.lo)));
+      // Tempo bzw. Pace: schneller = oben
+      const x = (i) => xs(i) * w, y = (v) => H - 4 - yv(v) * (H - 10);
+      const pts = se.vals.map((v, i) => (v == null ? null : [x(i), y(v)])).filter(Boolean);
+      if (pts.length < 2) return;
+      const color = css('--accent');
+      const area = d3.area().x((p) => p[0]).y0(H).y1((p) => p[1]).curve(d3.curveMonotoneX);
+      const line = d3.line().x((p) => p[0]).y((p) => p[1]).curve(d3.curveMonotoneX);
+      svg.append('path').attr('d', area(pts)).style('fill', color).style('opacity', 0.16);
+      svg.append('path').attr('d', line(pts)).style('fill', 'none').style('stroke', color).style('stroke-width', 1.6).attr('vector-effect', 'non-scaling-stroke');
+      const rule = svg.append('line').attr('y1', 0).attr('y2', H).style('stroke', css('--fg')).style('stroke-width', 1).attr('vector-effect', 'non-scaling-stroke').style('display', 'none');
+      prof.mark = (share) => {
+        if (share == null) { rule.style('display', 'none'); val.textContent = 'Antippen oder ziehen zeigt die Stelle'; return; }
+        rule.attr('x1', share * w).attr('x2', share * w).style('display', null);
+        const v = se.vals[stIdx(share)];
+        val.textContent = 'km ' + kmTxt(kmOf(share * h.total)) + ' · ' + (v == null ? '–' : se.fmt(v) + se.unit);
+      };
+      const pick = (ev) => {
+        const r = chartNode.getBoundingClientRect();
+        const share = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+        prof.mark(share); showAt(share * h.total, true);
+      };
+      chartNode.addEventListener('pointerdown', (ev) => { chartNode.setPointerCapture?.(ev.pointerId); pick(ev); });
+      chartNode.addEventListener('pointermove', (ev) => { if (ev.buttons || ev.pointerType !== 'mouse') pick(ev); });
+      for (const t of ['pointerup', 'pointercancel']) chartNode.addEventListener(t, () => h.live?.end());
+    };
+    draw();
+    let lastW = chartNode.clientWidth;
+    new ResizeObserver(() => { if (chartNode.isConnected && chartNode.clientWidth !== lastW) { lastW = chartNode.clientWidth; draw(); } }).observe(chartNode);
+  };
+
+  // ---- Ebenen-Auswahl (Kartenstil, Einfärben, Einblendungen) ----
+  let sheet = null;
+  const onDocDown = (ev) => { if (sheet && !sheet.contains(ev.target) && !bLayers.contains(ev.target)) closeSheet(); };
+  const closeSheet = () => {
+    sheet?.remove(); sheet = null; bLayers.setAttribute('aria-expanded', 'false'); bLayers.classList.remove('on');
+    document.removeEventListener('pointerdown', onDocDown, true);
+  };
+  const openSheet = () => {
+    sheet = shield(el('div', 'mf-sheet mf-glass'));
+    sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-label', 'Kartenstil und Einblendungen');
+    const sec = (t) => sheet.append(el('div', 'mf-sh-h', t));
+    const pressed = (box, k) => { for (const b of box.children) b.setAttribute('aria-pressed', String(b.dataset.k === k)); };
+    sec('Karte');
+    const seg = el('div', 'seg');
+    for (const [k, l] of [['standard', 'Standard'], ['satellit', 'Satellit'], ['topo', 'Topo']]) {
+      const b = el('button', null, l); b.type = 'button'; b.dataset.k = k;
+      b.addEventListener('click', () => { prefs.base = k; saveMapPrefs(prefs); applyBase(map, k); pressed(seg, k); });
+      seg.append(b);
+    }
+    pressed(seg, prefs.base); sheet.append(seg);
+    const modes = colorModes();
+    if (modes.length > 1) {
+      sec('Route einfärben');
+      const opts = el('div', 'mf-opts');
+      for (const [k, l] of modes) {
+        const b = el('button', null, l); b.type = 'button'; b.dataset.k = k;
+        b.addEventListener('click', () => { prefs.color = k; saveMapPrefs(prefs); applyColor(); buildProfile(); pressed(opts, k); });
+        opts.append(b);
+      }
+      pressed(opts, modes.some(([k]) => k === prefs.color) ? prefs.color : 'none'); sheet.append(opts);
+    }
+    sec('Einblenden');
+    const togs = [['hill', 'Schummerung (Gelände)'], ['km', 'Kilometer'], ['arrows', run ? 'Laufrichtung' : 'Fahrtrichtung']];
+    if (laps.length > 1) togs.push(['laps', 'Runden']);
+    if (h.st && h.st.p && h.maxD) togs.push(['pauses', 'Pausen']);
+    const list = el('div', 'mf-togs');
+    for (const [k, l] of togs) {
+      const row = el('label', 'mf-tog'); const cb = el('input'); cb.type = 'checkbox';
+      cb.checked = k === 'laps' ? lapsOn() : k === 'km' ? kmOn() : !!prefs[k];
+      cb.dataset.k = k;
+      cb.addEventListener('change', () => {
+        prefs[k] = cb.checked; saveMapPrefs(prefs); applyOverlays();
+        const kmBox = list.querySelector('input[data-k="km"]'); if (kmBox) kmBox.checked = kmOn();
+      });
+      row.append(el('span', null, l), cb); list.append(row);
+    }
+    sheet.append(list);
+    sheet.append(el('p', 'mf-sh-note', 'Satellit, Topo und Schummerung laden Kartenbilder von Esri, OpenTopoMap bzw. AWS. Die Anbieter sehen dabei den Kartenausschnitt, nicht deine Route.'));
+    node.append(sheet);
+    bLayers.setAttribute('aria-expanded', 'true'); bLayers.classList.add('on');
+    document.addEventListener('pointerdown', onDocDown, true);
+  };
+  bLayers.addEventListener('click', () => (sheet ? closeSheet() : openSheet()));
+
+  // ---- Eigener Standort (nur auf Wunsch, bleibt auf dem Gerät) ----
+  let watch = null, firstFix = true;
+  const stopLoc = () => {
+    if (watch != null) navigator.geolocation.clearWatch(watch);
+    watch = null; bLoc.classList.remove('on', 'busy');
+    if (map.getSource('me')) map.getSource('me').setData(featColl([]));
+    if (info.dataset.kind === 'standort') hideInfo();
+  };
+  const onPos = (pos) => {
+    bLoc.classList.remove('busy'); bLoc.classList.add('on');
+    const me = [pos.coords.latitude, pos.coords.longitude];
+    if (!map.getSource('me')) {
+      map.addSource('me', { type: 'geojson', data: featColl([]) });
+      map.addLayer({ id: 'me-halo', type: 'circle', source: 'me', paint: { 'circle-radius': 16, 'circle-color': '#0a84ff', 'circle-opacity': 0.18 } });
+      map.addLayer({ id: 'me', type: 'circle', source: 'me', paint: { 'circle-radius': 7, 'circle-color': '#0a84ff', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 } });
+    }
+    map.getSource('me').setData(featColl([ptFeat(me)]));
+    // Nächste Stelle der Route
+    let best = Infinity, bi = 0;
+    h.route.forEach((p, i) => { const dd = geoDist(me, p); if (dd < best) { best = dd; bi = i; } });
+    const at = 'bei km ' + kmTxt(kmOf(h.cum[bi]));
+    const far = best >= 1000 ? num(best / 1000, best < 10000 ? 1 : 0) + ' km' : Math.round(best / 10) * 10 + ' m';
+    showInfo(best < 25 ? 'Du bist auf der Strecke' : 'Du bist ' + far + ' von der Strecke entfernt', [], 'standort');
+    info.append(el('p', 'note', best < 25 ? 'Gerade ' + at + '.' : 'Nächste Stelle der Strecke ' + at + '.'));
+    if (firstFix) {
+      firstFix = false;
+      if (best < 50000) {
+        const lo = [...h.route.map((r) => r[1]), me[1]], la = [...h.route.map((r) => r[0]), me[0]];
+        map.fitBounds([[Math.min(...lo), Math.min(...la)], [Math.max(...lo), Math.max(...la)]], { padding: 48, duration: reduce ? 0 : 900 });
+      } else map.flyTo({ center: [me[1], me[0]], zoom: 14, duration: reduce ? 0 : 900 });
+    }
+  };
+  const onErr = (err) => {
+    stopLoc();
+    showInfo('Standort nicht verfügbar', [], 'standort');
+    info.append(el('p', 'note', err && err.code === 1 ? 'Die App darf deinen Standort nicht abfragen. Das kannst du in den Einstellungen deines Geräts ändern.' : 'Dein Standort konnte gerade nicht bestimmt werden.'));
+  };
+  bLoc.addEventListener('click', () => {
+    if (watch != null) { stopLoc(); return; }
+    if (!navigator.geolocation) { onErr(null); return; }
+    firstFix = true; bLoc.classList.add('busy');
+    watch = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+  });
+
+  // ---- 3D-Ansicht (#151) ----
+  // Höhenmodell als eigene Quelle (MapLibre empfiehlt getrennte Quellen für Gelände und Schummerung)
+  let is3d = false, orbit = 0;
+  const routeBounds = () => {
+    const lo = h.route.map((r) => r[1]), la = h.route.map((r) => r[0]);
+    return [[Math.min(...lo), Math.min(...la)], [Math.max(...lo), Math.max(...la)]];
+  };
+  const stopOrbit = () => {
+    if (!orbit) return;
+    cancelAnimationFrame(orbit); orbit = 0; bOrbit.classList.remove('on');
+  };
+  const startOrbit = () => {
+    stopOrbit();
+    const cam = map.cameraForBounds(routeBounds(), { padding: { top: 90, right: 80, bottom: 90, left: 40 } });
+    const begin = () => {
+      bOrbit.classList.add('on');
+      let last = performance.now();
+      const step = (now) => {
+        if (!node.isConnected) return;
+        // eine Umdrehung in 48 Sekunden
+        map.setBearing((map.getBearing() + (now - last) * 0.0075) % 360);
+        last = now; orbit = requestAnimationFrame(step);
+      };
+      orbit = requestAnimationFrame(step);
+    };
+    if (reduce || !cam) { begin(); return; }
+    map.easeTo({ center: cam.center, zoom: Math.max(1, cam.zoom - 0.3), pitch: 62, duration: 1200 });
+    map.once('moveend', () => { if (bOrbit.classList.contains('wait')) { bOrbit.classList.remove('wait'); begin(); } });
+    bOrbit.classList.add('wait', 'on');
+  };
+  // Jede Berührung der Karte beendet den Rundflug
+  for (const t of ['mousedown', 'touchstart', 'wheel']) map.on(t, () => { bOrbit.classList.remove('wait'); stopOrbit(); });
+  bOrbit.addEventListener('click', () => (orbit || bOrbit.classList.contains('wait') ? (bOrbit.classList.remove('wait'), stopOrbit()) : startOrbit()));
+  const set3d = (on) => {
+    is3d = on; h.is3d = on;
+    b3d.classList.toggle('on', on); b3d.setAttribute('aria-pressed', String(on));
+    bOrbit.hidden = !on;
+    if (on) {
+      if (!map.getSource('dem3d')) map.addSource('dem3d', { ...MAP_SOURCES.dem });
+      map.setTerrain({ source: 'dem3d', exaggeration: 1.4 });
+      // Schräg von oben, die ganze Route im Bild (geneigt wirkt sie kleiner, deshalb etwas herauszoomen)
+      const bearing = Math.abs(map.getBearing()) > 1 ? map.getBearing() : -25;
+      const cam = map.cameraForBounds(routeBounds(), { padding: { top: 90, right: 80, bottom: 90, left: 40 }, bearing });
+      map.easeTo({ ...(cam ? { center: cam.center, zoom: cam.zoom - 0.1 } : {}), pitch: 60, bearing, duration: reduce ? 0 : 1100 });
+    } else {
+      bOrbit.classList.remove('wait'); stopOrbit();
+      map.setTerrain(null);
+      map.easeTo({ pitch: 0, duration: reduce ? 0 : 700 });
+    }
+  };
+  b3d.addEventListener('click', () => h.ready.then(() => set3d(!is3d)));
+  bShare.addEventListener('click', () => openExport(a, { map }));
+
+  // ---- Start: Stil und Einblendungen aus den Einstellungen, Verläufe nachladen ----
+  h.ready.then(() => {
+    if (!node.isConnected) return;
+    applyBase(map, prefs.base);
+    applyOverlays();
+  });
+  const stP = a.st && typeof loadStreams === 'function' ? loadStreams(a.id).catch(() => null) : Promise.resolve(null);
+  Promise.all([h.ready, stP]).then(([, s]) => {
+    if (!node.isConnected || !s || !s.t || s.t.length < 2) return;
+    h.st = s;
+    const ds = (s.d || []).filter((v) => v != null);
+    h.maxD = ds.length ? Math.max(...ds) : null;
+    applyColor(); applyOverlays(); buildProfile();
+  });
+
+  return () => { stopLoc(); closeSheet(); stopOrbit(); };
 }

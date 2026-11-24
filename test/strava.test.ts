@@ -2,7 +2,7 @@
 // Ausführen: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodePolyline, isAutoName, mergeDuplicates, normalizeStrava, sameUnit, stravaType } from "../src/strava/extract.ts";
+import { decodePolyline, isAutoName, mergeDuplicates, normalizeStrava, sameUnit, stravaDetail, stravaType } from "../src/strava/extract.ts";
 
 const run = {
   id: 1234567890, name: "Abendlauf", sport_type: "Run", start_date: "2026-11-07T17:02:10Z", start_date_local: "2026-11-07T18:02:10Z",
@@ -63,4 +63,38 @@ test("Strava-Name statt Garmins Standardname, automatische Strava-Namen nicht (#
     assert.equal(mergeDuplicates([g("Stadt Laufen"), s(auto)])[0].name, "Stadt Laufen", auto);
   }
   for (const own of ["Abendrunde mit Pablo", "Longrun", "Wettkampf 10 km"]) assert.equal(isAutoName(own), false, own);
+});
+
+test("Strava-Detail (#50): Runden, sonst Kilometer-Splits; Segmente und Bestleistungen mit eigenem Rang", () => {
+  // synthetische Detailantwort, nur Feldnamen aus der Strava-Doku
+  const split = (i: number) => ({ distance: 1000, moving_time: 300 - i, elapsed_time: 300 - i, average_speed: 1000 / (300 - i), average_heartrate: 150 + i });
+  const d = stravaDetail({
+    laps: [{ distance: 5000, moving_time: 1500, average_speed: 3.33 }],
+    splits_metric: [split(0), split(1), split(2), { distance: 20, moving_time: 6 }],
+    segment_efforts: [
+      { name: "Uferweg", elapsed_time: 245, distance: 1010, pr_rank: 1, kom_rank: null, average_heartrate: 165, segment: { id: 42, average_grade: 0.2 } },
+      { name: "Brücke", elapsed_time: 61, distance: 300, pr_rank: null, kom_rank: 7, segment: { id: 43, average_grade: 3.4 } },
+      { name: "kaputt" },
+    ],
+    best_efforts: [{ name: "1k", distance: 1000, elapsed_time: 230, pr_rank: 2 }, { name: "5k", distance: 5000, elapsed_time: 1290, pr_rank: null }],
+  });
+  assert.equal(d.laps.length, 3, "nur eine eigene Runde → Splits, das Reststück unter 50 m fällt weg");
+  assert.equal(d.laps[0].tg, 2);
+  assert.equal(d.laps[0].m, 1000);
+  assert.equal(d.laps[2].hr, 152);
+  assert.deepEqual(d.seg.map((s) => [s.n, s.id, s.pr, s.kom]), [["Uferweg", 42, 1, null], ["Brücke", 43, null, 7]]);
+  assert.equal(d.be[0].pr, 2);
+  assert.equal(d.be[1].pr, null);
+  // mit echten Runden (Runden-Knopf) gewinnen die
+  const own = stravaDetail({ laps: [{ distance: 2000, moving_time: 420, average_speed: 4.76 }, { distance: 400, moving_time: 150 }], splits_metric: [split(0), split(1)] });
+  assert.deepEqual(own.laps.map((l) => [l.m, l.tg]), [[2000, undefined], [400, undefined]]);
+  assert.deepEqual(stravaDetail(null as any), { laps: [], seg: [], be: [] });
+});
+
+test("Strava-Detail: Segmente hängen bei doppelten Einheiten an der Garmin-Einheit", () => {
+  const g = { id: "1", src: "garmin", date: "2026-11-21", start: "09:57", type: "running", km: 16.4, min: 73.7 };
+  const s = { id: "s1", src: "strava", sid: "1", date: "2026-11-21", start: "09:58", type: "running", km: 16.5, min: 73.7, seg: [{ n: "Uferweg", id: 42, m: 1000, s: 240, pr: 1, kom: null, hr: null, g: null }], be: [] };
+  const out = mergeDuplicates([g, s]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].strava.seg[0].n, "Uferweg");
 });

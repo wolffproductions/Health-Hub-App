@@ -1,0 +1,614 @@
+// ---------- RAD-WETTER (#153): Wann kann ich fahren, was ziehe ich an? ----------
+// Eigene Unterseite (#radwetter/<ort>), dazu eine Zeile auf „Heute“, eine Karte unter „Einheiten“ und die Rückmeldung
+// „Wie war's angezogen?“ auf der Seite einer Radfahrt. Der Server rechnet alles (src/radwetter.ts), hier wird nur angezeigt.
+// Einstellungen unter Konto → Rad-Wetter (radwetter-konto.js.txt).
+const RW = { data: null, key: '', loading: false, hour: null, dur: null, here: null, pick: null, fig: null, short: null, shortAt: 0, tick: null, err: '' };
+const RW_DUR = [[60, '1 h'], [120, '2 h'], [180, '3 h'], [240, '4 h']];
+const capFirst = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+/** Dauer als „42 Min.“, „2:14 h“ oder „1 Tag 3 h“ */
+function rwDur(sec) {
+  const m = Math.max(0, Math.round(sec / 60));
+  if (m < 60) return m + ' Min.';
+  if (m < 1440) return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0') + ' h';
+  const d = Math.floor(m / 1440), h = Math.round((m % 1440) / 60);
+  return d + (d === 1 ? ' Tag' : ' Tage') + (h ? ' ' + h + ' h' : '');
+}
+/** Countdown zum Fenster: vor dem Start „In …“, währenddessen „Jetzt“ mit Restzeit */
+function rwCd(w) {
+  const now = Date.now() / 1000;
+  if (!w) return null;
+  if (w.s <= now && w.e > now) return { live: true, big: 'Jetzt', sub: 'noch ' + rwDur(w.e - now) + ' gut' };
+  if (w.e <= now) return { live: false, big: 'Vorbei', sub: '' };
+  return { live: false, big: 'In ' + rwDur(w.s - now), sub: '' };
+}
+/** Alle Countdowns auf der Seite (Unterseite, Heute, Einheiten) alle 20 Sekunden nachführen */
+function rwTickStart() {
+  if (RW.tick) return;
+  RW.tick = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    document.querySelectorAll('[data-rw-cd]').forEach((n) => {
+      const [s, e] = n.dataset.rwCd.split(',').map(Number), c = rwCd({ s, e });
+      if (!c) return;
+      const big = n.querySelector('.rw-cd-big'), sub = n.querySelector('.rw-cd-sub');
+      if (big) big.textContent = c.big; if (sub) sub.textContent = c.sub;
+      n.classList.toggle('live', c.live);
+    });
+  }, 20000);
+}
+const rwWxIcon = (h) => { const [ic, label] = wxKind(h.c); return [h.light < 30 && h.c <= 2 ? 'mond' : ic, label]; };
+const rwPost = (body) => api('/api/radwetter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+function openRadwetter(place) { openSub('radwetter', place || 'start'); }
+
+async function loadRw(force) {
+  if (RW.loading) return;
+  const key = (S.sub && S.sub.key) || 'start';
+  const q = new URLSearchParams();
+  if (key !== 'start' && key !== 'hier') q.set('place', key);
+  if (key === 'hier' && RW.here) { q.set('lat', RW.here[0]); q.set('lng', RW.here[1]); }
+  if (RW.dur) q.set('dur', RW.dur);
+  const want = q.toString();
+  if (!force && RW.data && RW.key === want) return;
+  RW.loading = true;
+  try { RW.data = await api('/api/radwetter?' + want); RW.key = want; RW.err = ''; }
+  catch (e) { RW.err = e.message || 'Fehler'; }
+  RW.loading = false;
+  RW.short = null; // Kurzfassung für Heute/Einheiten neu holen
+  if (S.tab === 'radwetter') renderRadwetter(true);
+}
+
+function renderRadwetter(fresh) {
+  const body = $('#rw-body');
+  const key = (S.sub && S.sub.key) || 'start';
+  $('#navTitle').textContent = 'Rad-Wetter';
+  rwTickStart();
+  const D = RW.data;
+  const want = key === 'hier' ? 'hier' : key;
+  // Andere Seite gewünscht als geladen: neu laden
+  if (!D || (want !== 'start' && D.sel && D.sel !== want && !(want === 'hier' && !RW.here))) {
+    if (!RW.loading) { body.replaceChildren(el('div', 'card rw-empty', RW.err ? 'Konnte nicht laden: ' + RW.err : 'Lade Vorhersage …')); loadRw(); }
+    return;
+  }
+  if (!fresh && body.dataset.key === RW.key + '|' + (RW.hour ?? '')) return;
+  body.dataset.key = RW.key + '|' + (RW.hour ?? '');
+  body.replaceChildren();
+  $('#rw-sub').textContent = D.on && D.at ? 'Stand ' + new Date(D.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr' + (D.place ? ' · ' + D.place.name : '') : 'Wann kann ich fahren?';
+  if (!D.on || !D.places.length) { body.append(rwIntro(D)); return; }
+  body.append(rwPlaces(D));
+  if (D.err) body.append(el('div', 'banner err', 'Die Vorhersage konnte nicht aktualisiert werden: ' + D.err + (D.at ? ' Angezeigt wird der letzte Stand.' : '')));
+  if (!D.hours || !D.hours.length) { body.append(el('div', 'card rw-empty', 'Für diesen Ort gibt es noch keine Vorhersage. Sie kommt beim nächsten Abruf.')); body.append(rwFoot(D)); return; }
+  if (RW.hour == null || RW.hour >= D.hours.length) RW.hour = D.wearStart || 0;
+  body.append(rwHero(D), rwTimeline(D), rwWearCard(D), rwWindCard(D));
+  const fb = rwFeedbackCard(D); if (fb) body.append(fb);
+  if (D.game) body.append(...rwGame(D));
+  body.append(rwFoot(D));
+  rwSelectHour(RW.hour, false);
+}
+
+// ---------- Noch nicht eingerichtet ----------
+function rwIntro(D) {
+  const c = el('div', 'card form rw-intro');
+  c.append(el('h3', null, 'Wann kann ich fahren?'));
+  c.append(el('p', null, 'Die App sucht in der Wettervorhersage der nächsten zwei Tage gute Fenster zum Radfahren, nach deinen eigenen Kriterien: trocken, auch die Straße, wenig Wind, angenehm warm. Dazu ein Countdown, der Rat, in welche Richtung du zuerst fährst, und was du anziehen solltest. Auf Wunsch meldet sie sich, wenn sich ein Fenster auftut.'));
+  c.append(el('p', 'note', 'Datenschutz: Nur deine gespeicherten Orte gehen an den kostenlosen Wetterdienst Open-Meteo, auf etwa 1 km gerundet, ohne deinen Namen. Deinen Standort fragt die App nur, wenn du es antippst.'));
+  c.append(el('p', 'note', 'Wo bist du meistens zu Hause?'));
+  const row = el('div', 'row'), msg = el('p', 'msg'); msg.setAttribute('role', 'status');
+  const b1 = el('button', 'btn', 'Standort verwenden'); b1.type = 'button';
+  b1.addEventListener('click', () => rwLocate(msg, async (lat, lng) => { await rwSetHome({ lat, lng }, msg); }));
+  const b2 = el('button', 'btn ghost', 'Start meiner Fahrten'); b2.type = 'button';
+  b2.addEventListener('click', () => rwSetHome({ from: 'rides' }, msg));
+  const b3 = el('button', 'btn ghost', 'Ort suchen'); b3.type = 'button';
+  b3.addEventListener('click', () => { S.kontoView = 'radwetter'; showTab('konto'); requestAnimationFrame(() => { const i = $('#rwk-q'); if (i) i.focus(); }); });
+  row.append(b1, b2, b3); c.append(row, msg);
+  return c;
+}
+async function rwSetHome(body, msg) {
+  msg.textContent = 'Speichere …';
+  try { const r = await rwPost({ action: 'home', ...body }); if (!r.ok) { msg.textContent = r.error || 'Fehler'; return; } msg.textContent = ''; RW.data = null; RW.short = null; loadRw(true); }
+  catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+}
+/** Standort nur nach Antippen, auf 0,01° (etwa 1 km) gerundet */
+function rwLocate(msg, done) {
+  if (!navigator.geolocation) { msg.textContent = 'Dieses Gerät kann den Standort nicht bestimmen.'; return; }
+  msg.textContent = 'Bestimme Standort …';
+  navigator.geolocation.getCurrentPosition((p) => { msg.textContent = ''; done(Math.round(p.coords.latitude * 100) / 100, Math.round(p.coords.longitude * 100) / 100); },
+    (e) => { msg.textContent = e.code === 1 ? 'Ohne Erlaubnis kein Standort. Du kannst stattdessen einen Ort suchen.' : 'Standort nicht verfügbar.'; },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 });
+}
+
+// ---------- Orte oben ----------
+function rwPlaces(D) {
+  const box = el('div', 'rw-places'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Ort');
+  const add = (id, name, ic, next) => {
+    const b = el('button', 'rw-place'); b.type = 'button';
+    b.setAttribute('aria-pressed', String(D.sel === id));
+    if (ic) b.innerHTML = icon(ic);
+    b.append(el('span', null, name));
+    if (next) { const d = el('i', 'rw-dot'); d.title = 'Gutes Fenster ' + next.day + ' ' + next.time; b.append(d); }
+    b.addEventListener('click', () => {
+      if (id === 'hier') { const m = $('#rw-here-msg'); rwLocate(m, (lat, lng) => { RW.here = [lat, lng]; rwGo('hier'); }); return; }
+      rwGo(id);
+    });
+    box.append(b);
+  };
+  for (const p of D.places) add(p.id, p.name, p.kind === 'home' ? 'haus' : 'route', p.next);
+  add('hier', 'Hier', 'standort', null);
+  const wrap = el('div', 'rw-places-wrap'); wrap.append(box);
+  const m = el('p', 'msg rw-here-msg'); m.id = 'rw-here-msg'; m.setAttribute('role', 'status');
+  if (D.sel === 'hier') m.textContent = 'Dein Standort, auf etwa 1 km gerundet und nicht gespeichert.';
+  wrap.append(m);
+  return wrap;
+}
+function rwGo(id) {
+  RW.hour = null; RW.pick = null;
+  if (S.sub) S.sub.key = id;
+  history.replaceState(history.state, '', '#radwetter/' + encodeURIComponent(id));
+  loadRw();
+  renderRadwetter(true);
+}
+
+// ---------- Countdown und Fenster ----------
+function rwHero(D) {
+  const c = el('div', 'card rw-hero');
+  const w = D.next;
+  const top = el('div', 'rw-hero-top');
+  top.append(el('span', 'rw-lbl', w ? (rwCd(w).live ? 'Gutes Fenster läuft' : 'Nächstes gutes Fenster') : 'Kein gutes Fenster in Sicht'));
+  if (w) { const q = el('span', 'rw-q', quality(w.score)); top.append(q); }
+  c.append(top);
+  if (w) {
+    const cd = rwCd(w), box = el('div', 'rw-cd' + (cd.live ? ' live' : ''));
+    box.dataset.rwCd = w.s + ',' + w.e;
+    box.append(el('span', 'rw-cd-big', cd.big), el('span', 'rw-cd-sub', cd.sub));
+    c.append(box);
+    c.append(el('p', 'rw-when', capFirst(w.day) + ' ' + w.time));
+    c.append(el('p', 'rw-facts', rwWinFacts(w)));
+    c.addEventListener('click', (e) => { if (!e.target.closest('button')) rwSelectHour(Math.max(0, w.k), true); });
+  } else {
+    c.append(el('p', 'rw-when', 'In den nächsten 48 Stunden passt nichts zu deinen Kriterien.'));
+    if (D.near) c.append(el('p', 'rw-facts', 'Am nächsten dran: ' + D.near.day + ' ' + D.near.time + (D.near.why.length ? ' (' + D.near.why.slice(0, 3).join(', ') + ')' : '') + '.'));
+  }
+  if (D.best && (!w || D.best.s !== w.s)) {
+    const b = el('button', 'rw-best'); b.type = 'button';
+    b.append(el('span', null, 'Bestes Fenster: ' + capFirst(D.best.day) + ' ' + D.best.time), el('span', 'rw-q', quality(D.best.score)));
+    const ch = el('span', 'st-chev'); ch.innerHTML = icon('weiter'); b.append(ch);
+    b.addEventListener('click', () => rwSelectHour(Math.max(0, D.best.k), true));
+    c.append(b);
+  }
+  // Andere Orte mit Fenster
+  const others = D.places.filter((p) => p.id !== D.sel && p.next);
+  if (others.length) c.append(el('p', 'note rw-others', 'Auch gut: ' + others.map((p) => p.name + ' ' + p.next.day + ' ' + p.next.time).join(' · ')));
+  return c;
+}
+const rwRange = (a, b, u) => (Math.round(a) === Math.round(b) ? num(a) : num(a) + '–' + num(b)) + u;
+function rwWinFacts(w) {
+  const t = rwRange(w.t[0], w.t[1], '');
+  return t + ' °C · Wind ' + w.ws + ' km/h aus ' + windDir(w.wdir) + ' · trocken' + (w.sun >= 60 ? ' · ' + hm(w.sun / 60) + ' h Sonne' : '');
+}
+const quality = (s) => (s >= 80 ? 'sehr gut' : s >= 60 ? 'gut' : 'okay');
+
+// ---------- Zeitleiste: 48 Stunden ----------
+function rwTimeline(D) {
+  const c = el('div', 'card rw-tl');
+  const head = el('div', 'rw-card-head'); head.append(el('h3', null, '48 Stunden'));
+  const leg = el('div', 'rw-legend');
+  for (const [cls, t] of [['good', 'gut'], ['meh', 'knapp'], ['off', 'nicht deine Zeit']]) { const s = el('span'); s.append(el('i', 'rw-sw is-' + cls), document.createTextNode(t)); leg.append(s); }
+  head.append(leg); c.append(head);
+  // Überblick: ein Streifen je Stunde, Fenster darüber, Tage darunter
+  const band = el('div', 'rw-band'); band.setAttribute('aria-hidden', 'true');
+  const n = D.hours.length;
+  band.style.setProperty('--n', n);
+  for (const w of D.wins) {
+    const a = Math.max(0, w.k), b = Math.min(n, w.k + w.n);
+    if (b <= a) continue;
+    const s = el('span', 'rw-band-win'); s.style.gridColumn = (a + 1) + ' / span ' + (b - a);
+    band.append(s);
+  }
+  D.hours.forEach((h, i) => {
+    const b = el('i', 'rw-band-h is-' + (h.off ? 'off' : h.st)); b.style.gridColumn = String(i + 1); b.dataset.i = i;
+    band.append(b);
+    if (i === 0 || h.h === 0) { const d = el('span', 'rw-band-day', i === 0 ? 'Jetzt' : WD[parse(h.d).getUTCDay()]); d.style.gridColumn = (i + 1) + ' / span 6'; band.append(d); }
+  });
+  band.addEventListener('click', (e) => {
+    const r = band.getBoundingClientRect(), i = Math.floor(((e.clientX - r.left) / r.width) * n);
+    if (i >= 0 && i < n) rwSelectHour(i, true);
+  });
+  c.append(band);
+  // Stunden zum Wischen
+  const strip = el('div', 'rw-strip'); strip.id = 'rw-strip';
+  strip.setAttribute('role', 'listbox'); strip.setAttribute('aria-label', 'Stunden der nächsten 48 Stunden');
+  const inWin = new Set(); for (const w of D.wins) for (let k = 0; k < w.n; k++) inWin.add(w.k + k);
+  D.hours.forEach((h, i) => {
+    const b = el('button', 'rw-h is-' + (h.off ? 'off' : h.st) + (inWin.has(i) ? ' in-win' : '')); b.type = 'button'; b.dataset.i = i;
+    b.setAttribute('role', 'option');
+    const [ic, label] = rwWxIcon(h);
+    const day = i === 0 ? 'Jetzt' : h.h === 0 ? WD[parse(h.d).getUTCDay()] : '';
+    b.append(el('span', 'rw-hd', day), el('span', 'rw-hh', String(h.h).padStart(2, '0')));
+    const ico = el('span', 'rw-hi'); ico.innerHTML = icon(ic); b.append(ico);
+    b.append(el('span', 'rw-ht', num(h.t) + '°'));
+    const rain = el('span', 'rw-hr'), bar = el('i'); bar.style.height = Math.min(100, (h.p / 2) * 100) + '%'; rain.append(bar); b.append(rain);
+    b.append(el('span', 'rw-hp', h.pp >= 10 ? h.pp + ' %' : ''));
+    const wind = el('span', 'rw-hw'); wind.innerHTML = icon('pfeil'); wind.style.setProperty('--rot', (h.wdir + 180) + 'deg'); b.append(wind);
+    b.append(el('span', 'rw-hws' + (h.ws > ((D.cfg && D.cfg.crit.wind) || 25) ? ' hi' : ''), String(h.ws)));
+    b.append(el('span', 'rw-hs'));
+    b.setAttribute('aria-label', rwHourLabel(D, h, i) + ', ' + label);
+    b.addEventListener('click', () => rwSelectHour(i, false));
+    strip.append(b);
+  });
+  c.append(strip);
+  const det = el('div', 'rw-detail'); det.id = 'rw-detail'; det.setAttribute('aria-live', 'polite');
+  c.append(det);
+  // Wie rechnet die App?
+  const more = el('details', 'fold rw-rules');
+  more.append(el('summary', null, 'So bewertet die App'));
+  const cr = D.cfg.crit;
+  const ul = el('ul');
+  const li = (t) => ul.append(el('li', null, t));
+  li('Gut: Regenrisiko höchstens ' + cr.prob + ' %, Niederschlag ' + (cr.mm ? 'höchstens ' + num(cr.mm, 1) + ' mm' : 'kein messbarer') + ', Wind höchstens ' + cr.wind + ' km/h, Böen höchstens ' + cr.gust + ' km/h' + (cr.tMin != null ? ', ab ' + cr.tMin + ' °C' : '') + (cr.tMax != null ? ', bis ' + cr.tMax + ' °C' : '') + '.');
+  li('Ein Fenster dauert mindestens ' + cr.minH + (cr.minH === 1 ? ' Stunde' : ' Stunden') + (cr.light ? ', nur bei Tageslicht' : '') + ', in deinen Zeiten (Mo–Fr ' + cr.wk[0] + '–' + cr.wk[1] + ' Uhr, Sa/So ' + cr.we[0] + '–' + cr.we[1] + ' Uhr).');
+  if (cr.dry) li(D.dryRule);
+  li('Knapp heißt: nur Wind, Böen, Regenrisiko oder Temperatur ein wenig über deiner Grenze, oder die Straße ist noch feucht.');
+  more.append(ul);
+  const r = el('div', 'row'), go = el('button', 'btn ghost small', 'Kriterien ändern'); go.type = 'button';
+  go.addEventListener('click', () => rwSettings('rwk-crit'));
+  r.append(go); more.append(r);
+  c.append(more);
+  return c;
+}
+function rwHourLabel(D, h, i) {
+  const day = h.d === D.today ? 'heute' : dayLabel(h.d).split(',')[0];
+  return (i === 0 ? 'Jetzt, ' : '') + day + ' ' + h.h + ' Uhr: ' + num(h.t) + ' °C, ' + (h.p >= 0.1 ? num(h.p, 1) + ' mm Regen' : h.pp >= 10 ? h.pp + ' % Regenrisiko' : 'trocken') + ', Wind ' + h.ws + ' km/h aus ' + windDir(h.wdir)
+    + ', ' + (h.off === 'zeit' ? 'nicht in deinen Zeiten' : h.off === 'dunkel' ? 'dunkel' : h.st === 'good' ? 'gut' : h.st === 'meh' ? 'knapp' : 'nicht gut');
+}
+/** Stunde wählen: Zeitleiste markieren, Details, Kleidung für einen Start in dieser Stunde */
+function rwSelectHour(i, scroll) {
+  const D = RW.data; if (!D || !D.hours) return;
+  RW.hour = i;
+  const body = $('#rw-body'); body.dataset.key = RW.key + '|' + i;
+  document.querySelectorAll('#rw-strip .rw-h').forEach((b) => { const on = Number(b.dataset.i) === i; b.classList.toggle('sel', on); b.setAttribute('aria-selected', String(on)); });
+  document.querySelectorAll('.rw-band-h').forEach((b) => b.classList.toggle('sel', Number(b.dataset.i) === i));
+  const strip = $('#rw-strip'), cell = strip && strip.querySelector('[data-i="' + i + '"]');
+  if (cell && scroll !== null) {
+    const left = cell.offsetLeft - strip.clientWidth / 2 + cell.offsetWidth / 2;
+    strip.scrollTo({ left, behavior: scroll && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto' });
+  }
+  const h = D.hours[i], det = $('#rw-detail');
+  if (det && h) {
+    det.replaceChildren();
+    const top = el('div', 'rw-detail-top');
+    top.append(el('b', null, (i === 0 ? 'Jetzt · ' : '') + capFirst(h.d === D.today ? 'heute' : dayLabel(h.d)) + ', ' + h.h + ' Uhr'));
+    const st = h.off === 'zeit' ? ['off', 'Nicht deine Zeit'] : h.off === 'dunkel' ? ['off', 'Dunkel'] : h.st === 'good' ? ['good', 'Gut'] : h.st === 'meh' ? ['meh', 'Knapp'] : ['bad', 'Nicht gut'];
+    top.append(el('span', 'rw-st is-' + st[0], st[1]));
+    det.append(top);
+    const [, label] = rwWxIcon(h);
+    det.append(el('p', null, [label, num(h.t) + ' °C, gefühlt ' + num(h.ta) + ' °C, auf dem Rad ' + num(h.f) + ' °C', h.p >= 0.1 ? num(h.p, 1) + ' mm Regen' : h.pp >= 10 ? h.pp + ' % Regenrisiko' : 'trocken',
+      'Wind ' + h.ws + ' km/h aus ' + windDir(h.wdir) + ', Böen ' + h.wg, 'Straße ' + h.road].filter(Boolean).join(' · ')));
+    if (h.why.length) det.append(el('p', 'note', (h.st === 'meh' ? 'Knapp: ' : 'Passt nicht: ') + h.why.join(', ') + '.'));
+  }
+  rwRenderWear(i);
+}
+
+// ---------- Anziehen ----------
+// Grundstufe als Ebenen der Figur
+const RW_BASE_PARTS = { kurz: 'trikotKurz', lang: 'trikotLang', winter: 'jackeWinter' };
+const RW_PART_COLOR = { trikotKurz: 'trikot', trikotLang: 'trikot', jackeWinter: 'winter', hoseKurz: 'hose', hoseLang: 'hose', hoseWinter: 'winter', unterhemd: 'unterhemd',
+  armlinge: 'linge', knielinge: 'linge', beinlinge: 'linge', gilet: 'gilet', windjacke: 'wind', regenjacke: 'regen', ueberschuhe: 'schuh', handschuhKurz: 'hand', handschuhLang: 'hand', muetze: 'muetze' };
+function rwWearCard(D) {
+  const c = el('div', 'card rw-wear'); c.id = 'rw-wear';
+  const head = el('div', 'rw-card-head'); head.append(el('h3', null, 'Anziehen')); const when = el('span', 'note'); when.id = 'rw-wear-when'; head.append(when);
+  c.append(head);
+  const seg = el('div', 'seg'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Dauer der Fahrt');
+  for (const [m, t] of RW_DUR) {
+    const b = el('button', null, t); b.type = 'button'; b.setAttribute('aria-pressed', String(D.dur === m));
+    b.addEventListener('click', () => { if (D.dur === m) return; RW.dur = m; loadRw(); });
+    seg.append(b);
+  }
+  c.append(seg);
+  const figBox = el('div', 'rw-fig'); c.append(figBox);
+  RW.fig = drawFigure(figBox, (part) => rwPick(part === RW.pick ? null : part));
+  const lvl = el('div', 'rw-lvl'); lvl.id = 'rw-lvl'; c.append(lvl);
+  const ul = el('ul', 'rw-items'); ul.id = 'rw-items'; ul.setAttribute('aria-label', 'Empfohlene Kleidung'); c.append(ul);
+  const feel = el('p', 'note'); feel.id = 'rw-feel'; c.append(feel);
+  const r = el('div', 'row'), go = el('button', 'btn ghost small', 'Regeln anpassen'); go.type = 'button';
+  go.addEventListener('click', () => rwSettings('rwk-wear'));
+  r.append(go); c.append(r);
+  return c;
+}
+function rwRenderWear(i) {
+  const D = RW.data, w = D && D.wear && D.wear[i], h = D && D.hours[i];
+  if (!w || !RW.fig) return;
+  $('#rw-wear-when').textContent = 'Start ' + (h.d === D.today ? 'heute' : WD[parse(h.d).getUTCDay()]) + ' ' + h.h + ' Uhr · ' + RW_DUR.find((x) => x[0] === D.dur)?.[1];
+  RW.fig.set(w.parts);
+  const names = [w.name, ...w.items.map((x) => x.name)];
+  RW.fig.svg.setAttribute('aria-label', 'Figur auf dem Rad mit ' + names.join(', '));
+  const lvl = $('#rw-lvl'); lvl.replaceChildren();
+  lvl.append(el('span', 'rw-lvl-name', w.name), el('span', 'rw-lvl-desc', w.desc));
+  const ul = $('#rw-items'); ul.replaceChildren();
+  const row = (parts, color, name, why) => {
+    const li = el('li'), b = el('button', 'rw-item'); b.type = 'button';
+    if (parts[0]) b.dataset.part = parts[0];
+    const sw = el('i', 'rw-swatch'); if (color) sw.style.setProperty('--fc', 'var(--fig-' + color + ')'); else sw.classList.add('none');
+    const txt = el('span', 'rw-item-txt'); txt.append(el('b', null, name), el('small', null, why));
+    b.append(sw, txt);
+    b.addEventListener('click', () => rwPick(parts[0] && RW.pick !== parts[0] ? parts[0] : null));
+    li.append(b); ul.append(li);
+  };
+  const top = w.parts[0], legs = w.parts[1];
+  row([top], RW_PART_COLOR[top], w.desc.split(', ')[0], w.why);
+  row([legs], RW_PART_COLOR[legs], w.desc.split(', ')[1], 'Grundstufe ' + w.name + '.');
+  for (const it of w.items) row([it.part], it.part ? RW_PART_COLOR[it.part] : null, it.name, it.why + '.');
+  const f = w.f;
+  $('#rw-feel').textContent = 'Gefühlt auf dem Rad ' + rwRange(f.min, f.max, ' °C').replace('–', ' bis ') + ': Luft ' + rwRange(w.t[0], w.t[1], ' °C')
+    + ', gefühlt ' + rwRange(w.ta[0], w.ta[1], ' °C') + ' (Open-Meteo), Fahrtwind −' + num(w.chill, 1) + ' °C bei ' + D.cfg.wear.speed + ' km/h'
+    + (D.bias ? ', dein Kälteempfinden ' + (D.bias > 0 ? '−' : '+') + num(Math.abs(D.bias), 1) + ' °C' : '') + '.';
+  rwPick(RW.pick && w.parts.includes(RW.pick) ? RW.pick : null);
+}
+/** Teil antippen (Figur oder Liste): hervorheben, Rest blasser */
+function rwPick(part) {
+  RW.pick = part;
+  if (RW.fig) RW.fig.hi(part);
+  document.querySelectorAll('#rw-items .rw-item').forEach((b) => b.classList.toggle('hi', !!part && b.dataset.part === part));
+  if (part) { const b = document.querySelector('#rw-items .rw-item[data-part="' + part + '"]'); if (b && b.scrollIntoView) b.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+}
+
+// ---------- Wind und Lieblingsrunden ----------
+function rwCompass(dir, ws) {
+  const box = el('div', 'rw-compass'); box.setAttribute('aria-hidden', 'true');
+  for (const [t, cls] of [['N', 'n'], ['O', 'o'], ['S', 's'], ['W', 'w']]) box.append(el('span', 'rw-cp ' + cls, t));
+  const a = el('span', 'rw-cp-arrow'); a.innerHTML = icon('pfeil'); a.style.setProperty('--rot', (dir + 180) + 'deg'); box.append(a);
+  box.append(el('span', 'rw-cp-ws', String(ws)));
+  return box;
+}
+function rwWindCard(D) {
+  const c = el('div', 'card rw-wind');
+  const W = D.wind;
+  c.append(el('h3', null, 'Wind'));
+  const top = el('div', 'rw-wind-top');
+  const txt = el('div', 'rw-wind-txt');
+  txt.append(el('b', null, 'Aus ' + (COMPASS_DE[Math.round((((W.dir % 360) + 360) % 360) / 45) % 8]) + ', ' + W.ws + ' km/h'),
+    el('span', 'note', 'Böen bis ' + W.wg + ' km/h · ' + (W.forWin && D.next ? 'im Fenster ' + D.next.day + ' ' + D.next.time : 'jetzt')));
+  top.append(rwCompass(W.dir, W.ws), txt);
+  c.append(top);
+  c.append(el('p', 'rw-advice', W.advice.text));
+  if (D.place && D.place.kind === 'route' && D.place.sk) c.append(rwSketch(D.place, W, 'big'));
+  if (D.routes && D.routes.length) {
+    c.append(el('h4', 'rw-sub', 'Lieblingsrunden' + (W.forWin && D.next ? ' für ' + D.next.day + ' ' + D.next.time : '')));
+    const ul = el('ul', 'rw-routes');
+    D.routes.forEach((r, k) => {
+      const li = el('li'), b = el('button', 'rw-route'); b.type = 'button';
+      b.append(rwSketch(r, W, 'small'));
+      const t = el('span', 'rw-route-txt');
+      t.append(el('b', null, r.name));
+      if (k === 0 && r.rank > 0.3) t.append(el('span', 'rw-tag', 'Passt heute am besten'));
+      t.append(el('small', null, num(r.km) + ' km · etwa ' + hm(r.need) + ' h' + (r.fits ? '' : ', länger als das Fenster') + ' · ' + r.adv.short));
+      b.append(t);
+      const ch = el('span', 'st-chev'); ch.innerHTML = icon('weiter'); b.append(ch);
+      b.addEventListener('click', () => rwGo(r.id));
+      li.append(b); ul.append(li);
+    });
+    c.append(ul);
+  } else c.append(el('p', 'note', 'Lege unter Konto → Rad-Wetter Lieblingsrunden aus deinen Fahrten an. Dann sagt die App, welche heute am besten zum Wind passt: erst gegen den Wind raus, heimwärts Rückenwind.'));
+  return c;
+}
+const COMPASS_DE = ['Norden', 'Nordosten', 'Osten', 'Südosten', 'Süden', 'Südwesten', 'Westen', 'Nordwesten'];
+/** Skizze einer Runde (Form ohne Karte): Start, Halbzeit, Wind-Pfeil */
+function rwSketch(r, W, size) {
+  const box = el('span', 'rw-sketch ' + size); box.setAttribute('aria-hidden', 'true');
+  if (!r.sk) return box;
+  const svg = svgEl('svg', { viewBox: '0 0 100 100' }, null);
+  svgEl('polyline', { points: r.sk.map((p) => p.join(',')).join(' '), class: 'rw-sk-line' }, svg);
+  const s = r.sk[0], h = r.sk[r.hi ?? Math.floor(r.sk.length / 2)];
+  svgEl('circle', { cx: h[0], cy: h[1], r: size === 'big' ? 4 : 6, class: 'rw-sk-half' }, svg);
+  svgEl('circle', { cx: s[0], cy: s[1], r: size === 'big' ? 4.5 : 7, class: 'rw-sk-start' }, svg);
+  box.append(svg);
+  const a = el('span', 'rw-sk-wind'); a.innerHTML = icon('pfeil'); a.style.setProperty('--rot', (W.dir + 180) + 'deg'); box.append(a);
+  if (size === 'big') {
+    // Legende ohne Zeichen-Symbole: gezeichnete Punkte und das Pfeil-Symbol
+    const l = el('span', 'rw-sk-leg');
+    const item = (cls, text) => { const s = el('span'); s.append(el('i', cls), document.createTextNode(text)); l.append(s); };
+    item('rw-lg start', 'Start'); item('rw-lg half', 'Halbzeit');
+    const w = el('span'); w.innerHTML = icon('pfeil'); w.append('Wind'); l.append(w);
+    box.append(l);
+  }
+  return box;
+}
+
+// ---------- Rückmeldung nach der Fahrt ----------
+function rwFeedbackCard(D) {
+  const p = D.fb && D.fb.pending && D.fb.pending[0];
+  if (!p) return null;
+  const c = el('div', 'card rw-fb');
+  c.append(el('h3', null, 'Wie war’s angezogen?'));
+  c.append(el('p', 'note', capFirst(dayLabel(p.date)) + ', ' + p.start + ' Uhr' + (p.name ? ' · ' + p.name : '') + (p.km ? ' · ' + num(p.km) + ' km' : '') + '. Bezogen auf die Empfehlung der App. Deine Antwort verschiebt deine Grenzen behutsam.'));
+  c.append(rwFbButtons(p.id, (msg) => { c.replaceChildren(el('h3', null, 'Danke!'), el('p', 'note', msg)); }));
+  return c;
+}
+function rwFbButtons(id, done) {
+  const row = el('div', 'rw-fb-btns');
+  for (const [v, t] of [[-1, 'Zu kalt'], [0, 'Passt'], [1, 'Zu warm']]) {
+    const b = el('button', 'btn ghost', t); b.type = 'button';
+    b.addEventListener('click', async () => {
+      row.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+      try {
+        const r = await rwPost({ action: 'fb', id, v });
+        if (!r.ok) throw new Error(r.error || 'Fehler');
+        RW.data = null; RW.short = null; RWK.cfg = null;
+        done(v === 0 ? 'Gemerkt. Deine Grenzen bleiben, wie sie sind.' : 'Gemerkt. Die App rechnet für dich ab jetzt 0,5 °C ' + (v < 0 ? 'kälter' : 'wärmer') + ' (nachzulesen unter Konto → Rad-Wetter).');
+        if (S.tab === 'radwetter') setTimeout(() => loadRw(true), 1200);
+      } catch (e) { row.querySelectorAll('button').forEach((x) => { x.disabled = false; }); done('Fehler: ' + e.message); }
+    });
+    row.append(b);
+  }
+  return row;
+}
+/** Auf der Seite einer Radfahrt (#60): Rückmeldung zur Kleidung, solange sie frisch ist (bis 4 Tage) */
+async function rwUnitFeedback(a, body) {
+  if (!/cycl|biking|cyclocross|bike|_ride/.test(a.type) || /virtual|indoor/.test(a.type) || a.trainer) return;
+  if (!S.today || a.date < addDays(S.today, -3)) return;
+  let s; try { s = await rwShortData(); } catch { return; }
+  if (!s || !s.on || !s.fbPending || !s.fbPending.includes(a.id)) return;
+  if (!body.isConnected || !String(body.dataset.id || '').startsWith(a.id)) return;
+  const c = el('div', 'card rw-fb');
+  c.append(el('h3', null, 'Wie war’s angezogen?'));
+  c.append(el('p', 'note', 'Rad-Wetter lernt aus deiner Antwort, wie warm du dich anziehen solltest.'));
+  c.append(rwFbButtons(a.id, (msg) => { c.replaceChildren(el('h3', null, 'Danke!'), el('p', 'note', msg)); }));
+  const top = body.querySelector('.u-top'); if (top) top.after(c); else body.prepend(c);
+}
+
+// ---------- Dranbleiben ----------
+function rwSeen() { try { return JSON.parse(localStorage.getItem('rwSeen') || '{}'); } catch { return {}; } }
+const ROMAN = ['', 'I', 'II', 'III'];
+function rwGame(D) {
+  const G = D.game, out = [];
+  // Wochenziel und Serie
+  const c = el('div', 'card rw-game');
+  c.append(el('h3', null, 'Dranbleiben'));
+  const wk = G.week, goal = el('div', 'rw-goal');
+  goal.append(el('span', 'rw-lbl', 'Diese Woche'));
+  if (!wk.avail) goal.append(el('b', null, 'Noch kein gutes Fenster diese Woche'), el('p', 'note', 'Schlechtwetterwochen zählen nicht gegen dich.'));
+  else {
+    goal.append(el('b', null, wk.done ? 'Wochenziel geschafft' : wk.used + ' von ' + wk.target + (wk.target === 1 ? ' gutem Fenster' : ' guten Fenstern') + ' genutzt'));
+    const bar = el('div', 'rw-goal-bar'); bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', wk.used + ' von ' + wk.target);
+    for (let k = 0; k < wk.target; k++) bar.append(el('i', k < wk.used ? 'on' : ''));
+    goal.append(bar);
+    goal.append(el('p', 'note', wk.done ? 'Stark. Jedes weitere Fenster zählt für die Abzeichen.' : wk.ahead ? 'Noch ' + wk.ahead + (wk.ahead === 1 ? ' gutes Fenster' : ' gute Fenster') + ' bis Sonntag in Sicht.' : 'Diese Woche ist kein weiteres Fenster in Sicht.'));
+  }
+  const st = el('div', 'rw-streak');
+  st.append(el('span', 'rw-lbl', 'Serie'));
+  const v = el('span', 'rw-streak-v'); v.append(el('b', null, String(G.streak.cur)), el('small', null, G.streak.cur === 1 ? ' Woche' : ' Wochen'));
+  st.append(v, el('span', 'note', 'längste: ' + G.streak.best));
+  const top = el('div', 'rw-game-top'); top.append(goal, st);
+  c.append(top);
+  const how = el('details', 'fold'); how.append(el('summary', null, 'So zählt die App'));
+  how.append(el('p', 'note', 'Ein Fenster gilt als genutzt, wenn eine echte Radfahrt (Garmin, Strava …, nicht auf der Rolle) darin startet, frühestens eine halbe Stunde vorher. Wochenziel: so viele Fenster, wie du dir vorgenommen hast, höchstens so viele, wie es gibt. Serie: Wochen in Folge mit mindestens einem genutzten Fenster; Wochen ganz ohne gutes Fenster zählen nicht und brechen sie nicht. Gezählt wird seit ' + (G.since ? dayLabel(G.since).replace(/^[^,]+, /, '') : 'heute') + ', bisher ' + G.used + (G.used === 1 ? ' genutztes Fenster.' : ' genutzte Fenster.')));
+  c.append(how);
+  out.push(c);
+  // Abzeichen
+  const bc = el('div', 'card rw-badges-card');
+  bc.append(el('h3', null, 'Abzeichen'));
+  const grid = el('div', 'rw-badges'), info = el('p', 'note rw-badge-info'); info.setAttribute('aria-live', 'polite');
+  const seen = rwSeen(), now = {};
+  for (const b of G.badges) {
+    const t = el('button', 'rw-badge t' + b.tier + (b.wx && !G.wx ? ' nowx' : '')); t.type = 'button';
+    const isNew = b.tier > (seen[b.id] || 0) && Object.keys(seen).length > 0;
+    now[b.id] = b.tier;
+    const ic = el('span', 'rw-bi'); ic.innerHTML = icon(b.icon); t.append(ic);
+    t.append(el('span', 'rw-bn', b.name));
+    const pips = el('span', 'rw-pips'); for (let k = 1; k <= 3; k++) pips.append(el('i', k <= b.tier ? 'on' : '')); t.append(pips);
+    const prev = b.tier ? b.tiers[b.tier - 1] : 0;
+    t.append(el('span', 'rw-bt', b.next == null ? 'Alle Stufen' : b.n + ' / ' + b.next));
+    const bar = el('span', 'rw-bp'), f = el('i'); f.style.width = (b.next == null ? 100 : Math.max(0, Math.min(100, ((b.n - prev) / (b.next - prev)) * 100))) + '%'; bar.append(f); t.append(bar);
+    if (isNew) t.append(el('span', 'rw-new', 'Neu'));
+    const say = b.name + (b.tier ? ', Stufe ' + ROMAN[b.tier] : ', noch nicht erreicht') + '. ' + b.rule + ' Stand: ' + b.n + ' ' + b.unit + '.' + (b.next != null ? ' Nächste Stufe ab ' + b.next + '.' : ' Alle Stufen erreicht.') + (b.wx && !G.wx ? ' Braucht das Wetter je Einheit (Konto → Datenquellen → Wetter).' : '');
+    t.setAttribute('aria-label', say);
+    t.addEventListener('click', () => { grid.querySelectorAll('.rw-badge').forEach((x) => x.classList.toggle('open', x === t && !t.classList.contains('open'))); info.textContent = t.classList.contains('open') ? say : ''; });
+    grid.append(t);
+  }
+  try { localStorage.setItem('rwSeen', JSON.stringify(now)); } catch {}
+  bc.append(grid, info);
+  bc.append(el('p', 'note', 'Stufen I bis III, Regeln stehen beim Antippen. ' + (G.wx ? '' : 'Wetter-Abzeichen (Regen, Wind, Kälte, Hitze, Allwetter) brauchen das Wetter je Einheit: Konto → Datenquellen → Wetter. ') + 'Nur für dich: nicht für Freunde, nicht für den Claude-Zugang.'));
+  out.push(bc);
+  // Rekorde und Garderobe
+  const rc = el('div', 'card rw-rec');
+  rc.append(el('h3', null, 'Rekorde und Garderobe'));
+  const ul = el('ul', 'sessions rw-rec-list');
+  for (const r of G.records) {
+    const li = el('li', 'tap'); li.tabIndex = 0; li.setAttribute('role', 'button');
+    const l = el('div'); l.append(el('div', null, r.label), el('div', 'meta', dayLabel(r.d)));
+    li.append(l, el('b', null, r.value));
+    li.addEventListener('click', () => openUnit(r.id)); li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openUnit(r.id); });
+    ul.append(li);
+  }
+  const wr = G.wardrobe;
+  const li = el('li'); const l = el('div');
+  l.append(el('div', null, 'Treffsicherheit der Kleidung'), el('div', 'meta', wr.n ? (wr.streak ? wr.streak + '× in Folge „passt“' : 'zuletzt nicht „passt“') + ' · längste Serie ' + wr.best : 'Noch keine Rückmeldung'));
+  li.append(l, el('b', null, wr.quote == null ? '–' : wr.quote + ' %')); ul.append(li);
+  rc.append(ul);
+  rc.append(el('p', 'note', 'Treffsicherheit: Anteil „passt“ an deinen letzten 10 Rückmeldungen. ' + (D.cfg.learn ? D.cfg.learn.text : '')));
+  out.push(rc);
+  return out;
+}
+
+// ---------- Fuß: Quelle, Datenschutz, Einstellungen ----------
+function rwFoot(D) {
+  const f = el('div', 'rw-foot');
+  const p = el('p', 'note'); const a = el('a', null, D.attribution.text); a.href = D.attribution.url; a.target = '_blank'; a.rel = 'noopener';
+  p.append(a, '. Nur deine gespeicherten Orte gehen an Open-Meteo, auf etwa 1 km gerundet, bei Lieblingsrunden die Mitte der Runde. Die Vorhersage wird alle zwei Stunden neu geholt.');
+  const r = el('div', 'row'), b = el('button', 'btn ghost', 'Einstellungen'); b.type = 'button'; b.addEventListener('click', () => rwSettings());
+  r.append(b);
+  f.append(p, r);
+  return f;
+}
+function rwSettings(anchor) {
+  S.kontoView = 'radwetter'; showTab('konto');
+  if (anchor) requestAnimationFrame(() => { const n = document.getElementById(anchor); if (n) { if (n.tagName === 'DETAILS') n.open = true; n.scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+}
+
+// ---------- Kurzfassung für „Heute“ und „Einheiten“ ----------
+async function rwShortData() {
+  if (RW.short && Date.now() - RW.shortAt < 5 * 60000) return RW.short;
+  if (RW.shortP) return RW.shortP;
+  RW.shortP = api('/api/radwetter/kurz').then((s) => { RW.short = s; RW.shortAt = Date.now(); RW.shortP = null; return s; }).catch((e) => { RW.shortP = null; throw e; });
+  return RW.shortP;
+}
+/** Zeile auf „Heute“: nächstes gutes Fenster mit Countdown, antippen öffnet die Seite */
+async function renderRwToday() {
+  const box = $('#rw-today'); if (!box) return;
+  let s; try { s = await rwShortData(); } catch { box.hidden = true; return; }
+  if (!s || !s.on) { box.hidden = true; return; }
+  box.hidden = false; box.replaceChildren();
+  rwTickStart();
+  const b = el('button', 'rw-today-btn'); b.type = 'button';
+  const head = el('span', 'rw-today-head'); head.append(el('span', 'rw-lbl', 'Rad-Wetter' + (s.place ? ' · ' + s.place : '')));
+  const ch = el('span', 'st-chev'); ch.innerHTML = icon('weiter'); head.append(ch);
+  b.append(head);
+  const w = s.next;
+  if (w) {
+    const cd = rwCd(w), line = el('span', 'rw-today-line' + (cd.live ? ' live' : ''));
+    line.dataset.rwCd = w.s + ',' + w.e;
+    line.append(el('span', 'rw-cd-big', cd.big), el('span', 'rw-cd-sub', cd.sub));
+    b.append(line);
+    b.append(el('span', 'rw-today-sub', capFirst(w.day) + ' ' + w.time + ' · ' + rwWinFacts(w) + (s.wear ? ' · ' + s.wear : '')));
+  } else b.append(el('span', 'rw-today-sub', 'In den nächsten 48 Stunden kein gutes Fenster zum Radfahren.'));
+  b.addEventListener('click', () => openRadwetter(s.sel));
+  box.append(b);
+}
+/** Karte oben unter „Einheiten“: Fenster und Überblick, sonst Einladung zum Einrichten */
+async function renderRwTeaser() {
+  const box = $('#rw-teaser'); if (!box) return;
+  let s; try { s = await rwShortData(); } catch { box.hidden = true; return; }
+  box.hidden = false; box.replaceChildren();
+  rwTickStart();
+  const b = el('button', 'rw-teaser'); b.type = 'button';
+  const head = el('span', 'rw-teaser-head'); head.innerHTML = icon('rad');
+  head.append(el('b', null, 'Rad-Wetter'));
+  const ch = el('span', 'st-chev'); ch.innerHTML = icon('weiter'); head.append(ch);
+  b.append(head);
+  if (!s || !s.on) b.append(el('span', 'note', 'Wann kann ich fahren? Gute Fenster nach deinen Kriterien, Countdown, was du anziehst, und welche Runde zum Wind passt.'));
+  else {
+    const w = s.next;
+    if (w) {
+      const cd = rwCd(w), line = el('span', 'rw-today-line' + (cd.live ? ' live' : ''));
+      line.dataset.rwCd = w.s + ',' + w.e;
+      line.append(el('span', 'rw-cd-big', cd.big), el('span', 'rw-cd-sub', cd.sub));
+      b.append(line, el('span', 'note', capFirst(w.day) + ' ' + w.time + ' · ' + rwWinFacts(w)));
+    } else b.append(el('span', 'note', 'In den nächsten 48 Stunden kein gutes Fenster.'));
+    if (s.band) {
+      const band = el('span', 'rw-band mini'); band.style.setProperty('--n', s.band.length);
+      s.band.forEach((x, i) => { const t = el('i', 'rw-band-h is-' + x); t.style.gridColumn = String(i + 1); band.append(t); });
+      b.append(band);
+    }
+    if (s.week) b.append(el('span', 'note', 'Diese Woche ' + s.week.used + ' von ' + s.week.target + ' Fenstern genutzt' + (s.streak ? ' · Serie ' + s.streak + (s.streak === 1 ? ' Woche' : ' Wochen') : '')));
+  }
+  b.addEventListener('click', () => openRadwetter(s && s.sel));
+  box.append(b);
+}
+
+function initRadwetter() {
+  // Konto → Rad-Wetter: die Einstellungen liegen in radwetter.html und gehören in den Konto-Bereich
+  const k = $('#konto-radwetter'), sec = document.querySelector('section[data-tab="konto"]');
+  if (k && sec) sec.append(k);
+  initRwSettings();
+  // Mitteilung angetippt, während die App offen ist: zur Seite springen
+  window.addEventListener('hashchange', () => { const m = /^#radwetter\/(.+)$/.exec(location.hash); if (m && S.tab !== 'radwetter') openSub('radwetter', decodeURIComponent(m[1])); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.tab === 'radwetter' && RW.data && Date.now() / 1000 - RW.data.now > 1800) loadRw(true); });
+}

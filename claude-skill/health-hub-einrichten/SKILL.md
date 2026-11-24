@@ -1,12 +1,12 @@
 ---
 name: health-hub-einrichten
-description: Führt Schritt für Schritt durch die Einrichtung von Health Hub, dem eigenen Gesundheits-Dashboard auf Cloudflare (Garmin, Strava, Withings, WHOOP). Nutzen, wenn jemand Health Hub einrichten, installieren, verbinden oder reparieren will oder bei der Einrichtung festhängt.
+description: Führt Schritt für Schritt durch die Einrichtung von Health Hub, dem eigenen Gesundheits-Dashboard auf Cloudflare (Garmin, Strava, Withings, WHOOP, Fitbit über Google Health). Nutzen, wenn jemand Health Hub einrichten, installieren, verbinden oder reparieren will oder bei der Einrichtung festhängt.
 ---
 
 # Health Hub einrichten
 
 Du begleitest eine Person ohne Programmierkenntnisse durch die Einrichtung von **Health Hub**: eine Web-App fürs
-iPhone, die Schlaf, HRV, Ruhepuls, Erholung und Trainings aus Garmin, Strava, Withings und WHOOP zusammenführt.
+iPhone, die Schlaf, HRV, Ruhepuls, Erholung und Trainings aus Garmin, Strava, Withings, WHOOP und Fitbit (über Google Health) zusammenführt.
 Die App läuft im **eigenen, kostenlosen Cloudflare-Konto** der Person. Niemand sonst sieht die Daten, auch nicht die
 Entwickler (Pablo und Eddie).
 
@@ -33,9 +33,11 @@ Entwickler (Pablo und Eddie).
 
 ## Vorab klären (zusammen fragen)
 
-1. Welche Geräte und Dienste nutzt du? Garmin-Uhr, Strava, Withings-Waage, WHOOP-Band?
-   - **Fitbit, Google Health, COROS, Apple Watch** gehen noch nicht. Mit nur so einem Gerät lohnt die Einrichtung
-     gerade nicht, außer die Person nutzt zusätzlich Strava (dann gibt es Trainings, aber keine Schlaf- und Erholungswerte).
+1. Welche Geräte und Dienste nutzt du? Garmin-Uhr, Strava, Withings-Waage, WHOOP-Band, Fitbit oder Pixel Watch?
+   - **COROS und Apple Watch** gehen noch nicht. Mit nur so einem Gerät lohnt die Einrichtung gerade nicht, außer
+     die Person nutzt zusätzlich Strava (dann gibt es Trainings, aber keine Schlaf- und Erholungswerte).
+   - **Fitbit / Pixel Watch / Fitbit Air** gehen über Google Health. Das ist die aufwendigste Quelle (ein eigenes
+     Google-Cloud-Projekt, ca. 10 Minuten, am besten am Computer). Sag das vorher ehrlich.
 2. Hast du schon ein **GitHub-Konto** und ein **Cloudflare-Konto**? (Beide kostenlos, beide werden gebraucht.)
 3. Machst du das am **Computer oder am iPhone**? Beides geht. Am iPhone gelten die Tipps unter „Am iPhone“, nenn sie
    dann gleich am Anfang kurz und bei den passenden Schritten noch einmal.
@@ -51,7 +53,7 @@ Die meisten machen die Einrichtung nur am Handy. Das klappt, wenn man diese Punk
   Bei Unklarheit einen **Screenshot** machen (Seitentaste + Lauter) und hier im Chat schicken.
 - **Kopieren und Einfügen:** Text lange drücken → „Kopieren“; ins Feld lange tippen → „Einfügen“. Für Schlüssel und
   Client-Secrets immer kopieren statt abtippen. Die Adressen zum Kopieren zeigt Health Hub selbst mit einem „Kopieren“-Knopf.
-- **Seiten für Entwickler** (Strava-API, Withings, WHOOP) sind für große Bildschirme gebaut. Ist etwas abgeschnitten oder
+- **Seiten für Entwickler** (Strava-API, Withings, WHOOP, Google Cloud Console) sind für große Bildschirme gebaut. Ist etwas abgeschnitten oder
   leitet Strava in die Strava-App um: in Safari links in der Adressleiste auf **„aA“** (bzw. das Symbol dort) →
   **„Desktop-Website anfordern“**. Danach seitlich scrollen bzw. mit zwei Fingern zoomen.
 - **Cloudflare** geht in Safari, ist aber eng. Nach „Create and deploy“ einfach warten, bis die Adresse der App erscheint,
@@ -126,6 +128,34 @@ Person nutzt. Jede braucht einen eigenen Zugang; die App zeigt auf jeder Seite d
    WHOOP-Seite der App eintragen (Version v2).
 5. Wer **Garmin und WHOOP** trägt: auf der WHOOP-Seite wählen, ob Schlaf und HRV von WHOOP (empfohlen) oder Garmin kommen.
 
+### Google Health (Fitbit, Pixel Watch, Fitbit Air)
+
+Fitbit-Daten liegen inzwischen im Google-Konto, die App holt sie über die Google Health API. Dafür braucht die Person
+ein **eigenes Google-Cloud-Projekt**. Das ist der aufwendigste Teil der ganzen Einrichtung. Am Computer geht es
+leichter; am iPhone in Safari „Desktop-Website anfordern“ und mit zwei Fingern zoomen.
+
+1. Auf https://console.cloud.google.com/projectcreate mit dem Google-Konto anmelden, in dem die Fitbit-Daten liegen,
+   und ein Projekt anlegen (Name z. B. „Mein Health Hub“). Kostenlos, keine Zahlungsdaten nötig.
+2. Die **Google Health API** aktivieren: https://console.cloud.google.com/apis/library/health.googleapis.com
+3. **Google Auth Platform** → „Jetzt starten“: App-Name, eigene E-Mail, Zielgruppe **Extern**. Unter
+   **Zielgruppe → Testnutzer** die eigene Google-Adresse eintragen.
+4. **Datenzugriff** → „Bereiche hinzufügen“ → nach „Google Health API“ suchen → die drei Lese-Rechte für Schlaf,
+   Aktivität und Gesundheitswerte anhaken (enden auf „.readonly“) → speichern.
+5. **Clients** → „Client erstellen“ → Typ **Webanwendung** → bei „Autorisierte Weiterleitungs-URIs“ die Adresse
+   eintragen, die die App unter Konto → **Google Health** anzeigt (endet auf `/google/callback`).
+6. Client-ID (endet auf `.apps.googleusercontent.com`) und Client-Secret in Health Hub eintragen → **„Speichern“** →
+   **„Mit Google verbinden“**. Bei Google alle Haken setzen.
+7. **Wichtig, sonst läuft die Verbindung nach 7 Tagen ab:** In der Cloud Console unter **Google Auth Platform →
+   Zielgruppe** auf **„App veröffentlichen“** tippen und danach in Health Hub **„Neu verbinden“**. Google zeigt dann
+   „Google hat diese App nicht überprüft“. Erklär, dass das ihre eigene App ist: **„Erweitert“** →
+   **„Weiter zu Mein Health Hub“**. Lässt Google das Veröffentlichen nicht zu, im Testmodus bleiben: Die App erinnert,
+   wenn alle 7 Tage neu verbunden werden muss.
+8. Wer **Garmin und Fitbit** trägt: auf der Google-Health-Seite wählen, von welchem Gerät die Nachtwerte kommen.
+
+Typische Fehler: „Zugriff blockiert“ / „Fehler 403: access_denied“ → die eigene Google-Adresse fehlt bei den
+Testnutzern. „redirect_uri_mismatch“ → die Weiterleitungs-URI weicht ab (Schrägstrich, http statt https).
+„Nicht lesbar: …“ unter Konto → Google Health → ein Datentyp kam nicht an; den Rest lädt die App trotzdem.
+
 ## Schritt 5: Auf den Home-Bildschirm
 
 Auf dem iPhone die App-Adresse in **Safari** öffnen → **Teilen** → **„Zum Home-Bildschirm“**. Ab jetzt die App immer
@@ -138,7 +168,7 @@ Auf dem iPhone die App-Adresse in **Safari** öffnen → **Teilen** → **„Zum
   (nur in der Home-Bildschirm-App, ab iOS 16.4).
 - **Claude mit den eigenen Daten verbinden:** Konto → Claude → **„Adresse kopieren“**, in Claude unter
   Einstellungen → Connectors einen eigenen Connector mit dieser Adresse hinzufügen und mit dem App-Passwort erlauben.
-  Danach kann die Person Claude direkt fragen, z. B. „Wie habe ich diese Woche geschlafen?“. WHOOP-Daten und die
+  Danach kann die Person Claude direkt fragen, z. B. „Wie habe ich diese Woche geschlafen?“. WHOOP- und Google-Health-Daten und die
   Stimmung sieht Claude nur, wenn sie das unter Konto → Claude ausdrücklich freigibt.
 
 ## Updates

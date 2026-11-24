@@ -22,22 +22,46 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const SPORTS = [
   { key: 'run', label: 'Laufen', re: /running/, color: '--accent' },
   { key: 'ride', label: 'Rad', re: /cycl|biking|cyclocross|bike|_ride/, color: '--accent-2' },
-  { key: 'swim', label: 'Schwimmen', re: /swim/, color: '#4a8fd8' },
+  { key: 'swim', label: 'Schwimmen', re: /swim/, color: '#a48bf2' },
   { key: 'other', label: 'Sonstiges', re: /.*/, color: '--prev' }
 ];
 const sportOf = (type) => SPORTS.find((s) => s.re.test(type));
+// Einstufungen Ton in Ton (#117): von hellem Graublau (locker) über Blau zu Violett (hart), in Hell und Dunkel lesbar
 const CATS = [
-  ['RECOVERY', 'Erholung', '#93b5ac'], ['AEROBIC_BASE', 'Grundlage', '#2f9a7f'], ['TEMPO', 'Tempo', '#c9a227'],
-  ['LACTATE_THRESHOLD', 'Schwelle', '#e07b39'], ['VO2MAX', 'VO2max', '#d14b4b'], ['ANAEROBIC_CAPACITY', 'Anaerob', '#9b3d8f'],
-  ['SPRINT', 'Sprint', '#5b4bb7'], [null, 'Ohne Einstufung', '#8a908e']
+  ['RECOVERY', 'Erholung', '#b4c2dc'], ['AEROBIC_BASE', 'Grundlage', '#8eaefc'], ['TEMPO', 'Tempo', '#6798ff'],
+  ['LACTATE_THRESHOLD', 'Schwelle', '#4a6cf2'], ['VO2MAX', 'VO2max', '#5b4fe0'], ['ANAEROBIC_CAPACITY', 'Anaerob', '#7b47d4'],
+  ['SPRINT', 'Sprint', '#9b42c2'], [null, 'Ohne Einstufung', '#8a908e']
 ];
 const catOf = (label) => CATS.find((c) => c[0] === label) || CATS[CATS.length - 1];
 // Wettkampf: in Strava als „Wettkampf“ markiert (workout_type 1 bei Läufen, 11 bei Radfahrten). Dann zeigt die Marke
 // „Wettkampf“ statt Garmins Einstufung (ein schnelles Rennen stuft Garmin sonst z. B. als „VO2max“ ein).
-const RACE_CAT = ['RACE', 'Wettkampf', '#9a6b00'];
+const RACE_CAT = ['RACE', 'Wettkampf', '#d4a017'];
 const isRace = (a) => { const wt = a.strava ? a.strava.wt : a.src === 'strava' ? a.wt : null; return wt === 1 || wt === 11; };
 const chipCat = (a) => (isRace(a) ? RACE_CAT : catOf(a.label));
 const color = (c) => c.startsWith('--') ? css(c) : c;
+// Wetter je Einheit (#54): WMO-Code → Symbol und Text (wie src/wetter.ts), Wind als Himmelsrichtung
+function wxKind(c) {
+  if (c == null) return ['wolke', ''];
+  if (c === 0) return ['sonne', 'Klar']; if (c <= 2) return ['sonneWolke', 'Leicht bewölkt']; if (c === 3) return ['wolke', 'Bewölkt'];
+  if (c <= 48) return ['nebel', 'Nebel']; if (c <= 67 || (c >= 80 && c <= 82)) return ['regen', 'Regen'];
+  if (c <= 77 || c === 85 || c === 86) return ['schnee', 'Schnee']; return ['gewitter', 'Gewitter'];
+}
+const windDir = (d) => (d == null ? '' : ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'][Math.round((((d % 360) + 360) % 360) / 45) % 8]);
+/** Wetterzeile: Symbol, Temperatur, gefühlt, Wind, Luftfeuchte; kurz = nur Symbol und Temperatur */
+function wxLine(w, short) {
+  const [ic, label] = wxKind(w.c);
+  const box = el('span', 'wx' + (short ? ' short' : '')); box.innerHTML = icon(ic);
+  const parts = [num(w.t) + ' °C'];
+  if (!short) {
+    if (label) parts.unshift(label);
+    if (w.ta != null && Math.round(w.ta) !== Math.round(w.t)) parts.push('gefühlt ' + num(w.ta) + ' °C');
+    if (w.ws != null) parts.push('Wind ' + num(w.ws) + ' km/h ' + windDir(w.wd));
+    if (w.hu != null) parts.push(num(w.hu) + ' %');
+  }
+  box.append(parts.join(' · '));
+  box.title = label;
+  return box;
+}
 const isRun = (a) => /running/.test(a.type);
 const runPace = (a) => { const v = a.gap || a.spd; return v ? 1000 / v : null; };
 
@@ -50,24 +74,19 @@ function isoWeek(d) {
   return 1 + Math.round(((t - jan4) / 864e5 - 3 + (jan4.getUTCDay() + 6) % 7) / 7);
 }
 
-// Zeitraum und Vergleichszeitraum. „1 W“ ist die Kalenderwoche Mo–So (S.weekOffset 0 = aktuelle,
-// -1 = letzte …). Läuft die Woche noch, endet sie heute, und verglichen wird mit demselben Stück
-// der Vorwoche (Mi gegen Mi). Abgeschlossene Wochen werden komplett mit der Woche davor verglichen.
+// Zeitraum und Vergleichszeitraum. „1 W“ (#156) = die letzten 7 Tage bis heute (nicht die Kalenderwoche,
+// sonst sieht man dienstags nur zwei Tage), verglichen mit den 7 Tagen davor. S.weekOffset blättert in
+// 7-Tage-Schritten zurück (0 = bis heute, -1 = die 7 Tage davor …).
 function ranges() {
-  const end = S.today;
-  if (S.days !== 7) return { cur: [addDays(end, -S.days + 1), end], prev: [addDays(end, -2 * S.days + 1), addDays(end, -S.days)] };
-  const mon = addDays(weekStart(end), 7 * S.weekOffset), sun = addDays(mon, 6);
-  const last = sun < end ? sun : end;
-  return { cur: [mon, last], prev: [addDays(mon, -7), addDays(last, -7)], running: last < sun };
+  const end = S.days === 7 ? addDays(S.today, 7 * S.weekOffset) : S.today;
+  return { cur: [addDays(end, -S.days + 1), end], prev: [addDays(end, -2 * S.days + 1), addDays(end, -S.days)] };
 }
 const inR = (d, r) => d >= r[0] && d <= r[1];
 const PERIODS = [7, 28, 182, 364];
 const periodName = () => ({ 7: 'Woche', 28: '4 Wochen', 182: '6 Monate', 364: '1 Jahr' })[S.days];
-// Beschriftung des Vergleichs, z. B. „ggü. Vorwoche (Mo–Mi)“
+// Beschriftung des Vergleichs, z. B. „ggü. 7 Tage davor“
 function cmpName() {
-  if (S.days !== 7) return 'ggü. davor';
-  const r = ranges();
-  return r.running ? 'ggü. Vorwoche (Mo–' + WD[parse(r.cur[1]).getUTCDay()] + ')' : 'ggü. Vorwoche';
+  return S.days === 7 ? 'ggü. 7 Tage davor' : 'ggü. davor';
 }
 
 // Vergleichszeile: Wert gegen Vorperiode, Farbe je nachdem ob höher besser ist
@@ -96,6 +115,7 @@ function tile(parent, { label, value, unit, cmp, spark, open }) {
 // ---------- Diagramm-Bausteine ----------
 function frame(node, h) {
   node.replaceChildren();
+  node.classList.add('nosel'); // langes Drücken soll den Wert zeigen, nicht Text markieren (iPhone)
   // Im Vollbild (#61) deutlich höher, aber nie höher als gut die Hälfte des Bildschirms
   if (node.closest('#dg-body')) h = Math.round(Math.max(h, Math.min(h * 1.8, window.innerHeight * 0.55)));
   const w = Math.max(260, Math.round(node.clientWidth || 320));

@@ -11,7 +11,7 @@
   "rules": [{ "type": "Data", "globs": ["**/*.png", "**/*.woff2"], "fallthrough": true }],
 
   // Alle 30 Minuten: neueste Tage aktuell halten und ein Stück Historie nachladen
-  "triggers": { "crons": ["*/30 * * * *"] },
+  "triggers": { "crons": ["*/10 * * * *"] },
 
   "d1_databases": [
     {

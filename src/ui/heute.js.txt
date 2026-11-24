@@ -1,61 +1,184 @@
 // ---------- HEUTE ----------
+// Stil „Ausgabe“ (#117): Erholung als Schlagzeile, Kernwerte als Zeilen mit Verlauf und „Dein Bereich“
+const LIGHT_TXT = { g: 'Grün', y: 'Gelb', r: 'Rot' };
+// Kurze Namen für die Marken unter der Schlagzeile
+const R_SHORT = { hrv: 'HRV', rec: 'WHOOP', rhr: 'Ruhepuls', score: 'Schlaf', load: 'Last', recovery: 'Erholung', bb: 'Battery' };
+
 function renderToday() {
   renderTodayActs();
   const days = S.daily;
   // Erholungs-Ampel kommt fertig vom Server (src/ampel.ts), dieselbe Regel wie im Morgen-Push (#13)
   const A = S.ampel;
   const factors = $('#r-factors'); factors.replaceChildren();
-  if (!A) { $('#r-verdict').textContent = days.length ? 'Noch keine Daten' : 'Lade Daten …'; $('#r-light').className = 'light'; }
-  else {
+  const chips = $('#r-chips'); chips.replaceChildren();
+  if (!A) {
+    $('#r-verdict').textContent = days.length ? 'Noch keine Daten' : 'Lade Daten …'; $('#r-verdict').className = 'verdict';
+    $('#r-light').className = 'light'; $('#r-state-txt').textContent = ''; $('#r-state').className = 'r-state';
+    $('#r-ring').hidden = true; $('#r-parts').hidden = true;
+  } else {
     $('#r-date').textContent = 'Stand: Nacht auf ' + dayLabel(A.day);
     for (const it of A.items) {
       const li = el('li'); const l = el('i', 'light ' + it.st); const mid = el('div');
       mid.append(el('span', null, it.name), el('span', 'why', it.why));
       li.append(l, mid, el('b', null, it.val)); factors.append(li);
+      // Antippen öffnet die passende Ansicht (#157): Diagramm über die letzten 7 Tage, Last → Belastung, Erholung → Einheit
+      const go = factorOpen(it);
+      if (go) { li.classList.add('tap'); li.tabIndex = 0; li.setAttribute('role', 'button'); li.addEventListener('click', go); li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }); }
+      // Marke je bewertetem Punkt: Farbe der Ampel, kurzer Name
+      if (it.st) { const c = el('span', 'r-chip'); c.append(el('i', 'light ' + it.st), document.createTextNode(R_SHORT[it.key] || it.name)); chips.append(c); }
     }
-    $('#r-verdict').textContent = A.verdict; $('#r-light').className = 'light ' + A.light;
+    $('#r-verdict').textContent = A.verdict.replace(/\.?$/, '.');
+    readyRing(A);
+    $('#r-verdict').className = 'verdict ' + A.light; // Satz in Ampelfarbe
+    $('#r-light').className = 'light ' + A.light;
+    $('#r-state-txt').textContent = LIGHT_TXT[A.light] || '';
+    $('#r-state').className = 'r-state ' + A.light;
   }
 
   // Kernwerte des Tages (#14, #15): unabhängig von der Zeitraum-Auswahl, verglichen mit dem
-  // eigenen Schnitt der 30 Tage vor dem jeweiligen Wert
-  const tiles = $('#today-tiles'); tiles.replaceChildren();
+  // eigenen üblichen Bereich der 30 Tage vor dem jeweiligen Wert
+  const rows = $('#today-tiles'); rows.replaceChildren();
+  rows.append(rowHead());
   const last14 = days.filter((x) => x.d > addDays(S.today, -14));
-  const base30 = (k, day) => mean(days.filter((x) => x.d < day && x.d >= addDays(day, -30)).map((x) => x[k]));
   // WHOOP-Recovery und Day Strain (#119) nur, wenn es Werte gibt; Strain ist eine eigene Skala (0–21), kein Garmin-Ersatz
   const has = (k) => last14.some((x) => x[k] != null);
   const defs = [
-    ...(has('rec') ? [['WHOOP-Recovery', 'rec', ' %', true, false]] : []),
-    ['HRV letzte Nacht', 'hrv', ' ms', true, true],
-    ['Schlafscore', 'score', '', true, false],
-    ['Schlaf', 'slp', ' h', true, false],
-    ['Ruhepuls', 'rhr', ' bpm', false, false],
-    ['Stress Ø', 'stress', '', false, false],
-    ...(has('strain') ? [['Strain', 'strain', '', null, false]] : [])
+    ...(has('rec') ? [['WHOOP-Recovery', 'rec', ' %', true]] : []),
+    ['HRV', 'hrv', ' ms', true],
+    ['Schlafscore', 'score', '', true],
+    ['Schlaf', 'slp', ' h', true],
+    ['Ruhepuls', 'rhr', ' bpm', false],
+    ['Stress Ø', 'stress', '', false],
+    ...(has('strain') ? [['Strain', 'strain', '', null]] : [])
   ];
-  // Kacheln ohne Wert in 14 Tagen weglassen, wenn eine andere Quelle sie nicht kennt (z. B. Stress nur mit WHOOP)
+  // Zeilen ohne Wert in 14 Tagen weglassen, wenn eine andere Quelle sie nicht kennt (z. B. Stress nur mit WHOOP)
   const shown = defs.filter(([, k]) => has(k) || !(S.status && S.status.key === 'none'));
-  for (const [label, k, unit, up, band] of shown) {
+  for (const [label, k, unit, up] of shown) {
     const lastV = [...last14].reverse().find((x) => x[k] != null);
-    let cmp = null;
+    const digits = k === 'strain' ? 1 : 0;
+    const fmt = (v) => (k === 'slp' ? hm(v) : num(v, digits));
+    let range = null;
     if (lastV) {
-      const b = base30(k, lastV.d);
-      // Schlafdauer in Minuten vergleichen, sonst ganze Werte
-      cmp = k === 'slp' ? cmpLine(lastV[k] * 60, b == null ? null : b * 60, 0, up, ' min') : cmpLine(lastV[k], b, k === 'strain' ? 1 : 0, up, unit);
-      cmp.text = cmp.text.replace(/ggü\..*$/, 'ggü. Ø 30 Tage');
+      // HRV: Garmins Normalbereich der Nacht; sonst Schnitt ± Streuung der 30 Tage davor (mind. 7 Werte)
+      if (k === 'hrv' && lastV.hrvLo != null && lastV.hrvHi != null) range = [lastV.hrvLo, lastV.hrvHi];
+      else {
+        const base = days.filter((x) => x.d < lastV.d && x.d >= addDays(lastV.d, -30)).map((x) => x[k]).filter((v) => v != null);
+        if (base.length >= 7) { const m = mean(base), sd = Math.sqrt(mean(base.map((v) => (v - m) ** 2))); range = [m - sd, m + sd]; }
+      }
     }
-    tile(tiles, {
+    mrow(rows, {
       // Ist der letzte Wert nicht von heute, steht der Tag dabei
       label: label + (lastV && lastV.d !== S.today ? ' · ' + dayLabel(lastV.d).split(',')[0] : ''),
-      value: lastV ? (k === 'slp' ? hm(lastV[k]) : num(lastV[k], k === 'strain' ? 1 : 0)) : '–', unit: lastV ? unit : '',
-      cmp,
-      spark: { data: last14.map((x) => ({ d: x.d, v: x[k] })), band: band ? last14.map((x) => ({ d: x.d, lo: x.hrvLo, hi: x.hrvHi })) : null },
-      open: () => openChart(k)
+      value: lastV ? fmt(lastV[k]) : '–', unit: lastV ? unit : '',
+      v: lastV ? lastV[k] : null, range, up, fmt,
+      spark: last14.map((x) => ({ d: x.d, v: x[k] })),
+      open: () => openLast7(k)
     });
   }
-  // Body Battery als erste Kachel, erst jetzt, damit die Kurve die richtige Breite misst
-  bbTile(tiles, days);
-  vo2Tile(tiles);
+  // Body Battery als erste Zeile nach dem Kopf, VO2max am Ende
+  bbRow(rows, days);
+  vo2Row(rows);
   renderRefreshState();
+  renderRwToday();
+}
+
+// Bereitschaft 0–100 (eigene Schätzung, src/ampel.ts readiness): Ring in Ampelfarbe, Zahl in der Mitte;
+// in den Details die Bausteine mit ihren Punkten
+function readyRing(A) {
+  const ring = $('#r-ring'), parts = $('#r-parts');
+  if (A.score == null) { ring.hidden = true; parts.hidden = true; return; }
+  const r = 26, c = 2 * Math.PI * r, f = Math.max(0.02, A.score / 100);
+  ring.hidden = false; ring.className = 'r-ring ' + A.light;
+  ring.setAttribute('role', 'img'); ring.setAttribute('aria-label', 'Bereitschaft ' + A.score + ' von 100');
+  ring.innerHTML = '<svg viewBox="0 0 64 64" aria-hidden="true"><circle class="trk" cx="32" cy="32" r="' + r + '"/><circle class="val" cx="32" cy="32" r="' + r + '" stroke-dasharray="' + (c * f).toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(-90 32 32)"/></svg>';
+  ring.append(el('b', null, String(A.score)), el('small', null, 'Bereit'));
+  parts.hidden = !(A.parts && A.parts.length); parts.replaceChildren();
+  if (parts.hidden) return;
+  parts.append(el('div', 'r-parts-h', 'Bereitschaft ' + A.score + ' aus'));
+  for (const p of A.parts) {
+    const row = el('div', 'r-part');
+    const bar = el('span', 'r-pbar'); const fill = el('i'); fill.style.width = (p.max ? (p.pts / p.max) * 100 : 0) + '%'; bar.append(fill);
+    row.append(el('span', null, p.name), bar, el('b', null, p.pts + '/' + p.max));
+    parts.append(row);
+  }
+  parts.append(el('p', 'note', 'Eigene Schätzung von 0 bis 100 aus HRV, Schlaf, Erholung nach dem Training, Last, Ruhepuls und Body Battery, ähnlich Garmins Trainingsbereitschaft (die gibt Garmin nicht heraus). Die Zahl passt immer zur Ampel: grün 70–100, gelb 40–69, rot unter 40.'));
+}
+
+// Kopfzeile der Werte-Liste (Mono-Beschriftung); span = Zeitraum des kleinen Verlaufs
+function rowHead(span = '14 Tage') {
+  const h = el('div', 'mrow-head');
+  h.setAttribute('aria-hidden', 'true');
+  h.append(el('span', null, 'Wert'), el('span', null, span), el('span', null, 'Dein Bereich'));
+  return h;
+}
+
+// Von „Heute“ aus geöffnete Diagramme zeigen die letzten 7 Tage (#157, #156); die Auswahl unter Statistiken bleibt gespeichert
+function openLast7(key) {
+  S.days = 7; S.weekOffset = 0;
+  document.querySelectorAll('#seg button').forEach((x) => x.setAttribute('aria-pressed', String(Number(x.dataset.days) === 7)));
+  openChart(key);
+}
+// Ziel beim Antippen eines Ampel-Punkts; null = nicht antippbar
+function factorOpen(it) {
+  const chart = { hrv: 'hrv', rhr: 'rhr', score: 'score', rec: 'rec', bb: 'bbMax' }[it.key];
+  if (chart) return () => openLast7(chart);
+  if (it.key === 'load') return () => openLast7('c-acwr');
+  if (it.key === 'recovery') return it.actId && S.acts.some((a) => a.id === it.actId) ? () => openUnit(it.actId) : () => showTab('einheiten');
+  return null;
+}
+
+// Eine Werte-Zeile: Name und Wert, kleiner Verlauf (grau, letzter Wert in Akzent), dein Bereich mit Marke.
+// Antippen öffnet das Diagramm im Vollbild (#61), wie früher die Kachel.
+function mrow(parent, { label, value, unit, v, range, up, fmt, spark, open, side, sparkFn }) {
+  const r = el('div', 'mrow tap'); r.tabIndex = 0; r.setAttribute('role', 'button');
+  r.addEventListener('click', open); r.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+  const left = el('div', 'mr-main');
+  left.append(el('span', 'mr-lbl', label));
+  const val = el('span', 'mr-val', value); if (unit) val.append(el('small', null, unit.trim()));
+  left.append(val);
+  const sp = el('div', 'mr-spark');
+  const right = el('div', 'mr-range');
+  r.append(left, sp, right); parent.append(r);
+  let said = '';
+  if (side) { right.append(el('span', 'mr-side', side)); said = side; }
+  else if (range && v != null) {
+    const [lo, hi] = range;
+    const pos = v < lo ? 'unter' : v > hi ? 'über' : 'in';
+    // Farbe der Marke: im Bereich neutral, auf der guten Seite grün, auf der schlechten gelb
+    const cls = pos === 'in' || up == null ? '' : (pos === 'über') === up ? 'good' : 'warn';
+    right.append(rangeBar(lo, hi, v, cls), el('span', 'mr-txt', pos.toUpperCase() + ' ' + fmt(lo) + '–' + fmt(hi)));
+    said = pos + ' deinem Bereich ' + fmt(lo) + ' bis ' + fmt(hi);
+  } else right.append(el('span', 'mr-side', v == null ? '' : 'noch kein Bereich'));
+  r.setAttribute('aria-label', label + ' ' + value + (unit || '') + (said ? ', ' + said : ''));
+  if (sparkFn) sparkFn(sp); else rowSpark(sp, spark);
+}
+
+// Bereichs-Balken: Spur, üblicher Bereich als Band, heutiger Wert als Strich
+function rangeBar(lo, hi, v, cls) {
+  const w = 92, pad = Math.max((hi - lo) * 0.7, Math.abs(hi) * 0.02, 0.5);
+  const a = Math.min(lo, v) - pad, b = Math.max(hi, v) + pad;
+  const x = (t) => ((t - a) / (b - a)) * w;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${w} 10`); svg.setAttribute('class', 'mr-bar'); svg.setAttribute('aria-hidden', 'true');
+  const rect = (x0, y, wd, h, c) => { const e = document.createElementNS(svg.namespaceURI, 'rect'); e.setAttribute('x', x0.toFixed(1)); e.setAttribute('y', y); e.setAttribute('width', Math.max(wd, 0).toFixed(1)); e.setAttribute('height', h); e.setAttribute('class', c); svg.append(e); };
+  rect(0, 4, w, 2, 'trk');
+  rect(x(lo), 2, x(hi) - x(lo), 6, 'band');
+  rect(Math.min(Math.max(x(v) - 1.5, 0), w - 3), 0, 3, 10, 'mark ' + cls);
+  return svg;
+}
+
+// Kleiner Verlauf in der Zeile: Linie grau, letzter Wert als Punkt in der Akzentfarbe
+function rowSpark(node, data) {
+  const v = data.filter((d) => d.v != null);
+  if (v.length < 2) return;
+  const w = 72, h = 26;
+  const x = d3.scaleUtc(d3.extent(data, (d) => parse(d.d)), [2, w - 4]);
+  const y = d3.scaleLinear(d3.extent(v, (d) => d.v), [h - 4, 4]);
+  if (y.domain()[0] === y.domain()[1]) y.domain([y.domain()[0] - 1, y.domain()[1] + 1]);
+  const svg = d3.select(node).append('svg').attr('viewBox', `0 0 ${w} ${h}`).attr('aria-hidden', 'true');
+  svg.append('path').datum(v).attr('class', 'mr-line').attr('d', d3.line().curve(d3.curveMonotoneX).x((d) => x(parse(d.d))).y((d) => y(d.v)));
+  const l = v[v.length - 1];
+  svg.append('circle').attr('cx', x(parse(l.d))).attr('cy', y(l.v)).attr('r', 2.6).attr('class', 'mr-dot');
 }
 
 // ---------- Body Battery (#79) ----------
@@ -63,61 +186,47 @@ function renderToday() {
 // den Stand erst, wenn die Uhr synchronisiert hat; deshalb steht die Uhrzeit des letzten Messpunkts dabei.
 const bbClock = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
 
-function bbTile(tiles, days) {
+function bbRow(rows, days) {
   const today = days.find((x) => x.d === S.today) || {};
   const curve = ((S.bb && S.bb.curves) || []).find((c) => c.day === S.today);
   const pts = curve ? curve.pts : [];
   const lastPt = pts[pts.length - 1];
   const now = lastPt ? lastPt[1] : today.bbNow ?? null;
   const fallback = now == null ? [...days].reverse().find((x) => x.bbMax != null) : null;
-  const t = el('div', 'tile tap bb-tile'); t.tabIndex = 0; t.setAttribute('role', 'button');
-  t.addEventListener('click', () => openChart('bbMax')); t.addEventListener('keydown', (e) => { if (e.key === 'Enter') openChart('bbMax'); });
-  // Stil B (#35): Ring mit dem Stand in der Mitte, rechts daneben Eckwerte und Tageskurve
   const shown = now != null ? now : fallback ? fallback.bbMax : null;
-  const ring = el('div', 'bb-ring');
-  ring.innerHTML = bbRing(shown, lastPt ? 'STAND ' + bbClock(lastPt[0]) : now != null ? 'AKTUELL' : fallback ? 'MAX. ' + dayLabel(fallback.d).split(',')[0].toUpperCase() : '');
-  const side = el('div', 'bb-side');
-  side.append(el('span', 'lbl', 'Body Battery'));
   // Tiefstwert bis jetzt: aus dem Verlauf, sonst Garmins Tageswert
   const lo = pts.length ? Math.min(...pts.map((p) => p[1])) : today.bbMin ?? null;
   const bits = [];
-  if (lastPt) bits.push('Stand ' + bbClock(lastPt[0]));
-  else if (now != null) bits.push('aktuell');
-  const facts = el('div', 'bb-facts');
-  const fact = (txt, v) => { const f = el('span', null, txt + ' '); f.append(el('b', null, String(v))); facts.append(f); };
-  if (today.bbWake != null) { fact('Aufwachen', today.bbWake); bits.push('Aufwachen ' + today.bbWake); }
-  if (lo != null && now != null) { fact('Tief', lo); bits.push('Tief ' + lo); }
-  if (shown == null) facts.append(el('span', null, 'noch kein Wert heute'));
-  side.append(facts);
-  const s = el('div', 'spark'); side.append(s);
-  t.append(ring, side); tiles.prepend(t);
-  if (pts.length >= 2) bbSpark(s, pts);
-  t.setAttribute('aria-label', 'Body Battery ' + (now ?? '–') + (bits.length ? ', ' + bits.join(', ') : ''));
+  if (today.bbWake != null) bits.push('WACH ' + today.bbWake);
+  if (lo != null && now != null) bits.push('TIEF ' + lo);
+  const label = 'Body Battery' + (lastPt ? ' · ' + bbClock(lastPt[0]) : fallback ? ' · max. ' + dayLabel(fallback.d).split(',')[0] : '');
+  const holder = el('div');
+  mrow(holder, {
+    label, value: shown == null ? '–' : String(Math.round(shown)), unit: shown == null ? '' : ' /100',
+    side: shown == null ? 'noch kein Wert heute' : bits.join(' · '),
+    open: () => openLast7('bbMax'),
+    sparkFn: (s) => { if (pts.length >= 2) bbSpark(s, pts); }
+  });
+  // direkt unter dem Kopf einsortieren
+  const r = holder.firstChild; const head = rows.querySelector('.mrow-head');
+  if (head) head.after(r); else rows.prepend(r);
 }
 
-// Ring 0–100 (Stil B, #35): Hintergrundring zart, Stand in Akzentfarbe, Zahl in der Mitte
-function bbRing(v, sub) {
-  const r = 48, c = 2 * Math.PI * r, p = v == null ? 0 : Math.max(0, Math.min(100, v)) / 100;
-  return '<svg viewBox="0 0 116 116" aria-hidden="true"><circle cx="58" cy="58" r="' + r + '" fill="none" stroke="var(--accent)" stroke-opacity=".14" stroke-width="11"/>'
-    + (p ? '<circle cx="58" cy="58" r="' + r + '" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="' + (c * p).toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(-90 58 58)"/>' : '')
-    + '<text class="n" x="58" y="62" text-anchor="middle">' + (v == null ? '–' : Math.round(v)) + '</text>'
-    + (sub ? '<text class="s" x="58" y="80" text-anchor="middle">' + sub + '</text>' : '') + '</svg>';
-}
-
-// Tageskurve 0–24 Uhr, Skala 0–100, letzter Punkt hervorgehoben
+// Tageskurve 0–24 Uhr, Skala 0–100, mit Schleier, letzter Punkt hervorgehoben
 function bbSpark(node, pts) {
-  const f = frame(node, 42);
-  const x = d3.scaleLinear([0, 1440], [2, f.w - 9]), y = d3.scaleLinear([0, 100], [36, 5]);
+  const w = 72, h = 26;
+  const x = d3.scaleLinear([0, 1440], [2, w - 4]), y = d3.scaleLinear([0, 100], [h - 2, 3]);
   const c = css('--accent');
   const id = 'bbg' + (++gradSeq);
-  const g = f.svg.append('defs').append('linearGradient').attr('id', id).attr('x1', 0).attr('x2', 0).attr('y1', 0).attr('y2', 1);
+  const svg = d3.select(node).append('svg').attr('viewBox', `0 0 ${w} ${h}`).attr('aria-hidden', 'true');
+  const g = svg.append('defs').append('linearGradient').attr('id', id).attr('x1', 0).attr('x2', 0).attr('y1', 0).attr('y2', 1);
   g.append('stop').attr('offset', '0%').attr('stop-color', c).attr('stop-opacity', .3);
   g.append('stop').attr('offset', '100%').attr('stop-color', c).attr('stop-opacity', 0);
-  f.svg.append('path').datum(pts).attr('fill', `url(#${id})`).attr('d', d3.area().curve(d3.curveMonotoneX).x((p) => x(p[0])).y0(36).y1((p) => y(p[1])));
-  f.svg.append('path').datum(pts).style('fill', 'none').style('stroke', c).style('stroke-width', 1.8)
+  svg.append('path').datum(pts).attr('fill', `url(#${id})`).attr('d', d3.area().curve(d3.curveMonotoneX).x((p) => x(p[0])).y0(h).y1((p) => y(p[1])));
+  svg.append('path').datum(pts).style('fill', 'none').style('stroke', c).style('stroke-width', 1.5)
     .attr('d', d3.line().curve(d3.curveMonotoneX).x((p) => x(p[0])).y((p) => y(p[1])));
   const l = pts[pts.length - 1];
-  f.svg.append('circle').attr('cx', x(l[0])).attr('cy', y(l[1])).attr('r', 3).style('fill', c).style('stroke', css('--panel')).style('stroke-width', 1.5);
+  svg.append('circle').attr('cx', x(l[0])).attr('cy', y(l[1])).attr('r', 2.6).attr('class', 'mr-dot');
 }
 
 // ---------- Aktivitäten des Tages (#16) ----------
@@ -134,8 +243,10 @@ function actPost(a) {
   const card = el('article', 'card actpost');
   const sp = sportOf(a.type), cat = chipCat(a);
   const head = el('div', 'ap-head'), title = el('div', 'ap-title');
-  title.append(el('div', 'ap-name', a.name || sp.label), el('div', 'note', (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr'));
-  const chip = el('span', 'chip', cat[1]); chip.style.background = cat[2]; chip.style.color = '#fff';
+  const when = el('div', 'note', (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr');
+  if (a.wx) { when.append(' · '); when.append(wxLine(a.wx, true)); }
+  title.append(el('div', 'ap-name', a.name || sp.label), when);
+  const chip = el('span', 'chip cat', cat[1]); chip.style.setProperty('--c', cat[2]);
   head.append(title, chip);
   card.append(head);
   if (a.rt) { const m = el('div', 'ap-map'); card.append(m); drawRoute(m, a.id); }
@@ -174,22 +285,20 @@ function renderTodayActs() {
 
 // ---------- VO2max auf „Heute“ (#104) ----------
 // Garmin liefert die VO2max nur je Einheit, deshalb der letzte bekannte Wert mit Datum, Trend zum Wert vor gut 30 Tagen
-// und der Verlauf der letzten 90 Tage. Gleiche Werte wie die Karte unter Leistung (vo2All). Ohne Wert keine Kachel.
-function vo2Tile(tiles) {
+// und der Verlauf der letzten 90 Tage. Gleiche Werte wie die Karte unter Leistung (vo2All). Ohne Wert keine Zeile.
+function vo2Row(rows) {
   const all = vo2All();
   const runs = all.filter((e) => e.sport === 'run'), list = runs.length ? runs : all.filter((e) => e.sport === 'ride');
   if (!list.length) return;
   const last = list[list.length - 1];
   const ref = [...list].reverse().find((e) => e.d <= addDays(last.d, -30));
-  let cmp = { text: 'Stand ' + dayLabel(last.d).replace(/^[^,]+, /, ''), cls: '' };
-  if (ref) {
-    const c = cmpLine(last.v, ref.v, 0, true);
-    cmp = { text: c.text.replace(/ggü\. .*$/, 'in 30 Tagen') + ' · Stand ' + dayLabel(last.d).replace(/^[^,]+, /, ''), cls: c.cls };
-  }
+  const stand = 'STAND ' + dayLabel(last.d).replace(/^[^,]+, /, '').toUpperCase();
+  let side = stand;
+  if (ref) { const d = last.v - ref.v; side = (d > 0 ? '+' : d < 0 ? '−' : '±') + num(Math.abs(d)) + ' IN 30 T. · ' + stand; }
   const from = addDays(S.today || last.d, -90);
-  tile(tiles, {
-    label: 'VO2max' + (list === runs ? '' : ' Rad'), value: num(last.v), cmp,
-    spark: { data: list.filter((e) => e.d >= from).map((e) => ({ d: e.d, v: e.v })), band: null },
+  mrow(rows, {
+    label: 'VO2max' + (list === runs ? '' : ' Rad'), value: num(last.v), unit: '', side,
+    spark: list.filter((e) => e.d >= from).map((e) => ({ d: e.d, v: e.v })),
     open: () => openChart('c-vo2'),
   });
 }

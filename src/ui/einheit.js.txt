@@ -20,7 +20,7 @@ function renderUnit() {
   const a = S.acts.find((x) => x.id === id);
   // Gleiche Einheit nicht bei jedem Neuzeichnen neu aufbauen (Karte bliebe sonst nicht stehen)
   // Kennung enthält auch die Zonen, damit neue Grenzen oder nachgeladene Pulsdaten neu zeichnen
-  const uid = a ? a.id + (a.rt ? 'r' : '') + (isRace(a) ? 'w' : '') + (a.lp ? 'l' : '') + (a.hz ? 'z' + S.zoneCfg.flat().join('-') : '') : '';
+  const uid = a ? a.id + (a.rt ? 'r' : '') + (isRace(a) ? 'w' : '') + (a.lp ? 'l' : '') + ((a.seg || (a.strava && a.strava.seg)) ? 's' : '') + (a.hz ? 'z' + S.zoneCfg.flat().join('-') : '') : '';
   if (a && body.dataset.id === uid && body.childElementCount) return;
   body.replaceChildren(); body.dataset.id = uid;
   if (!a) {
@@ -41,9 +41,18 @@ function renderUnit() {
     m.setAttribute('role', 'button'); m.setAttribute('aria-label', 'Karte im Vollbild öffnen');
   }
   const head = el('div', 'ap-head');
-  const chip = el('span', 'chip', cat[1]); chip.style.background = cat[2]; chip.style.color = '#fff';
-  head.append(el('div', 'note', a.rt ? 'Karte antippen zum Zoomen' : 'Ohne GPS-Strecke'), chip);
+  const chip = el('span', 'chip cat', cat[1]); chip.style.setProperty('--c', cat[2]);
+  head.append(el('div', 'note', a.rt ? 'Antippen zum Zoomen' : 'Ohne GPS-Strecke'));
+  // Als Grafik teilen (#151): nur mit Route
+  const headR = el('div', 'u-head-r');
+  if (a.rt) {
+    const sh = el('button', 'btn small ghost u-share'); sh.type = 'button'; sh.innerHTML = icon('teilen'); sh.append('Teilen');
+    sh.addEventListener('click', (e) => { e.stopPropagation(); openExport(a); });
+    headR.append(sh);
+  }
+  headR.append(chip); head.append(headR);
   top.append(head);
+  if (a.wx) top.append(wxLine(a.wx));
   // Kennzahlen: dieselben wie im Post, ergänzt um Max-Puls, Kadenz, Leistung, Laufdynamik
   const stats = el('div', 'ap-stats');
   const add = (v, u, l) => { if (v == null || v === '–') return; const s = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u)); s.append(b, el('span', null, l)); stats.append(s); };
@@ -64,6 +73,8 @@ function renderUnit() {
   add(a.vo ? num(a.vo, 1) : null, ' cm', 'Vert. Bewegung');
   top.append(stats);
   body.append(top);
+  // Rad-Wetter (#153): Wie war's angezogen? (nur frische Radfahrten ohne Rückmeldung)
+  rwUnitFeedback(a, body);
 
   // Trainingseffekt und Last (Garmin)
   if (a.te != null || a.load != null) {
@@ -101,7 +112,8 @@ function renderUnit() {
 
   // Runden aus der .fit-Datei
   if (a.laps && a.laps.length) {
-    const c = uCard(body, sp.key === 'run' ? 'Runden' : 'Abschnitte', 'Aus der Originaldatei der Uhr. Der Balken zeigt das Tempo, die schnellste Runde ist hervorgehoben.');
+    const auto = a.src === 'strava' && a.laps.every((l) => l.tg === 2);
+    const c = uCard(body, auto ? 'Kilometer' : sp.key === 'run' ? 'Runden' : 'Abschnitte', (a.src === 'strava' ? (auto ? 'Kilometer-Splits von Strava.' : 'Runden von Strava.') : 'Aus der Originaldatei der Uhr.') + ' Der Balken zeigt das Tempo, die schnellste ist hervorgehoben.');
     const speeds = a.laps.map((l) => l.v || 0), vmax = Math.max(...speeds), vmin = Math.min(...speeds.filter((v) => v > 0));
     const fastest = speeds.indexOf(vmax);
     const tb = el('div', 'u-laps');
@@ -156,8 +168,10 @@ function renderUnit() {
     const box = el('div', 'u-gear'); box.id = 'u-gear'; box.dataset.act = a.id; c.append(box);
     renderUnitGear();
   }
+  renderSegments(body, a);
   renderStravaExtras(body, a);
   renderWhoopExtras(body, a);
+  renderGoogleExtras(body, a);
   renderStreams(body, a, sp);
 }
 
@@ -256,8 +270,10 @@ function drawStreams(box, s, sp, type) {
       } else c.dot.style('display', 'none');
       cells[i].textContent = val != null ? c.se.fmt(val) + c.se.unit : '–';
     });
+    // Dieselbe Stelle auf der Karte oben markieren (#152)
+    if (xExt[1] > 0) markUnitMap(Math.max(0, Math.min(1, xs[j] / xExt[1])));
   };
-  const hide = () => { charts.forEach((c) => { c.rule.style('display', 'none'); c.dot.style('display', 'none'); }); showAvg(); };
+  const hide = () => { charts.forEach((c) => { c.rule.style('display', 'none'); c.dot.style('display', 'none'); }); showAvg(); markUnitMap(null); };
   for (const c of charts) {
     const svg = c.f.svg.node();
     const handler = (ev) => { const [px] = d3.pointer(ev.touches ? ev.touches[0] : ev, svg); show(Math.max(c.x.range()[0], Math.min(c.x.range()[1], px))); };
@@ -266,6 +282,51 @@ function drawStreams(box, s, sp, type) {
     svg.addEventListener('pointerleave', (ev) => { if (ev.pointerType === 'mouse') hide(); });
   }
   box.append(el('p', 'note', 'Antippen oder ziehen zeigt die Werte an einer Stelle. ' + (byD ? 'Gemittelt über kurze Abschnitte der Strecke, Pausen fallen heraus.' : 'Ohne GPS über die Zeit.')));
+}
+
+// ---------- Strava: Segmente und Bestleistungen (#50) ----------
+// Nur die eigenen Zeiten und Ränge (Stravas Bestenlisten gibt es über die Schnittstelle nicht). Nur für dich sichtbar,
+// nie für Freunde oder Claude (Strava-Bedingungen).
+const segTime = (s) => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = String(Math.round(s % 60)).padStart(2, '0'); return h ? h + ':' + String(m).padStart(2, '0') + ':' + x : m + ':' + x; };
+function segBadge(e) {
+  if (e.kom === 1) return el('span', 'seg-badge gold', 'KOM');
+  if (e.pr === 1) return el('span', 'seg-badge gold', 'PR');
+  if (e.pr) return el('span', 'seg-badge', e.pr + '. Zeit');
+  if (e.kom) return el('span', 'seg-badge', 'Top ' + e.kom);
+  return null;
+}
+function renderSegments(body, a) {
+  const x = a.strava || (a.src === 'strava' ? a : null);
+  if (!x) return;
+  const run = /running/.test(a.type || '');
+  // Stravas Bestleistungen nur ohne Garmin: mit Garmin rechnet die App eigene aus der .fit (Eddies Wunsch, keine Doppelung)
+  const be = a.src === 'strava' ? (x.be || []).filter((b) => b.pr) : [];
+  if (be.length) {
+    const c = uCard(body, 'Strava-Bestleistungen', 'Deine schnellsten Zeiten über diese Strecken auf Strava, gemessen in dieser Einheit.');
+    const ul = el('ul', 'sessions seg-list');
+    for (const b of x.be.filter((q) => q.pr)) {
+      const li = el('li'); const left = el('div'); left.append(el('span', 'seg-name', b.n));
+      const right = el('div', 'right'); const t = el('b', null, segTime(b.s)); right.append(t); const bd = segBadge(b); if (bd) right.append(bd);
+      li.append(left, right); ul.append(li);
+    }
+    c.append(ul);
+  }
+  const seg = x.seg || [];
+  if (!seg.length) return;
+  const prs = seg.filter((e) => e.pr === 1).length;
+  const c = uCard(body, 'Segmente', seg.length + (seg.length === 1 ? ' Segment' : ' Segmente') + (prs ? ' · ' + prs + (prs === 1 ? ' neue Bestzeit' : ' neue Bestzeiten') : '') + '. Deine Zeit und dein Rang auf Strava.');
+  const ul = el('ul', 'sessions seg-list');
+  for (const e of seg) {
+    const li = el('li');
+    const left = el('div');
+    const nm = el('a', 'seg-name', e.n); nm.href = 'https://www.strava.com/segments/' + encodeURIComponent(e.id); nm.target = '_blank'; nm.rel = 'noopener';
+    const meta = [e.m ? (e.m < 1000 ? Math.round(e.m) + ' m' : num(e.m / 1000, 2) + ' km') : '', e.g != null && Math.abs(e.g) >= 0.5 ? num(e.g, 1) + ' %' : '', e.m && e.s ? (run ? pace(e.s / (e.m / 1000)) + ' /km' : num(e.m / e.s * 3.6, 1) + ' km/h') : '', e.hr ? e.hr + ' bpm' : ''].filter(Boolean).join(' · ');
+    left.append(nm, el('div', 'meta', meta));
+    const right = el('div', 'right'); right.append(el('b', null, segTime(e.s))); const bd = segBadge(e); if (bd) right.append(bd);
+    li.append(left, right); ul.append(li);
+  }
+  c.append(ul);
+  c.append(el('p', 'note', 'Daten von Strava. Bestenlisten anderer Läufer gibt Strava über die Schnittstelle nicht heraus.'));
 }
 
 // ---------- Strava-Extras (#44) ----------
@@ -308,4 +369,27 @@ function renderWhoopExtras(body, a) {
   add(x.kcal ? String(x.kcal) : null, ' kcal', 'Kalorien');
   if (stats.childElementCount) c.append(stats);
   c.append(el('p', 'note', 'Strain ist WHOOPs eigene Skala (0–21) für die Belastung von Herz und Kreislauf, nicht mit Garmins Trainingslast vergleichbar.'));
+}
+
+// ---------- Google Health / Fitbit ----------
+// Doppelte Einheit (Garmin-Uhr + Fitbit): Google hängt als a.google an der Garmin-Einheit, sonst steht es direkt dran.
+function renderGoogleExtras(body, a) {
+  const x = a.google || (a.src === 'google' ? a : null);
+  if (!x) return;
+  const c = uCard(body, 'Google Health', a.src === 'google'
+    ? 'Diese Einheit kommt von deinem Fitbit-Gerät über Google Health. Google liefert keine Route, keine Runden und keine Verläufe.'
+    : 'Dieselbe Einheit auf deinem Fitbit-Gerät. Die Messwerte oben stammen von Garmin.');
+  const stats = el('div', 'ap-stats');
+  const add = (v, u, l) => { if (v == null) return; const s = el('div'); const b = el('b', null, v); if (u) b.append(el('small', null, u)); s.append(b, el('span', null, l)); stats.append(s); };
+  add(x.azm != null ? String(x.azm) : null, ' min', 'Zonenminuten');
+  // Puls und Kalorien vom Fitbit nur bei zusammengeführten Einheiten; sonst stehen sie schon oben
+  if (a.google) { add(x.hr ? String(x.hr) : null, ' bpm', 'Ø Puls (Fitbit)'); add(x.kcal ? String(x.kcal) : null, ' kcal', 'Kalorien (Fitbit)'); }
+  if (a.src === 'google' && a.steps) add(num(a.steps), '', 'Schritte');
+  if (stats.childElementCount) c.append(stats);
+  // Fitbits eigene Pulszonen (leicht, mittel, intensiv, Spitze) in Minuten; nicht mit Garmins fünf Zonen vergleichbar
+  if (a.src === 'google' && Array.isArray(a.gz) && a.gz.some((v) => v > 0)) {
+    const z = el('div', 'ap-stats');
+    ['Leicht', 'Mittel', 'Intensiv', 'Spitze'].forEach((l, i) => { const s = el('div'); const b = el('b', null, String(a.gz[i] || 0)); b.append(el('small', null, ' min')); s.append(b, el('span', null, l)); z.append(s); });
+    c.append(el('p', 'note', 'Zeit in Fitbits Pulszonen'), z);
+  }
 }

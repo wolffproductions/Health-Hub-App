@@ -1,7 +1,7 @@
 # Health Hub
 
 Dein persönliches Gesundheits- und Trainings-Dashboard fürs iPhone. Holt deine Daten aus **Garmin**, **Strava**,
-**Withings** und **WHOOP**, je nachdem, was du nutzt. **Läuft in deinem eigenen, kostenlosen Cloudflare-Konto** – deine
+**Withings**, **WHOOP** und **Fitbit** (über Google Health), je nachdem, was du nutzt. **Läuft in deinem eigenen, kostenlosen Cloudflare-Konto** – deine
 Daten liegen nur dort, niemand sonst hat Zugriff.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wolffproductions/Health-Hub-App)
@@ -14,8 +14,9 @@ Daten liegen nur dort, niemand sonst hat Zugriff.
 | **Strava** (jede Uhr oder App, die zu Strava lädt) | Trainings mit Karte, Kudos, Relative Effort, Bestzeiten |
 | **Withings** (Waage) | Gewicht, Körperfett, Muskel- und Wasseranteil |
 | **WHOOP** (Band) | Recovery, Schlaf, HRV, Ruhepuls, Strain, Erholungs-Ampel, Trainings (ohne Karte und Runden) |
+| **Fitbit / Pixel Watch** (über Google Health) | Schlaf, HRV, Ruhepuls, Sauerstoff, Schritte, Erholungs-Ampel, Trainings (ohne Karte und Runden) |
 
-Du brauchst mindestens eine Quelle. Schlaf- und Erholungswerte kommen von Garmin oder WHOOP, alles rund um
+Du brauchst mindestens eine Quelle. Schlaf- und Erholungswerte kommen von Garmin, WHOOP oder Fitbit, alles rund um
 deine Trainings funktioniert aber auch nur mit Strava. Nutzt du mehrere Quellen, erkennt die App doppelte
 Einheiten und zeigt sie nur einmal. Bei Garmin-Uhr und WHOOP-Band wählst du, woher Schlaf und HRV kommen.
 
@@ -58,7 +59,8 @@ unterwegs an, falls du noch keins hast.
    - **Garmin:** Schlüssel [hier erstellen](https://connect.garmin.com/app/settings/personalApiToken) und eintragen.
    - **Strava:** In der App steht Schritt für Schritt, wie du bei Strava eine eigene kleine App anlegst
      (dauert 2 Minuten), danach **„Mit Strava verbinden“**.
-   - **Withings** und **WHOOP:** genauso, die Anleitung steht in der App.
+   - **Withings**, **WHOOP** und **Google Health (Fitbit):** genauso, die Anleitung steht in der App. Google Health
+     braucht ein eigenes Google-Cloud-Projekt und ist am aufwendigsten, am Computer geht es leichter.
 6. Auf dem iPhone in Safari **Teilen → Zum Home-Bildschirm**. Jetzt ist es eine App, auch mit Morgen-Push.
    Unter **Konto → Anmeldung** kannst du dich danach per Face ID statt Passwort anmelden.
 
@@ -73,5 +75,5 @@ Sofort aktualisieren: in deiner Kopie auf GitHub unter **Actions → Health Hub 
 ## Datenschutz
 
 - Die App läuft in **deinem** Cloudflare-Konto, die Daten liegen in **deiner** Datenbank.
-- Garmin-Schlüssel, Strava-, Withings- und WHOOP-Zugänge werden verschlüsselt gespeichert.
+- Garmin-Schlüssel, Strava-, Withings-, WHOOP- und Google-Zugänge werden verschlüsselt gespeichert.
 - Im Code auf GitHub stehen nie Daten oder Passwörter.

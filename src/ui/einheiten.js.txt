@@ -19,6 +19,7 @@ function sportIcon(type) {
 const STATS_R = { '4w': '4 Wochen', jahr: 'Dieses Jahr', alle: 'Gesamt' };
 const weekOf = (d) => addDays(d, -((parse(d).getUTCDay() + 6) % 7));
 function renderStats() {
+  renderRwTeaser(); // Rad-Wetter (#153) oben auf der Seite
   if (!S.statsR) S.statsR = '4w';
   const seg = $('#stats-seg');
   seg.querySelectorAll('button').forEach((b) => {
@@ -26,7 +27,12 @@ function renderStats() {
     b.onclick = () => { S.statsR = b.dataset.r; S.statsMore = 0; renderStats(); };
   });
   const today = S.today || new Date().toLocaleDateString('en-CA');
-  const from = S.statsR === '4w' ? addDays(today, -27) : S.statsR === 'jahr' ? today.slice(0, 4) + '-01-01' : '0000';
+  // „Woche“ = Kalenderwoche ab Montag bis heute (Eddies Wunsch: was habe ich diese Woche schon gemacht)
+  const mon = weekOf(today);
+  const from = S.statsR === 'woche' ? mon : S.statsR === '4w' ? addDays(today, -27) : S.statsR === 'jahr' ? today.slice(0, 4) + '-01-01' : '0000';
+  const span = $('#stats-span');
+  span.hidden = S.statsR !== 'woche';
+  if (S.statsR === 'woche') span.textContent = 'KW ' + isoWeek(mon) + ' · seit Montag, ' + mon.slice(8, 10) + '.' + mon.slice(5, 7) + '.';
   const acts = S.acts.filter((a) => a.date >= from && a.date <= today);
   // Summen je Sportart
   const rows = $('#stats-rows'); rows.replaceChildren();

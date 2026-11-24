@@ -1,0 +1,244 @@
+// ---------- RAD-WETTER: Einstellungen unter Konto → Rad-Wetter (#153) ----------
+// Orte (Zuhause, Lieblingsrunden), Kriterien für ein gutes Fenster, Kleidungsregeln als Tabelle mit Vorschlagswerten,
+// was die App aus deinen Rückmeldungen gelernt hat, Dranbleiben. Dazu die Optionen unter Konto → Benachrichtigungen.
+const RWK = { cfg: null, loading: false };
+const RWK_COND = [
+  ['below', 'gefühlt unter', '°C'], ['from', 'gefühlt ab', '°C'], ['startBelow', 'anfangs unter', '°C'], ['warmer', 'wird wärmer um', '°C'],
+  ['wind', 'Wind ab', 'km/h'], ['gust', 'Böen ab', 'km/h'], ['rain', 'Regenrisiko ab', '%'], ['wet', 'bei Nässe', ''], ['dark', 'im Dunkeln', ''],
+];
+const rwkMsg = (id, t) => { const m = $('#' + id); if (m) m.textContent = t || ''; };
+async function rwkLoad(fresh) {
+  if (RWK.loading) return;
+  RWK.loading = true;
+  try { RWK.cfg = !fresh && RW.data && RW.data.cfg ? RW.data.cfg : (await api('/api/radwetter/einstellungen')).cfg; }
+  catch { RWK.cfg = null; }
+  RWK.loading = false;
+}
+async function rwkSave(body, msgId, okText) {
+  rwkMsg(msgId, 'Speichere …');
+  try {
+    const r = await rwPost(body);
+    if (!r.ok) { rwkMsg(msgId, r.error || 'Nicht gespeichert.'); return false; }
+    RWK.cfg = r.cfg; RW.data = null; RW.short = null;
+    renderRwSettings(true);
+    rwkMsg(msgId, okText || 'Gespeichert.');
+    return true;
+  } catch (e) { rwkMsg(msgId, 'Fehler: ' + e.message); return false; }
+}
+
+/**
+ * Aus renderAccount (oft, z. B. bei jedem Neuladen): nur die Menüzeile. Felder füllen nur beim Öffnen der Seite (showKontoView) und
+ * nach dem Speichern, damit gerade Eingetipptes nicht überschrieben wird.
+ */
+async function renderRwSettings(fill) {
+  if (fill === 'laden' || !RWK.cfg) await rwkLoad(fill === 'laden');
+  rwkMenu();
+  const c = RWK.cfg;
+  if (!fill || !c) return;
+  $('#rwk-on').checked = !!c.on;
+  // Orte
+  const ul = $('#rwk-list'); ul.replaceChildren();
+  for (const p of c.places) {
+    // Antippen benennt um, rechts entfernen
+    const li = el('li', 'rwk-place'); li.tabIndex = 0; li.setAttribute('role', 'button'); li.setAttribute('aria-label', p.name + ' umbenennen');
+    const ic = el('span', 'sp-ico'); ic.innerHTML = icon(p.kind === 'home' ? 'haus' : 'route');
+    const txt = el('div'); txt.append(el('div', null, p.name), el('div', 'meta', (p.kind === 'home' ? 'Zuhause' : 'Lieblingsrunde · ' + num(p.km) + ' km') + ' · antippen zum Umbenennen'));
+    const rename = async () => { const n = prompt('Name', p.name); if (n && n.trim()) await rwkSave({ action: 'place-name', id: p.id, name: n }, 'rwk-msg'); };
+    li.addEventListener('click', rename); li.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === li) rename(); });
+    const del = el('button', 'btn danger small', 'Entfernen'); del.type = 'button'; del.setAttribute('aria-label', p.name + ' entfernen');
+    del.addEventListener('click', async (e) => { e.stopPropagation(); if (confirm('„' + p.name + '“ entfernen?')) await rwkSave({ action: 'place-del', id: p.id }, 'rwk-msg', 'Entfernt.'); });
+    li.append(ic, txt, del); ul.append(li);
+  }
+  if (!c.places.length) ul.append(el('li', 'note', 'Noch kein Ort. Lege unten dein Zuhause fest.'));
+  // Lieblingsrunden aus den eigenen Radfahrten mit Strecke (neueste zuerst)
+  const sel = $('#rwk-ride'); sel.replaceChildren(new Option('Fahrt wählen …', ''));
+  const used = new Set(c.places.map((p) => p.act).filter(Boolean));
+  const rides = S.acts.filter((a) => a.rt && sportOf(a.type).key === 'ride' && !used.has(a.id)).slice(-60).reverse();
+  for (const a of rides) sel.append(new Option((a.name || 'Radfahrt') + ' · ' + dayLabel(a.date) + ' · ' + num(a.km) + ' km', a.id));
+  $('#rwk-add').disabled = !rides.length;
+  // Kriterien
+  const cr = c.crit, f = (id, v) => { const n = $('#' + id); if (n) n.value = v == null ? '' : v; };
+  f('rwk-prob', cr.prob); f('rwk-mm', String(cr.mm)); $('#rwk-dry').checked = cr.dry; f('rwk-wait', String(cr.wait)); f('rwk-wind', cr.wind); f('rwk-gust', cr.gust);
+  f('rwk-tmin', cr.tMin); f('rwk-tmax', cr.tMax); f('rwk-minh', String(cr.minH)); $('#rwk-light').checked = cr.light;
+  f('rwk-wk0', String(cr.wk[0])); f('rwk-wk1', String(cr.wk[1])); f('rwk-we0', String(cr.we[0])); f('rwk-we1', String(cr.we[1]));
+  $('#rwk-days').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(!!cr.days[Number(b.dataset.d)])));
+  // Kleidung
+  const w = c.wear;
+  f('rwk-speed', w.speed); f('rwk-dur', String(w.dur)); f('rwk-swing', w.swing); f('rwk-wetcold', w.wetCold); f('rwk-wetprob', w.wetProb);
+  rwkLevels(c); rwkItems(c);
+  // Gelernt
+  $('#rwk-learn-text').textContent = c.learn.text;
+  const ml = $('#rwk-moves'); ml.replaceChildren();
+  for (const m of c.learn.moves) {
+    const li = el('li'), t = el('div');
+    t.append(el('div', null, dayLabel(m.d) + ': ' + (m.v < 0 ? 'zu kalt' : 'zu warm')), el('div', 'meta', (m.f != null ? 'gefühlt auf dem Rad ' + num(m.f) + ' °C · ' : '') + 'danach ' + (m.to > 0 ? '+' : m.to < 0 ? '−' : '±') + num(Math.abs(m.to), 1) + ' °C'));
+    li.append(t); ml.append(li);
+  }
+  $('#rwk-learn-reset').hidden = !c.learn.bias;
+  // Dranbleiben
+  $('#rwk-game').checked = c.game; f('rwk-goal', String(c.goal));
+}
+/** Zeile unter Konto: Kurzstand */
+function rwkMenu() {
+  const m = $('#m-radwetter'); if (!m) return;
+  const c = RWK.cfg || (RW.data && RW.data.cfg);
+  m.textContent = !c ? '' : !c.on ? 'Aus' : c.places.length ? c.places.length + (c.places.length === 1 ? ' Ort' : ' Orte') : 'Zuhause festlegen';
+}
+function rwkLevels(c) {
+  const box = $('#rwk-levels'); box.replaceChildren();
+  const w = c.wear, bias = c.learn.bias;
+  const head = el('div', 'rwk-lv head'); head.append(el('span', null, 'Grundstufe'), el('span', null, 'ab gefühlt'), el('span', null, 'An'));
+  box.append(head);
+  for (const L of c.levels) {
+    const row = el('div', 'rwk-lv');
+    const name = el('span'); name.append(el('b', null, L.name), el('small', null, L.desc));
+    row.append(name);
+    if (L.id === 'wi') { row.append(el('span', 'note', 'darunter'), el('span')); box.append(row); continue; }
+    const v = w.lv[L.id];
+    const inp = el('input'); inp.type = 'number'; inp.step = '0.5'; inp.inputMode = 'decimal'; inp.value = v == null ? '' : v; inp.dataset.lv = L.id; inp.disabled = v == null;
+    inp.setAttribute('aria-label', L.name + ' ab gefühlt °C');
+    const cell = el('span', 'rwk-lv-v'); cell.append(inp, el('small', null, '°C'));
+    if (bias && v != null) cell.append(el('small', 'rwk-eff', 'gelernt: ' + num(v + bias, 1) + ' °C'));
+    const on = el('input'); on.type = 'checkbox'; on.checked = v != null; on.dataset.lvOn = L.id; on.setAttribute('aria-label', L.name + ' nutzen');
+    on.disabled = L.id !== 'kl' && L.id !== 'kk'; // kurz-lang und kurz-kurz lassen sich abwählen, die übrigen braucht die Rechnung
+    on.addEventListener('change', () => { inp.disabled = !on.checked; if (on.checked && inp.value === '') inp.value = L.id === 'kl' ? '11' : '14'; });
+    row.append(cell, on);
+    box.append(row);
+  }
+}
+function rwkItems(c) {
+  const box = $('#rwk-items'); box.replaceChildren();
+  for (const it of c.wear.items) {
+    const d = el('details', 'rwk-item'); d.dataset.id = it.id;
+    const sum = el('summary');
+    const on = el('input'); on.type = 'checkbox'; on.checked = it.on; on.dataset.on = it.id; on.setAttribute('aria-label', it.name + ' vorschlagen');
+    on.addEventListener('click', (e) => e.stopPropagation());
+    const sw = el('i', 'rw-swatch'); if (it.part && RW_PART_COLOR[it.part]) sw.style.setProperty('--fc', 'var(--fig-' + RW_PART_COLOR[it.part] + ')'); else sw.classList.add('none');
+    const txt = el('span', 'rwk-item-txt'); txt.append(el('b', null, it.name), el('small', null, it.text));
+    sum.append(on, sw, txt);
+    d.append(sum);
+    const form = el('div', 'rwk-rules');
+    it.rules.forEach((cl, k) => {
+      const r = el('div', 'rwk-rule'); r.dataset.k = k;
+      if (k > 0) form.append(el('p', 'rwk-or', 'oder'));
+      if (cl.swap) r.append(el('p', 'note', 'Automatisch: wenn es auf der Fahrt um mindestens den Temperaturunterschied unten wärmer oder kühler wird und ' + (cl.swap === 'top' ? 'oben' : 'unten') + ' zwischen kurz und lang liegt (abnehmbar statt dickerer Grundstufe).'));
+      for (const [key, label, unit] of RWK_COND) {
+        if (cl[key] === undefined) continue;
+        const lab = el('label', 'rwk-cond');
+        if (unit) { const i = el('input'); i.type = 'number'; i.inputMode = 'decimal'; i.step = '1'; i.value = cl[key]; i.dataset.key = key; lab.append(el('span', null, label), i, el('small', null, unit)); }
+        else { const i = el('input'); i.type = 'checkbox'; i.checked = true; i.dataset.key = key; lab.append(i, el('span', null, label)); }
+        r.append(lab);
+      }
+      form.append(r);
+    });
+    if (it.own) {
+      const del = el('button', 'btn danger small', 'Teil löschen'); del.type = 'button';
+      del.addEventListener('click', () => { d.remove(); });
+      form.append(del);
+    }
+    d.append(form);
+    box.append(d);
+  }
+}
+/** Kleidung aus dem Formular lesen */
+function rwkWearForm() {
+  const c = RWK.cfg, lv = {};
+  document.querySelectorAll('#rwk-levels input[data-lv]').forEach((i) => { const on = document.querySelector('#rwk-levels input[data-lv-on="' + i.dataset.lv + '"]'); lv[i.dataset.lv] = on && !on.checked ? null : i.value === '' ? null : Number(String(i.value).replace(',', '.')); });
+  const items = [];
+  document.querySelectorAll('#rwk-items .rwk-item').forEach((d) => {
+    const it = c.wear.items.find((x) => x.id === d.dataset.id); if (!it) return;
+    const rules = [...d.querySelectorAll('.rwk-rule')].map((r) => {
+      const cl = { ...it.rules[Number(r.dataset.k)] };
+      r.querySelectorAll('input[data-key]').forEach((i) => {
+        if (i.type === 'checkbox') { if (i.checked) cl[i.dataset.key] = true; else delete cl[i.dataset.key]; }
+        else if (i.value === '') delete cl[i.dataset.key]; else cl[i.dataset.key] = Number(String(i.value).replace(',', '.'));
+      });
+      return cl;
+    });
+    items.push({ id: it.id, name: it.name, on: d.querySelector('input[data-on]').checked, rules, own: it.own });
+  });
+  const n = (id) => Number(String($('#' + id).value).replace(',', '.'));
+  return { speed: n('rwk-speed'), dur: n('rwk-dur'), swing: n('rwk-swing'), wetCold: n('rwk-wetcold'), wetProb: n('rwk-wetprob'), lv, items };
+}
+
+function initRwSettings() {
+  const days = $('#rwk-days');
+  ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].forEach((t, k) => {
+    const b = el('button', 'tagchip', t); b.type = 'button'; b.dataset.d = (k + 1) % 7; b.setAttribute('aria-pressed', 'true');
+    b.addEventListener('click', () => b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')));
+    days.append(b);
+  });
+  for (const id of ['rwk-wk0', 'rwk-wk1', 'rwk-we0', 'rwk-we1']) {
+    const s = $('#' + id);
+    for (let h = id.endsWith('0') ? 0 : 1; h <= (id.endsWith('0') ? 23 : 24); h++) s.append(new Option(h + ' Uhr', String(h)));
+  }
+  $('#rwk-on').addEventListener('change', (e) => rwkSave({ action: 'on', on: e.target.checked }, 'rwk-on-msg', e.target.checked ? 'Eingeschaltet.' : 'Ausgeschaltet. Deine Orte und Regeln bleiben gespeichert.'));
+  $('#rwk-loc').addEventListener('click', () => rwLocate($('#rwk-msg'), (lat, lng) => rwkSave({ action: 'home', lat, lng }, 'rwk-msg', 'Zuhause gespeichert (auf etwa 1 km gerundet).')));
+  $('#rwk-rides').addEventListener('click', () => rwkSave({ action: 'home', from: 'rides' }, 'rwk-msg', 'Zuhause = häufigster Start deiner Fahrten (auf etwa 1 km gerundet).'));
+  let qt;
+  $('#rwk-q').addEventListener('input', (e) => {
+    clearTimeout(qt);
+    const q = e.target.value.trim(), ul = $('#rwk-results');
+    if (q.length < 2) { ul.replaceChildren(); return; }
+    qt = setTimeout(async () => {
+      let r; try { r = await api('/api/radwetter/suche?q=' + encodeURIComponent(q)); } catch { return; }
+      ul.replaceChildren();
+      for (const x of r.results || []) {
+        const li = el('li', 'tap'); li.tabIndex = 0; li.setAttribute('role', 'button');
+        const t = el('div'); t.append(el('div', null, x.name), el('div', 'meta', x.area)); li.append(t);
+        const pick = () => { ul.replaceChildren(); $('#rwk-q').value = ''; rwkSave({ action: 'home', lat: x.lat, lng: x.lng, name: x.name }, 'rwk-msg', '„' + x.name + '“ ist jetzt dein Zuhause.'); };
+        li.addEventListener('click', pick); li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') pick(); });
+        ul.append(li);
+      }
+      if (!ul.children.length) ul.append(el('li', 'note', 'Nichts gefunden.'));
+    }, 350);
+  });
+  $('#rwk-add').addEventListener('click', () => { const v = $('#rwk-ride').value; if (!v) { rwkMsg('rwk-msg', 'Bitte zuerst eine Fahrt wählen.'); return; } rwkSave({ action: 'route-add', act: v }, 'rwk-msg', 'Lieblingsrunde hinzugefügt.'); });
+  $('#rwk-crit-save').addEventListener('click', () => {
+    const v = (id) => $('#' + id).value, n = (id) => (v(id) === '' ? null : Number(String(v(id)).replace(',', '.')));
+    const daysOn = [0, 1, 2, 3, 4, 5, 6].map((d) => days.querySelector('[data-d="' + d + '"]').getAttribute('aria-pressed') === 'true');
+    rwkSave({ action: 'crit', crit: { prob: n('rwk-prob'), mm: n('rwk-mm'), dry: $('#rwk-dry').checked, wait: n('rwk-wait'), wind: n('rwk-wind'), gust: n('rwk-gust'), tMin: n('rwk-tmin'), tMax: n('rwk-tmax'),
+      minH: n('rwk-minh'), light: $('#rwk-light').checked, days: daysOn, wk: [n('rwk-wk0'), n('rwk-wk1')], we: [n('rwk-we0'), n('rwk-we1')] } }, 'rwk-crit-msg');
+  });
+  $('#rwk-crit-reset').addEventListener('click', () => { if (confirm('Kriterien auf die Vorschläge zurücksetzen?')) rwkSave({ action: 'crit-reset' }, 'rwk-crit-msg', 'Vorschläge wiederhergestellt.'); });
+  $('#rwk-wear-save').addEventListener('click', () => rwkSave({ action: 'wear', wear: rwkWearForm() }, 'rwk-wear-msg'));
+  $('#rwk-wear-reset').addEventListener('click', () => { if (confirm('Alle Kleidungsregeln auf die Vorschläge zurücksetzen? Eigene Teile gehen dabei verloren.')) rwkSave({ action: 'wear-reset' }, 'rwk-wear-msg', 'Vorschläge wiederhergestellt.'); });
+  $('#rwk-own-add').addEventListener('click', () => {
+    const name = $('#rwk-own-name').value.trim(), cond = $('#rwk-own-cond').value, val = $('#rwk-own-val').value;
+    if (!name) { rwkMsg('rwk-wear-msg', 'Bitte einen Namen eingeben.'); return; }
+    const needsVal = !['wet', 'dark'].includes(cond);
+    if (needsVal && val === '') { rwkMsg('rwk-wear-msg', 'Bitte einen Wert eingeben.'); return; }
+    const wear = rwkWearForm();
+    wear.items.push({ id: 'e' + Date.now().toString(36), name, on: true, rules: [{ [cond]: needsVal ? Number(String(val).replace(',', '.')) : true }] });
+    $('#rwk-own-name').value = ''; $('#rwk-own-val').value = '';
+    rwkSave({ action: 'wear', wear }, 'rwk-wear-msg', '„' + name + '“ hinzugefügt.');
+  });
+  $('#rwk-own-cond').addEventListener('change', (e) => { $('#rwk-own-val').closest('label').hidden = ['wet', 'dark'].includes(e.target.value); });
+  $('#rwk-learn-reset').addEventListener('click', async () => {
+    if (!confirm('Gelerntes Kälteempfinden zurücksetzen? Deine Rückmeldungen bleiben für die Treffsicherheit erhalten.')) return;
+    try { await rwPost({ action: 'learn-reset' }); RW.data = null; renderRwSettings('laden'); } catch (e) { rwkMsg('rwk-learn-msg', 'Fehler: ' + e.message); }
+  });
+  $('#rwk-game').addEventListener('change', (e) => rwkSave({ action: 'game', game: e.target.checked }, 'rwk-game-msg'));
+  $('#rwk-goal').addEventListener('change', (e) => rwkSave({ action: 'game', goal: Number(e.target.value) }, 'rwk-game-msg'));
+  // Konto → Benachrichtigungen: Optionen der Art „Rad-Wetter“
+  $('#pk-rw-announce').addEventListener('change', (e) => rwPushSave({ announce: e.target.checked }));
+  $('#pk-rw-remind').addEventListener('change', (e) => rwPushSave({ remind: Number(e.target.value) }));
+  $('#pk-rw-place').addEventListener('change', (e) => rwPushSave({ place: e.target.value || null }));
+}
+async function rwPushSave(body) {
+  try { const r = await rwPost({ action: 'push', ...body }); $('#push-msg').textContent = r.ok ? 'Gespeichert.' : r.error || 'Nicht gespeichert.'; RW.data = null; }
+  catch { $('#push-msg').textContent = 'Konnte die Einstellung nicht speichern.'; }
+}
+/** Unter Konto → Benachrichtigungen (aus renderPush): Optionen nur, wenn die Art an ist */
+function renderRwPush(info, on) {
+  const box = $('#pk-wetter-opts'); if (!box) return;
+  box.hidden = !on;
+  if (!info) return;
+  $('#pk-rw-announce').checked = info.announce !== false;
+  $('#pk-rw-remind').value = String(info.remind ?? 30);
+  const sel = $('#pk-rw-place'); sel.replaceChildren(new Option('Zuhause', ''));
+  for (const p of info.places || []) if (p.id !== 'home') sel.append(new Option(p.name, p.id));
+  sel.value = info.place || '';
+  sel.closest('label').hidden = (info.places || []).length < 2;
+  $('#pk-rw-note').textContent = info.on ? 'Nicht nachts (Ankündigungen 7–21 Uhr), höchstens zwei am Tag mit drei Stunden Abstand, und nur, wenn ein Fenster neu ist oder sich um mindestens zwei Stunden verschiebt.' : 'Richte zuerst Rad-Wetter ein: auf der Seite Rad-Wetter (unter Einheiten) oder unter Konto → Rad-Wetter.';
+}

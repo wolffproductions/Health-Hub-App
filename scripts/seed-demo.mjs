@@ -54,6 +54,20 @@ function demoHist(min, hr, v) {
 }
 
 // Ausgedachte Verläufe (#17): 300 Abschnitte, Tempo und Puls schwanken leicht, Höhe als sanfte Hügel
+// Ausgedachte Bestleistungen (wie aus der .fit): kürzere Strecken etwas schneller, kurze Zeitfenster mehr Watt
+function demoBest(km, min, v, run, pw) {
+  const d = {}, p = {};
+  for (const D of [400, 805, 1000, 1609, 3219, 5000, 10000, 15000, 16093, 20000, 21097, 30000, 40000, 42195, 50000, 80000, 100000, 160934]) {
+    if (D > km * 1000) break;
+    d[D] = Math.round(D / (v * (1 + 0.14 * (1 - D / (km * 1000))) * rnd(0.98, 1.03)));
+  }
+  if (!run && pw) for (const W of [5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200]) {
+    if (W > min * 60) break;
+    p[W] = Math.round(pw * (1 + 2.6 * Math.exp(-W / 25) + 0.35 * Math.exp(-W / 500)) * rnd(0.96, 1.04));
+  }
+  return { d, p };
+}
+
 function demoStreams(km, min, hr, v, run) {
   const n = 300, ph = rnd(0, 6);
   const out = { d: [], t: [], v: [], hr: [], alt: [], cad: [], pw: [] };
@@ -66,6 +80,8 @@ function demoStreams(km, min, hr, v, run) {
     out.cad.push(Math.round(run ? 85 + 2 * w : 88 + 4 * w)); out.pw.push(run ? null : Math.round(200 * (1 + 0.15 * w + hill / 120)));
   }
   if (run) delete out.pw;
+  // Zwei Pausen (#152, Ampel und Trinkpause), ohne rnd, damit die übrigen Demodaten gleich bleiben
+  if (km > 3) out.p = [[Math.round(km * 370), 48], [Math.round(km * 710), 26]];
   return out;
 }
 
@@ -128,7 +144,7 @@ for (let i = 0; i < 120; i++) {
       vo2: run ? Math.round(52 - i / 30) : Math.round(50 - i / 40),
       kcal: Math.round(min * (run ? 11 : 9)),
     };
-    L.push(`INSERT OR REPLACE INTO activities (source, external_id, day, type, data, laps_done, route, route_done, hr_hist, streams, updated_at) VALUES ('demo', ${q(a.id)}, ${q(d)}, ${q(a.type)}, ${q(JSON.stringify(a))}, 1, ${q(JSON.stringify(demoRoute(km)))}, 1, ${q(JSON.stringify(demoHist(min, hr, v)))}, ${q(JSON.stringify(demoStreams(km, min, hr, v, run)))}, ${now});`);
+    L.push(`INSERT OR REPLACE INTO activities (source, external_id, day, type, data, laps_done, route, route_done, hr_hist, streams, best, updated_at) VALUES ('demo', ${q(a.id)}, ${q(d)}, ${q(a.type)}, ${q(JSON.stringify(a))}, 1, ${q(JSON.stringify(demoRoute(km)))}, 1, ${q(JSON.stringify(demoHist(min, hr, v)))}, ${q(JSON.stringify(demoStreams(km, min, hr, v, run)))}, ${q(JSON.stringify(demoBest(km, min, v, run, a.pw)))}, ${now});`);
     // Strava (#44): dieselbe Einheit noch einmal mit Strava-Extras (wird beim Laden zusammengeführt)
     if (i < 30) {
       const sa = { id: "s9" + i, sid: "9" + i, src: "strava", date: d, start: "07:31", type: a.type, name: run ? "Morgenrunde" : "Ausfahrt", km: +(km * 1.004).toFixed(2), min,
@@ -183,6 +199,122 @@ if (process.env.DEMO_WHOOP === "1") {
   }
   L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('whoopMeta', ${q(JSON.stringify({ lastOk: new Date().toISOString(), lastSleep: new Date(Date.now() - 3 * 3600000).toISOString(), complete: true, count: 22 }))});`);
 }
+// Google Health / Fitbit, nur mit DEMO_GOOGLE=1: ausgedachte Nächte, HRV, Ruhepuls, Schritte der letzten 60 Tage und ein paar
+// Fitbit-Einheiten (Gehen und HIIT am Abend, eigenständig). Verbindung im „Testmodus“, die in
+// 2 Tagen abläuft, damit der Hinweis sichtbar ist. Ohne rnd, damit der Rest gleich bleibt.
+L.push("DELETE FROM daily_metrics WHERE source = 'google';", "DELETE FROM activities WHERE source = 'google';", "DELETE FROM kv WHERE key IN ('googleApp', 'googleTokens', 'googleMeta', 'googleExpired');");
+if (process.env.DEMO_GOOGLE === "1") {
+  for (let i = 0; i < 60; i++) {
+    const w = 0.5 + 0.5 * Math.sin(i * 1.1) * Math.cos(i / 6);
+    const slp = +(6.2 + 1.7 * w).toFixed(2);
+    const m = { hrv: Math.round(34 + 14 * w), rhr: Math.round(58 - 5 * w), spo2: 95.6, resp: 14.4, skinT: +(33.8 + 0.2 * Math.sin(i)).toFixed(1),
+      slp, deep: +(slp * 0.17).toFixed(2), rem: +(slp * 0.21).toFixed(2), awake: 38, bed: 23.4, wake: 6.9, steps: Math.round(6500 + 5000 * w) };
+    for (const [k, v] of Object.entries(m)) L.push(`INSERT OR REPLACE INTO daily_metrics VALUES (${q(day(i))},${q(k)},'google',${v},${now});`);
+    if (i % 5 === 1 && i < 40) {
+      const a = { id: "gdemo" + i, gid: "demo" + i, src: "google", date: day(i), start: "18:10", type: i % 10 === 1 ? "hiit" : "walking", name: "", km: i % 10 === 1 ? null : 4.2, min: 42, minTotal: 44, hr: 118, elev: 12, kcal: 290, steps: 5200, vo2: null, gz: [18, 14, 6, 0], azm: 26, te: null, teAn: null, load: null, label: null };
+      L.push(`INSERT OR REPLACE INTO activities (source, external_id, day, type, data, laps_done, route_done, updated_at) VALUES ('google', ${q(a.id)}, ${q(a.date)}, ${q(a.type)}, ${q(JSON.stringify(a))}, 1, 1, ${now});`);
+    }
+  }
+  const secret = (readFileSync(new URL("../.dev.vars", import.meta.url), "utf8").match(/^SESSION_SECRET=(.*)$/m) || [])[1];
+  if (secret) {
+    const { webcrypto } = await import("node:crypto");
+    const b64u = (b) => Buffer.from(b).toString("base64url");
+    const key = await webcrypto.subtle.importKey("raw", await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(secret.trim() + ":garmin-key")), "AES-GCM", false, ["encrypt"]);
+    const enc = async (o) => { const iv = webcrypto.getRandomValues(new Uint8Array(12)); return b64u(iv) + "." + b64u(await webcrypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(o)))); };
+    L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('googleApp', ${q(await enc({ id: "demo-0000000000000000.apps.googleusercontent.com", secret: "demo-client-secret-0000" }))});`);
+    L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('googleTokens', ${q(await enc({ access: "demo", refresh: "demo", expires: Date.now() + 3600e3, refreshExpires: Date.now() + 2.5 * 864e5, scope: ["sleep", "activity_and_fitness", "health_metrics_and_measurements"].map((x) => "https://www.googleapis.com/auth/googlehealth." + x + ".readonly").join(" ") }))});`);
+  }
+  L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('googleMeta', ${q(JSON.stringify({ lastOk: new Date().toISOString(), lastSleep: new Date(Date.now() - 5 * 3600000).toISOString(), complete: true, count: 8 }))});`);
+}
 L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('meta', ${q(JSON.stringify({ lastRun: new Date(Date.now() - 12 * 60000).toISOString(), lastRecent: new Date().toISOString(), complete: true, oldest: day(119), lapsPending: 0 }))});`);
+// Wetter je Einheit (#54), ausgedacht und für alle Demo-Einheiten gleich (ohne rnd, damit die übrigen Demodaten gleich bleiben)
+LAPS.push(`UPDATE activities SET weather = ${q(JSON.stringify({ t: 11.4, ta: 9.6, hu: 72, ws: 14, wd: 300, c: 3 }))} WHERE source = 'demo';`);
+
+// ---------- Rad-Wetter (#153): ausgedachte Vorhersage, Orte, Fenster-Protokoll, Rückmeldungen ----------
+// Ohne rnd, damit die übrigen Demodaten gleich bleiben. Rechnet mit src/radwetter.ts (deshalb --experimental-strip-types).
+// Die Vorhersage ist als Demo markiert (demo: true) und wird nicht von Open-Meteo überschrieben, solange die Orte bleiben.
+{
+  const rw = await import("../src/radwetter.ts");
+  const tz = "Europe/Berlin", nowS = Math.floor(Date.now() / 1000), off = rw.tzOffset(tz, nowS);
+  const midnight = Math.floor((nowS + off) / 86400) * 86400 - off; // heute 00:00 Ortszeit
+  // Tagesverlauf: tiefster Wert gegen 6 Uhr, höchster am Nachmittag
+  const curve = (h, lo, hi) => lo + (hi - lo) * Math.max(0, Math.sin(Math.PI * (h - 6) / 16));
+  // Wetterlagen im Wechsel, damit in jeden 48-Stunden-Ausschnitt kühl/windig, warm/trocken und nass fallen
+  const KINDS = ["regenDannWind", "warm", "nass", "kuehl"];
+  const story = (H, dt, wk) => {
+    const day = Math.floor(H / 24), h = ((H % 24) + 24) % 24, kind = KINDS[((day % 4) + 4) % 4];
+    const lightH = h >= 8 && h < 16;
+    let o;
+    if (day < 0) o = { t: curve(h, 5, 9), d: 3.5, rh: 85, p: h >= 17 ? 0.8 : 0, pp: h >= 17 ? 80 : 20, c: h >= 17 ? 61 : 3, cc: 90, ws: 18, wg: 34, wd: 290, sun: 0 };
+    else if (kind === "regenDannWind") {
+      const rain = h < 10;
+      o = { t: curve(h, 9, 14), d: 3, rh: rain ? 95 : 75, p: rain ? (h >= 3 && h <= 7 ? 1.2 : 0.5) : 0, pp: rain ? 90 : h < 13 ? 25 : 10, c: rain ? 63 : 2, cc: rain ? 100 : 40,
+        ws: h >= 8 && h <= 11 ? 27 : h <= 16 ? 22 : 14, wg: h >= 8 && h <= 11 ? 48 : 36, wd: 270, sun: lightH && !rain ? 2400 : 0 };
+    } else if (kind === "warm") o = { t: curve(h, 9, 19), d: 0.8, rh: 55, p: 0, pp: 0, c: lightH ? 0 : 1, cc: 10, ws: 10, wg: 22, wd: 180, sun: lightH ? 3300 : 0 };
+    else if (kind === "nass") o = { t: curve(h, 9, 12), d: 2.5, rh: 96, p: h % 5 === 0 ? 0.4 : 1.4, pp: 85, c: h % 3 ? 63 : 80, cc: 100, ws: 20, wg: 40, wd: 225, sun: 0 };
+    else o = { t: curve(h, 4, 9), d: 3.5, rh: 80, p: 0, pp: 10, c: 3, cc: 85, ws: 22, wg: 42, wd: 315, sun: lightH ? 300 : 0 };
+    return { t: +(o.t + dt).toFixed(1), ta: +(o.t + dt - o.d).toFixed(1), rh: o.rh, p: o.p, pp: o.pp, c: o.c, cc: o.cc, ws: Math.round(o.ws * wk), wg: Math.round(o.wg * wk), wd: o.wd, sun: o.sun };
+  };
+  const fcJson = (dt, wk) => {
+    const time = Array.from({ length: 5 * 24 + 1 }, (_, i) => midnight - 86400 + i * 3600);
+    const vals = time.map((e) => story(Math.round((e - midnight) / 3600), dt, wk));
+    const col = (k) => vals.map((v) => v[k]);
+    return {
+      timezone: tz, utc_offset_seconds: off,
+      hourly: { time, temperature_2m: col("t"), apparent_temperature: col("ta"), relative_humidity_2m: col("rh"), precipitation: col("p"), precipitation_probability: col("pp"),
+        weather_code: col("c"), cloud_cover: col("cc"), wind_speed_10m: col("ws"), wind_gusts_10m: col("wg"), wind_direction_10m: col("wd"), is_day: time.map(() => 0), sunshine_duration: col("sun") },
+      daily: { sunrise: [-1, 0, 1, 2, 3].map((d) => midnight + d * 86400 + 7.67 * 3600), sunset: [-1, 0, 1, 2, 3].map((d) => midnight + d * 86400 + 16.08 * 3600) },
+    };
+  };
+  // Zwei ausgedachte Lieblingsrunden: nach Südosten hin und zurück, Schleife im Südwesten
+  const line = (from, bearingDeg, km, n) => Array.from({ length: n + 1 }, (_, i) => {
+    const d = (km * i) / n, a = (bearingDeg * Math.PI) / 180;
+    return [+(from[0] + (d * Math.cos(a)) / 111).toFixed(5), +(from[1] + (d * Math.sin(a)) / (111 * Math.cos((from[0] * Math.PI) / 180))).toFixed(5)];
+  });
+  const start = [52.4735, 13.4015];
+  const out = line(start, 135, 34, 60), wiggle = (p, i) => [+(p[0] + Math.sin(i / 3) * 0.004).toFixed(5), p[1]];
+  const spreewald = [...out.map(wiggle), ...out.slice(0, -1).reverse()];
+  const grunewald = Array.from({ length: 121 }, (_, i) => {
+    const t = (i / 120) * 2 * Math.PI, rKm = 7.5, cLat = 52.43, cLon = 13.27;
+    return [+(cLat + (rKm * Math.sin(t) * (1 + 0.15 * Math.cos(3 * t))) / 111).toFixed(5), +(cLon + (rKm * Math.cos(t) * 1.3) / (111 * Math.cos((cLat * Math.PI) / 180))).toFixed(5)];
+  });
+  grunewald.unshift(start); grunewald.push(start);
+  const extra = [
+    { id: "demo-rw1", i: 9, start: "09:10", name: "Spreewald hin und zurück", route: spreewald, wx: { t: 6.5, ta: 3.1, hu: 81, ws: 26, wd: 300, c: 3 } },
+    { id: "demo-rw2", i: 13, start: "10:30", name: "Grunewald-Schleife", route: grunewald, wx: { t: 13.2, ta: 12.1, hu: 64, ws: 11, wd: 200, c: 0 } },
+  ];
+  for (const x of extra) {
+    const info = rw.routeInfo(x.route), km = info.km, min = Math.round((km / 27.5) * 60);
+    const a = { id: x.id, date: day(x.i), start: x.start, type: "road_biking", name: x.name, km, min, hr: 138, maxHr: 166, spd: +(km / min / 0.06).toFixed(3), pw: 196, elev: 140, te: 3.1, teAn: 0.6, load: 120, label: "AEROBIC_BASE", z: [300, 2400, 1200, 300, 0], kcal: Math.round(min * 9) };
+    L.push(`INSERT OR REPLACE INTO activities (source, external_id, day, type, data, laps_done, route, route_done, updated_at) VALUES ('demo', ${q(x.id)}, ${q(a.date)}, 'road_biking', ${q(JSON.stringify(a))}, 1, ${q(JSON.stringify(x.route))}, 1, ${now});`);
+    LAPS.push(`UPDATE activities SET weather = ${q(JSON.stringify(x.wx))} WHERE source = 'demo' AND external_id = ${q(x.id)};`);
+  }
+  // Wetter je Einheit für die Radfahrten: Regen, Kälte, Wind und Sonne im Wechsel (für Abzeichen und Rekorde)
+  const WX = [{ t: 9.1, ta: 6.4, hu: 94, ws: 18, wd: 230, c: 61 }, { t: 1.2, ta: -2.3, hu: 80, ws: 12, wd: 40, c: 3 }, { t: 10.4, ta: 6.0, hu: 70, ws: 31, wd: 280, c: 2 }, { t: 14.6, ta: 14.0, hu: 58, ws: 9, wd: 160, c: 0 }];
+  for (let i = 2; i < 120; i += 4) LAPS.push(`UPDATE activities SET weather = ${q(JSON.stringify(WX[((i - 2) / 4) % 4]))} WHERE source = 'demo' AND external_id = ${q("demo" + i)};`);
+  const places = [
+    { id: "home", kind: "home", name: "Zuhause", lat: 52.47, lng: 13.4 },
+    ...extra.map((x, k) => { const info = rw.routeInfo(x.route); return { id: "rdemo" + k, kind: "route", name: x.name, lat: info.c[0], lng: info.c[1], act: x.id, km: info.km, bear: info.bear, spread: info.spread, sk: info.sk, hi: info.hi }; }),
+  ];
+  const list = {};
+  places.forEach((p, k) => { const fc = rw.parseForecast(fcJson([0, 0.6, -0.4][k], [1, 1.15, 0.9][k])); list[p.id] = { tz, h: rw.packHours(fc.hours) }; });
+  const key = places.map((p) => `${p.id}:${p.lat},${p.lng}`).join("|");
+  L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('rwCfg', ${q(JSON.stringify({ on: true, places, game: true, goal: 2, push: { place: null, announce: true, remind: 30 } }))});`);
+  L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('rwFc', ${q(JSON.stringify({ at: Date.now(), key, demo: true, list }))});`);
+  // Protokoll: 8 Wochen Fenster. An Fahrttagen (alle 4 Tage, Start 7:30) meist morgens, vor 6 Wochen nie passend (Serie reißt)
+  const lg = {};
+  for (let i = 56; i >= 1; i--) {
+    const d = day(i), ride = i % 4 === 2;
+    if (i % 7 === 5) continue; // ab und zu ein Tag ganz ohne Fenster
+    lg[d] = { w: ride && !(i >= 38 && i <= 44) ? [[7, 12, i % 8 === 2 ? 91 : 74]] : [[12, 15, 68]] };
+  }
+  const home = rw.parseForecast(fcJson(0, 1));
+  const fresh = rw.logDays(home.hours, rw.findWindows(home.hours, rw.rateHours(home.hours, rw.DEFAULT_CRIT), rw.DEFAULT_CRIT));
+  L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('rwLog', ${q(JSON.stringify(rw.mergeLog(lg, fresh)))});`);
+  // Rückmeldungen: einmal zu kalt, sonst passt; die Fahrt von vorgestern wartet noch auf eine Rückmeldung
+  const fb = [[22, 0], [18, -1], [14, 0], [10, 0], [6, 0]].map(([i, v], k) => ({ id: "demo" + i, d: day(i), v, f: [6.1, 3.4, 7.9, 5.2, 4.4][k], lvl: "ll", at: Date.now() - i * 864e5 }));
+  L.push(`INSERT OR REPLACE INTO kv (key, value) VALUES ('rwFb', ${q(JSON.stringify({ list: fb }))});`);
+  L.push("DELETE FROM kv WHERE key = 'rwPush';");
+}
 writeFileSync(new URL("./.demo-seed.sql", import.meta.url), [...L, ...LAPS].join("\n"));
 console.log(`Demo-SQL mit ${L.length} Zeilen geschrieben.`);

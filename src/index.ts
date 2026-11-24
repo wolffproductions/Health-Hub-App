@@ -16,19 +16,27 @@ import { checkPassword, claimPassword, ensureSecret, hasPassword, passwordFromSe
 import { passkeyLogin, passkeyLoginOptions, passkeyRoute } from "./passkey";
 import { buildData, DEFAULT_ZONES } from "./data";
 import { exchangeToken, getApiKey } from "./garmin/client";
-import { backfillDays, syncStep, type Meta } from "./garmin/sync";
+import { backfillDays, nightCheck, syncStep, type Meta, type Profile } from "./garmin/sync";
 import { AUTH_URL, connected as withingsConnected, exchangeCode, getApp, saveApp, SCOPE } from "./withings/client";
 import { withingsStep, type WithingsMeta } from "./withings/sync";
 import * as strava from "./strava/client";
 import { stravaEvent, stravaStep, type StravaMeta } from "./strava/sync";
 import { gearRoute, stravaGearDaily } from "./ausruestung-api";
+import { trainingRoute } from "./training-api";
+import { feedbackRoute } from "./feedback-api";
 import * as whoop from "./whoop/client";
 import { whoopBodyDaily, whoopEvent, whoopStep, type WhoopMeta } from "./whoop/sync";
 import { webhookSignature } from "./whoop/extract";
+import * as google from "./google/client";
+import { googleStep, type GoogleMeta } from "./google/sync";
 import { DEFAULT_SRC_CFG, type SrcCfg } from "./quellen";
 import SW from "./sw.js.txt";
 import { addSub, DEFAULT_CFG, removeSub, subs, vapidPublic, type PushCfg, type PushSub } from "./push";
-import { morningPush } from "./morgen";
+import { localTime, morningPush, newsPush } from "./morgen";
+import { kindOn, kindsOf, PUSH_KINDS } from "./mitteilungen";
+import { friendsRoute, publicFriendRoute, refreshFriends } from "./freunde-api";
+import { weatherRoute, weatherStep } from "./wetter-api";
+import { radwetterPushInfo, radwetterRoute, radwetterTick } from "./radwetter-api";
 import { VERSION } from "./version";
 import { NEWS } from "./neuigkeiten";
 import { b64u, encrypt, hmacKey, isDay, json, kvDelete, kvGet, kvGetJson, kvPut, localDate, respond, round, SECURITY_HEADERS } from "./util";
@@ -81,6 +89,7 @@ async function status(env: Env) {
     withings: await withingsStatus(env),
     strava: await stravaStatus(env),
     whoop: await whoopStatus(env),
+    google: await googleStatus(env),
   };
 }
 
@@ -253,6 +262,81 @@ async function stravaWebhook(req: Request, url: URL, env: Env, ctx: ExecutionCon
   return json({ ok: true });
 }
 
+// ---------- Google Health (Fitbit, Pixel Watch) ----------
+// Eigenes Google-Cloud-Projekt pro Person (Client-ID/-Secret wie bei Strava). Verbindung /google/connect →
+// /google/callback. Kein Webhook: Abgleich im Cron um :20 und :50 (eigener Aufruf, eigenes Anfrage-Kontingent).
+const GOOGLE_KEYS = ["googleApp", "googleTokens", "googleMeta", "googleState", "googleExpired"];
+async function googleStatus(env: Env) {
+  const meta = await kvGetJson<GoogleMeta>(env, "googleMeta", {});
+  const app = await google.getApp(env).catch(() => null);
+  const inf = await google.info(env);
+  return {
+    app: !!app,
+    connected: await google.connected(env),
+    // Verbindung im Testmodus abgelaufen: neu verbinden nötig (Hinweis auf „Heute“)
+    expired: !!(await kvGet(env, "googleExpired")),
+    refreshExpires: inf.refreshExpires,
+    missingScopes: google.SCOPES.filter((sc) => !inf.scopes.includes(sc)).length,
+    lastOk: meta.lastOk || null,
+    lastError: meta.lastError || null,
+    lastSleep: meta.lastSleep || null,
+    oldest: meta.oldest || null,
+    complete: !!meta.complete,
+    count: meta.count ?? 0,
+    paused: !!(meta.pauseUntil && Date.now() < meta.pauseUntil),
+    night: (await kvGetJson<SrcCfg>(env, "srcCfg", DEFAULT_SRC_CFG)).night,
+  };
+}
+async function googleAppRoute(req: Request, env: Env) {
+  if (req.method === "DELETE") {
+    // Zugriff bei Google widerrufen; geladene Werte bleiben (Historie wird nie gelöscht)
+    await google.revoke(env);
+    for (const k of GOOGLE_KEYS) await kvDelete(env, k);
+    return json({ ok: true });
+  }
+  const body = (await req.json().catch(() => ({}))) as { id?: unknown; secret?: unknown };
+  const id = String(body.id || "").trim(), secret = String(body.secret || "").trim();
+  if (!/^[\w.-]{20,200}\.apps\.googleusercontent\.com$/.test(id) || !/^[\w-]{16,200}$/.test(secret)) {
+    return json({ ok: false, error: "Bitte die Client-ID (endet auf .apps.googleusercontent.com) und das Client-Secret vollständig aus der Google Cloud Console kopieren." }, 400);
+  }
+  await google.saveApp(env, { id, secret });
+  await kvDelete(env, "googleTokens");
+  return json({ ok: true });
+}
+async function googleConnect(url: URL, env: Env) {
+  const app = await google.getApp(env);
+  if (!app) return new Response(null, { status: 303, headers: { Location: "/?google=app", ...SECURITY_HEADERS } });
+  const state = b64u(crypto.getRandomValues(new Uint8Array(18)));
+  await kvPut(env, "googleState", state, 600);
+  const q = new URLSearchParams({
+    response_type: "code", client_id: app.id, redirect_uri: url.origin + "/google/callback", scope: google.SCOPES.join(" "), state,
+    // offline + consent: nur so liefert Google ein Erneuerungs-Token, auch beim erneuten Verbinden
+    access_type: "offline", prompt: "consent", include_granted_scopes: "true",
+  });
+  return new Response(null, { status: 302, headers: { Location: google.AUTH_URL + "?" + q, ...SECURITY_HEADERS } });
+}
+async function googleCallback(url: URL, env: Env, ctx: ExecutionContext) {
+  const code = url.searchParams.get("code"), state = url.searchParams.get("state");
+  const saved = await kvGet(env, "googleState");
+  await kvDelete(env, "googleState");
+  let res = "ok";
+  if (url.searchParams.get("error")) res = url.searchParams.get("error") === "access_denied" ? "abgebrochen" : "fehler";
+  else if (!code || !state || state !== saved) res = "abgelaufen";
+  else {
+    try {
+      const { missing } = await google.exchangeCode(env, code, url.origin + "/google/callback");
+      if (missing.length) res = "rechte";
+      await kvDelete(env, "googleExpired");
+      // Neu verbunden: die letzten Tage gleich holen; Historie läuft weiter, wo sie war
+      ctx.waitUntil(googleStep(env).catch((e) => console.error("google", e)));
+    } catch (e) {
+      console.error("google", e);
+      res = "fehler";
+    }
+  }
+  return new Response(null, { status: 303, headers: { Location: "/?google=" + res, ...SECURITY_HEADERS } });
+}
+
 // ---------- WHOOP (#119) ----------
 // Wie Strava: eigene WHOOP-App pro Person, Verbindung über /whoop/connect → /whoop/callback. Der Webhook
 // (/whoop/webhook, öffentlich) wird in der WHOOP-App selbst eingetragen und ist mit dem Client-Secret signiert.
@@ -295,7 +379,7 @@ async function whoopAppRoute(req: Request, env: Env) {
 /** Nachtwerte bei Garmin + WHOOP: welche Quelle zählt (Schlaf, HRV, Ruhepuls, SpO2) */
 async function srcCfgRoute(req: Request, env: Env) {
   const body = (await req.json().catch(() => ({}))) as { night?: unknown };
-  const cfg: SrcCfg = { ...DEFAULT_SRC_CFG, night: body.night === "garmin" ? "garmin" : "whoop" };
+  const cfg: SrcCfg = { ...DEFAULT_SRC_CFG, night: body.night === "garmin" || body.night === "google" ? body.night : "whoop" };
   await kvPut(env, "srcCfg", JSON.stringify(cfg));
   return json({ ok: true, ...cfg });
 }
@@ -347,26 +431,70 @@ async function whoopWebhook(req: Request, env: Env, ctx: ExecutionContext) {
   const me = await whoop.who(env);
   // Nur Meldungen des eigenen WHOOP-Kontos
   if (ev && me.user && String(ev.user_id) === me.user && (await whoop.connected(env))) {
-    ctx.waitUntil(whoopEvent(env, { type: String(ev.type || ""), id: String(ev.id || "") }).catch((e) => console.error("whoop webhook", e)));
+    const type = String(ev.type || "");
+    // Neue Nacht oder Recovery: gleich prüfen, ob der automatische Morgen-Push jetzt raus kann (#13)
+    ctx.waitUntil(whoopEvent(env, { type, id: String(ev.id || "") })
+      .then(() => (/sleep|recovery/i.test(type) ? morningPush(env) : undefined))
+      .catch((e) => console.error("whoop webhook", e)));
   }
   return json({ ok: true });
 }
 
+// ---------- Eigenes Profil: Name und Bild (Konto) ----------
+// Nur für die eigene Oberfläche (Begrüßung, Bild oben rechts), nicht für Claude. Das Bild verkleinert die App vorher auf
+// 256 × 256 px (JPEG), es liegt als data-URL in kv „me“ (höchstens ~300 kB). Für die Großansicht zusätzlich scharf mit
+// bis zu 1024 px in kv „meBig“; die lädt die App nur beim Antippen (GET /api/me?big=1), Freunde bekommen nur das kleine.
+async function meRoute(req: Request, env: Env, url: URL) {
+  const me = await kvGetJson<{ name?: string; img?: string }>(env, "me", {});
+  if (req.method === "GET" && url.searchParams.get("big")) return json({ big: (await kvGet(env, "meBig")) || me.img || null });
+  if (req.method === "GET") return json({ name: me.name || "", img: me.img || null });
+  if (req.method !== "POST") return json({ error: "Nicht erlaubt" }, 405);
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  if (typeof body.name === "string") me.name = body.name.replace(/\s+/g, " ").trim().slice(0, 40);
+  if (body.img === null) { delete me.img; await kvDelete(env, "meBig"); }
+  else if (typeof body.img === "string") {
+    if (typeof body.big === "string") {
+      if (body.big.length > 1500000 || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(body.big)) return json({ ok: false, error: "Das Bild ist zu groß oder kein Foto." }, 400);
+      await kvPut(env, "meBig", body.big);
+    } else await kvDelete(env, "meBig");
+    if (body.img.length > 300000 || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(body.img)) return json({ ok: false, error: "Das Bild ist zu groß oder kein Foto." }, 400);
+    me.img = body.img;
+  }
+  await kvPut(env, "me", JSON.stringify(me));
+  return json({ ok: true, name: me.name || "", img: me.img || null });
+}
+
 // ---------- Morgen-Push (#13) ----------
+/** Zwischen den Sync-Läufen: im Modus „automatisch“ morgens nur Schlaf/HRV holen und ggf. senden */
+async function morningQuick(env: Env) {
+  const cfg: PushCfg = { ...DEFAULT_CFG, ...(await kvGetJson<PushCfg>(env, "pushCfg", DEFAULT_CFG)) };
+  if (!kindOn(cfg, "morgen") || cfg.mode !== "auto") return;
+  const profile = await kvGetJson<Profile | null>(env, "profile", null);
+  const tz = profile?.tz || env.TIMEZONE || "Europe/Berlin";
+  const now = localTime(tz);
+  if (cfg.lastSent === localDate(tz) || now < "03:00" || now > (cfg.latest || "11:00")) return;
+  if (await getApiKey(env).catch(() => null)) await nightCheck(env).catch((e) => console.error("night", e));
+  await morningPush(env);
+}
+
 async function pushRoute(req: Request, url: URL, env: Env, sub: string) {
   const cfg: PushCfg = { ...DEFAULT_CFG, ...(await kvGetJson<PushCfg>(env, "pushCfg", DEFAULT_CFG)) };
   const save = () => kvPut(env, "pushCfg", JSON.stringify(cfg));
   if (sub === "" && req.method === "GET") {
-    return json({ key: await vapidPublic(env), on: cfg.on, time: cfg.time, devices: (await subs(env)).length, lastSent: cfg.lastSent || null, lastResult: cfg.lastResult || null });
+    return json({ key: await vapidPublic(env), on: cfg.on, kinds: kindsOf(cfg), time: cfg.time, mode: cfg.mode || "zeit", latest: cfg.latest || "11:00", devices: (await subs(env)).length, lastSent: cfg.lastSent || null, lastResult: cfg.lastResult || null,
+      // Rad-Wetter (#153): Ankündigen/Erinnern und ob Orte eingerichtet sind
+      radwetter: await radwetterPushInfo(env) });
   }
   if (req.method !== "POST") return json({ error: "Nicht erlaubt" }, 405);
   const body = (await req.json().catch(() => ({}))) as Record<string, any>;
-  const time = typeof body.time === "string" && /^([01]\d|2[0-3]):(00|30)$/.test(body.time) ? body.time : null;
+  const hhmm = (v: unknown) => (typeof v === "string" && /^([01]\d|2[0-3]):(00|30)$/.test(v) ? v : null);
+  const time = hhmm(body.time), latest = hhmm(body.latest);
+  const mode = body.mode === "auto" || body.mode === "zeit" ? (body.mode as "auto" | "zeit") : null;
   if (sub === "subscribe") {
     const s = body.sub as PushSub;
     if (!s || typeof s.endpoint !== "string" || !/^https:\/\//.test(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) return json({ ok: false, error: "Ungültiges Abo." }, 400);
     await addSub(env, { ...s, ua: String(req.headers.get("User-Agent") || "").slice(0, 120) });
-    cfg.on = true; cfg.origin = url.origin; if (time) cfg.time = time;
+    cfg.on = true; cfg.origin = url.origin; if (time) cfg.time = time; if (mode) cfg.mode = mode; if (latest) cfg.latest = latest;
     await save();
     return json({ ok: true });
   }
@@ -378,10 +506,22 @@ async function pushRoute(req: Request, url: URL, env: Env, sub: string) {
   }
   if (sub === "settings") {
     if (time) cfg.time = time;
+    if (mode) cfg.mode = mode;
+    if (latest) cfg.latest = latest;
     if (typeof body.on === "boolean") cfg.on = body.on;
+    // Arten von Mitteilungen einzeln an/aus (#161)
+    if (body.kinds && typeof body.kinds === "object") {
+      for (const k of PUSH_KINDS) {
+        const v = (body.kinds as Record<string, unknown>)[k];
+        if (typeof v !== "boolean") continue;
+        // Neue Funktionen gerade eingeschaltet: aktuellen Stand merken, damit keine alte Neuigkeit kommt
+        if (k === "neu" && v && !kindsOf(cfg).neu) cfg.newsSent = NEWS[0]?.id;
+        cfg.kinds = { ...cfg.kinds, [k]: v };
+      }
+    }
     cfg.origin = url.origin;
     await save();
-    return json({ ok: true, time: cfg.time, on: cfg.on });
+    return json({ ok: true, time: cfg.time, mode: cfg.mode || "zeit", latest: cfg.latest || "11:00", on: cfg.on, kinds: kindsOf(cfg) });
   }
   if (sub === "test") {
     cfg.origin = url.origin; await save();
@@ -517,17 +657,20 @@ async function mcpSettingsRoute(req: Request, url: URL, env: Env) {
     return json({ ok: true });
   }
   if (req.method === "POST") {
-    // Nur die mitgeschickten Freigaben ändern (Stimmung, WHOOP #119), die anderen bleiben
-    const body = (await req.json().catch(() => ({}))) as { mood?: unknown; whoop?: unknown };
+    // Nur die mitgeschickten Freigaben ändern (Stimmung, WHOOP #119, Google Health), die anderen bleiben
+    const body = (await req.json().catch(() => ({}))) as { mood?: unknown; whoop?: unknown; google?: unknown; plan?: unknown };
     const old = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
     const set: McpSettings = { ...DEFAULT_MCP_SETTINGS, ...old };
     if (typeof body.mood === "boolean") set.mood = body.mood;
     if (typeof body.whoop === "boolean") set.whoop = body.whoop;
+    if (typeof body.google === "boolean") set.google = body.google;
+    if (typeof body.plan === "boolean") set.plan = body.plan;
     await kvPut(env, "mcpSettings", JSON.stringify(set));
   }
   const set = await kvGetJson<McpSettings>(env, "mcpSettings", DEFAULT_MCP_SETTINGS);
   const clients = (await listClients(env)).map(({ id, name, created, lastUsed }) => ({ id, name, created, lastUsed: lastUsed || null }));
-  return json({ url: url.origin + "/mcp", mood: !!set.mood, whoop: !!set.whoop, whoopConnected: await whoop.connected(env).catch(() => false), clients, apiToken: !!env.API_TOKEN });
+  return json({ url: url.origin + "/mcp", mood: !!set.mood, whoop: !!set.whoop, whoopConnected: await whoop.connected(env).catch(() => false),
+    google: !!set.google, plan: !!set.plan, googleConnected: await google.connected(env).catch(() => false), clients, apiToken: !!env.API_TOKEN });
 }
 
 async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -549,6 +692,8 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   if (path === "/strava/webhook") return stravaWebhook(req, url, env, ctx);
   // WHOOP-Webhook (#119): ohne Login, geprüft über die Signatur mit dem Client-Secret und die Nutzer-ID
   if (path === "/whoop/webhook") return whoopWebhook(req, env, ctx);
+  // Freunde (#87): öffentlicher, nur lesender Link mit geheimem Token; liefert nur, was unter Konto → Freunde freigegeben ist
+  if (path.startsWith("/f/")) return publicFriendRoute(req, env, path, ctx);
 
   // Ersteinrichtung im Browser (#12): noch kein Passwort → erst festlegen
   if (!(await hasPassword(env))) {
@@ -635,6 +780,13 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   if (path === "/api/status") return json(await status(env));
   if (path === "/api/vo2") return vo2Route(req, env);
   if (path === "/api/gear") return gearRoute(req, env);
+  if (path === "/api/training") return trainingRoute(req, url, env);
+  if (path === "/api/feedback") return feedbackRoute(req, env);
+  if (path === "/api/me") return meRoute(req, env, url);
+  if (path === "/api/freunde") return friendsRoute(req, url, env, ctx);
+  if (path === "/api/wetter") return weatherRoute(req, env, ctx);
+  // Rad-Wetter-Planer (#153): Vorhersage, Fenster, Kleidung, Dranbleiben, Einstellungen
+  if (path === "/api/radwetter" || path.startsWith("/api/radwetter/")) return radwetterRoute(req, url, env, path.slice(15).replace(/^\//, ""));
   if (path === "/api/mood") return moodRoute(req, env);
   if (path === "/api/zones") return zonesRoute(req, env);
   if (path === "/api/key" && (req.method === "POST" || req.method === "DELETE")) return keyRoute(req, env);
@@ -654,6 +806,13 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   }
   if (path === "/api/strava/webhook" && req.method === "POST") return stravaWebhookOn(url, env);
   if (path === "/api/strava/webhook" && req.method === "DELETE") { await stravaWebhookOff(env); return json({ ok: true }); }
+  if (path === "/api/google/app" && (req.method === "POST" || req.method === "DELETE")) return googleAppRoute(req, env);
+  if (path === "/api/google/sync" && req.method === "POST") {
+    await googleStep(env);
+    return json(await status(env));
+  }
+  if (path === "/google/connect") return googleConnect(url, env);
+  if (path === "/google/callback") return googleCallback(url, env, ctx);
   if (path === "/api/whoop/app" && (req.method === "POST" || req.method === "DELETE")) return whoopAppRoute(req, env);
   if (path === "/api/whoop/sync" && req.method === "POST") {
     await whoopStep(env);
@@ -683,14 +842,33 @@ export default {
       return json({ error: "Interner Fehler" }, 500);
     }
   },
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     await ensureSecret(env).catch(() => null);
     if (!env.SESSION_SECRET) return;
+    // Der Cron läuft alle 10 Minuten. Der volle Abgleich bleibt bei :00 und :30, dazwischen nur der schnelle Blick auf die
+    // letzte Nacht für den automatischen Morgen-Push (2 Garmin-Anfragen, nur morgens und nur bis er gesendet ist).
+    const minute = new Date(event.scheduledTime).getUTCMinutes();
+    // Rad-Wetter (#153): Erinnerungen bei jedem Lauf, neue Vorhersage nur um :10 und :40 (eigenes Anfrage-Kontingent)
+    ctx.waitUntil(radwetterTick(env, minute).catch((e) => console.error("radwetter", e)));
+    if (minute % 30 !== 0) {
+      ctx.waitUntil(morningQuick(env).catch((e) => console.error("morgen", e)));
+      // Google Health um :20 und :50: eigener Aufruf, damit es das Limit von 50 Anfragen nicht mit dem vollen Abgleich teilt
+      if (minute % 30 === 20 && (await google.connected(env).catch(() => false))) {
+        ctx.waitUntil(googleStep(env).catch((e) => console.error("google", e)));
+      }
+      return;
+    }
     // Erst Garmin abgleichen, dann (falls fällig) den Morgen-Push mit den frischen Werten senden (#13)
     ctx.waitUntil((async () => {
       if (await getApiKey(env).catch(() => null)) await syncStep(env, true).catch((e) => console.error("sync", e));
       await morningPush(env).catch((e) => console.error("push", e));
+      // Neue Funktionen (#161), nur auf Wunsch und tagsüber
+      await newsPush(env).catch((e) => console.error("neu", e));
     })());
+    // Freunde (#87): deren freigegebene Zusammenfassungen holen
+    ctx.waitUntil(refreshFriends(env).catch((e) => console.error("freunde", e)));
+    // Wetter je Einheit (#54), nur mit Haken unter Konto
+    ctx.waitUntil(weatherStep(env).catch((e) => console.error("wetter", e)));
     // Withings (#3) und Strava (#44) unabhängig von Garmin
     if (await withingsConnected(env).catch(() => false)) ctx.waitUntil(withingsStep(env));
     // Ausrüstung (#52): Schuhe und Räder einmal am Tag aus Strava (eine Anfrage)

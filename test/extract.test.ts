@@ -98,3 +98,13 @@ test("dailysummaries: Stressstufen und Body Battery geladen/verbraucht (verschac
   assert.equal(b.bbCharged, 40);
   assert.equal(b.stressMax, undefined);
 });
+
+test("VO2max aus der .fit: Nachricht 140, Feld 7 = METs × 65536, unplausibel = keine", async () => {
+  const { vo2FromFit } = await import("../src/garmin/extract.ts");
+  // synthetisch: 15 METs → 52,5
+  assert.equal(vo2FromFit([{ 7: 15 * 65536 }]), 52.5);
+  assert.equal(vo2FromFit([{ 7: null }, { 7: Math.round((48.3 / 3.5) * 65536) }]), 48.3);
+  assert.equal(vo2FromFit([{ 7: 5 * 65536 }]), null, "17,5 ist zu niedrig");
+  assert.equal(vo2FromFit([]), null);
+  assert.equal(vo2FromFit(undefined), null);
+});

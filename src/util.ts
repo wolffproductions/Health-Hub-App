@@ -75,8 +75,9 @@ export const round = (x: unknown, n = 1): number | null => {
 // ---------- HTTP ----------
 export const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy":
-    // Karten: MapLibre von cdnjs, Vektorkarten, Schriften und Stil von OpenFreeMap (Web-Worker als blob:)
-    "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob:; connect-src 'self' https://tiles.openfreemap.org; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    // Karten: MapLibre von cdnjs, Vektorkarten, Schriften und Stil von OpenFreeMap (Web-Worker als blob:).
+    // Nur wenn ausgewählt (#152): Luftbild von Esri, Topo von OpenTopoMap, Höhenmodell (Schummerung) von AWS Terrain Tiles
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://server.arcgisonline.com https://*.tile.opentopomap.org https://elevation-tiles-prod.s3.amazonaws.com; connect-src 'self' https://hhub-feedback.eddie-training.workers.dev https://tiles.openfreemap.org https://server.arcgisonline.com https://*.tile.opentopomap.org https://elevation-tiles-prod.s3.amazonaws.com; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",

@@ -1,0 +1,155 @@
+// ---------- TRAININGSPLAN VON CLAUDE (#20) ----------
+// Claude schreibt den Plan über den Claude-Zugang, die App zeigt ihn: „Heute“ (Einheit des Tages, Wochen-Notiz) und
+// unter Einheiten (Woche für Woche, Haken mit Erfüllung in Prozent, verschieben, selbst abhaken). Daten: /api/training.
+const TR = { data: null, week: null, open: null, busy: false };
+const TR_TYPE = { easy: ['Locker', '--ter'], recovery: ['Regeneration', '--ter'], long: ['Lang', '--accent'], mp: ['Lang', '--accent'], strides: ['Locker', '--ter'], tempo: ['Schwelle', '--warn'], interval: ['Intervalle', '--bad'], race: ['Wettkampf', '#d4a017'], strength: ['Kraft', '--ter'], cross: ['Alternativ', '--ter'] };
+const trPace = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+const trMonday = (d) => addDays(d, -((new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7));
+const trWd = (d) => dayLabel(d).split(',')[0];
+
+async function trLoad(force) {
+  if (TR.data && !force) return TR.data;
+  if (TR.busy) return TR.data;
+  TR.busy = true;
+  try { TR.data = await api('/api/training'); } catch { TR.data = TR.data || null; } finally { TR.busy = false; }
+  return TR.data;
+}
+async function trAct(body) {
+  try {
+    const r = await api('/api/training', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { alert(r.error || 'Fehlgeschlagen.'); return; }
+    TR.data = r; TR.open = null; renderTraining(); renderTodayPlan();
+  } catch (e) { alert(e.message); }
+}
+// Kennzahlen einer Einheit: „10 km · 4:50 /km · unter 150 bpm“
+function trFacts(s) {
+  const p = [];
+  if (s.km) p.push(num(s.km, s.km % 1 ? 1 : 0) + ' km'); else if (s.min) p.push(s.min + ' min');
+  if (s.pace) p.push(trPace(s.pace) + ' /km');
+  if (s.hrMax) p.push('unter ' + s.hrMax + ' bpm');
+  return p.join(' · ');
+}
+// Haken mit Prozent: grün ab 85, gelb ab 60, sonst rot
+function trCheck(s) {
+  const p = s.done.pct, cls = p == null || p >= 85 ? 'good' : p >= 60 ? 'warn' : 'bad';
+  const st = el('span', 'tr-check ' + cls); st.innerHTML = icon('haken'); st.append(p == null ? '' : ' ' + p + ' %');
+  st.setAttribute('aria-label', 'Erledigt' + (p == null ? '' : ', ' + p + ' Prozent'));
+  return st;
+}
+function trResult(s) {
+  if (s.done) return el('div', 'tr-res', s.done.manual ? 'Selbst abgehakt' : 'Gelaufen ' + num(s.done.km, 1) + ' km · ' + s.done.why);
+  if (s.missed) return el('div', 'tr-res', 'Ausgelassen');
+  return null;
+}
+
+// „Heute“: Einheit des Tages direkt unter der Erholung, dazu die Notiz von Claude (eine Woche lang)
+async function renderTodayPlan(force) {
+  const box = $('#today-plan'); if (!box) return;
+  const d = await trLoad(force);
+  box.replaceChildren();
+  if (!d || !d.sessions || (!d.sessions.length && !d.note)) { box.hidden = true; return; }
+  const todays = d.sessions.filter((s) => s.date === d.today);
+  const next = d.sessions.find((s) => s.date > d.today);
+  const note = d.note && d.note.date > addDays(d.today, -7) ? d.note : null;
+  if (!todays.length && !note && !next) { box.hidden = true; return; }
+  box.hidden = false;
+  box.append(el('div', 'tr-eyebrow', 'Heute im Plan'));
+  if (todays.length) {
+    for (const s of todays) {
+      const row = el('div', 'tr-today' + (s.done ? ' done' : ''));
+      const left = el('div');
+      const top = el('div', 'tr-st'); const dot = el('i', 'tr-dot'); dot.style.background = color((TR_TYPE[s.type] || ['', '--ter'])[1]);
+      top.append(dot, el('span', null, s.title));
+      left.append(top);
+      const f = trFacts(s); if (f) left.append(el('div', 'tr-facts', f));
+      if (s.detail) left.append(el('p', 'meta', s.detail));
+      const r = trResult(s); if (r) left.append(r);
+      row.append(left); if (s.done) row.append(trCheck(s));
+      box.append(row);
+    }
+  } else {
+    box.append(el('p', 'tr-rest', 'Heute Ruhetag.'));
+    if (next) box.append(el('p', 'meta', 'Als Nächstes: ' + (next.date === addDays(d.today, 1) ? 'morgen' : trWd(next.date)) + ', ' + next.title + (trFacts(next) ? ' · ' + trFacts(next) : '')));
+  }
+  if (note) { const n = el('div', 'tr-note'); n.append(el('span', 'tr-note-lbl', 'Notiz von Claude'), el('p', null, note.text)); box.append(n); }
+}
+
+// Einheiten → Trainingsplan: Woche für Woche
+async function renderTraining() {
+  const box = $('#train-body'); if (!box) return;
+  const d = await trLoad(true);
+  box.replaceChildren();
+  if (!d || !d.sessions || !d.sessions.length) {
+    box.append(el('p', 'note', 'Deinen Trainingsplan erstellst du zusammen mit Claude. Gib Claude unter Konto → Claude die Erlaubnis, deinen Plan zu schreiben, und sag dann zum Beispiel: „Erstell mir einen Plan für den Halbmarathon am 7. März, Dienstag habe ich Vereinstraining.“'));
+    box.append(el('p', 'note', 'Die App zeigt dir dann jeden Tag auf „Heute“, was ansteht, hakt gelaufene Einheiten ab und sagt dir, wie gut du sie getroffen hast.'));
+    return;
+  }
+  if (d.goal) box.append(el('div', 'tr-goal', d.goal));
+  // Wochen des Plans; Start = Woche mit heute (sonst die nächste)
+  const weeks = [...new Set(d.sessions.map((s) => trMonday(s.date)))].sort();
+  const curWk = trMonday(d.today);
+  if (TR.week == null || TR.week >= weeks.length) { const i = weeks.findIndex((w) => w >= curWk); TR.week = i < 0 ? weeks.length - 1 : i; }
+  const ws = weeks[TR.week], list = d.sessions.filter((s) => trMonday(s.date) === ws);
+  const nav = el('div', 'weeknav');
+  const prev = el('button', null, '‹'); prev.type = 'button'; prev.disabled = TR.week === 0; prev.setAttribute('aria-label', 'Vorige Woche'); prev.addEventListener('click', () => { TR.week--; TR.open = null; renderTraining(); });
+  const next = el('button', null, '›'); next.type = 'button'; next.disabled = TR.week === weeks.length - 1; next.setAttribute('aria-label', 'Nächste Woche'); next.addEventListener('click', () => { TR.week++; TR.open = null; renderTraining(); });
+  const km = list.reduce((t, s) => t + (s.km || 0), 0);
+  const mid = el('div', 'wk', ws === curWk ? 'Diese Woche' : 'Woche ab ' + ws.slice(8, 10) + '.' + ws.slice(5, 7) + '.');
+  mid.append(el('small', null, list.length + (list.length === 1 ? ' Einheit' : ' Einheiten') + (km ? ' · ' + num(km, 0) + ' km' : '')));
+  nav.append(prev, mid, next); box.append(nav);
+  // Wochenbilanz, sobald die Woche begonnen hat
+  if (list.some((s) => s.date <= d.today)) {
+    const ok = list.filter((s) => s.done), pc = ok.filter((s) => s.done.pct != null);
+    const run = ok.reduce((t, s) => t + (s.done.km || 0), 0);
+    box.append(el('p', 'tr-sum', 'Erledigt ' + ok.length + ' von ' + list.length + (km ? ' · ' + num(run, 0) + ' von ' + num(km, 0) + ' km' : '') + (pc.length ? ' · Schnitt ' + Math.round(pc.reduce((t, s) => t + s.done.pct, 0) / pc.length) + ' %' : '')));
+  }
+  const ul = el('ul', 'sessions tr-list');
+  for (const s of list) {
+    const key = s.date + '#' + s.index;
+    const [label, col] = TR_TYPE[s.type] || ['', '--ter'];
+    const li = el('li', 'tr-sess' + (s.date === d.today ? ' today' : '') + (s.missed ? ' past' : ''));
+    const left = el('div');
+    const top = el('div', 'tr-st'); const dot = el('i', 'tr-dot'); dot.style.background = color(col);
+    top.append(dot, el('span', null, s.title));
+    left.append(el('div', 'tr-day', (s.date === d.today ? 'Heute' : trWd(s.date) + ', ' + s.date.slice(8, 10) + '.' + s.date.slice(5, 7) + '.') + ' · ' + label + (s.moved ? ' · verschoben' : '')), top);
+    const f = [s.pace ? trPace(s.pace) + ' /km' : '', s.hrMax ? 'unter ' + s.hrMax + ' bpm' : ''].filter(Boolean).join(' · ');
+    if (s.detail || f) left.append(el('div', 'meta', [s.detail, s.detail ? '' : f].filter(Boolean).join('')));
+    const r = trResult(s); if (r) left.append(r);
+    const right = el('div', 'tr-right');
+    right.append(el('b', 'tr-km', s.km ? num(s.km, s.km % 1 ? 1 : 0) + ' km' : s.min ? s.min + ' min' : ''));
+    if (s.done) right.append(trCheck(s));
+    li.append(left, right);
+    // Antippen: Einheit ansehen, selbst abhaken, verschieben
+    li.tabIndex = 0; li.setAttribute('role', 'button'); li.setAttribute('aria-expanded', String(TR.open === key));
+    const toggle = () => { TR.open = TR.open === key ? null : key; renderTraining(); };
+    li.addEventListener('click', (e) => { if (!e.target.closest('.tr-move')) toggle(); });
+    li.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === li) { e.preventDefault(); toggle(); } });
+    if (TR.open === key) {
+      const mv = el('div', 'tr-move');
+      const acts = el('div', 'row');
+      if (s.done && s.done.id) { const b = el('button', 'btn ghost small', 'Einheit ansehen'); b.type = 'button'; b.addEventListener('click', () => openUnit(s.done.id)); acts.append(b); }
+      if (s.date <= d.today && !(s.done && s.done.id)) {
+        const b = el('button', 'btn ghost small', s.done && s.done.manual ? 'Haken entfernen' : 'Selbst abhaken'); b.type = 'button';
+        b.addEventListener('click', () => trAct({ action: 'tick', date: s.date })); acts.append(b);
+      }
+      if (acts.childNodes.length) mv.append(acts);
+      if (s.type !== 'race') {
+        mv.append(el('div', 'tr-lbl', 'Verschieben auf'));
+        const chips = el('div', 'fr-chips tr-chips');
+        for (let i = 0; i < 7; i++) {
+          const day = addDays(ws, i), busy = list.some((x) => x.date === day);
+          const c = el('button', 'fr-chip', trWd(day).slice(0, 2) + ' ' + day.slice(8, 10) + '.'); c.type = 'button';
+          c.setAttribute('aria-pressed', String(day === s.date)); if (day === s.date) c.disabled = true;
+          c.setAttribute('aria-label', trWd(day) + (busy && day !== s.date ? ', belegt, wird getauscht' : ''));
+          c.addEventListener('click', () => trAct({ action: 'move', from: s.date, index: s.index, to: day }));
+          chips.append(c);
+        }
+        mv.append(chips, el('p', 'meta', 'Ist der Tag schon belegt, tauschen die beiden Einheiten.'));
+      }
+      left.append(mv);
+    }
+    ul.append(li);
+  }
+  box.append(ul);
+  box.append(el('p', 'note', 'Ändern oder neu planen: Sag es Claude, zum Beispiel „Ich bin diese Woche krank, plan um“. Gelaufene Einheiten hakt die App selbst ab.'));
+}

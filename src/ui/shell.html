@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#f2f2ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#f3f5f8" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,9 +17,12 @@
 <title>Health Hub</title>
 <style>
 <!-- ui:styles.css -->
+<!-- ui:radwetter.css -->
 </style>
 </head>
 <body>
+<!-- Deckende Fläche hinter der Statusleiste, siehe .statusbar in styles.css -->
+<div class="statusbar" aria-hidden="true"></div>
 <header class="top">
   <div class="wrap">
     <!-- Kompakte Leiste, nur sichtbar beim Scrollen. Zurück hier nur im Konto -->
@@ -41,6 +44,7 @@
     <button type="button" data-stat="training" aria-pressed="true">Training</button>
     <button type="button" data-stat="leistung" aria-pressed="false">Leistung</button>
     <button type="button" data-stat="schlaf" aria-pressed="false">Schlaf</button>
+    <button type="button" data-stat="freunde" aria-pressed="false">Freunde</button>
   </div>
   <div class="seg" id="seg" role="group" aria-label="Zeitraum">
       <button type="button" data-days="7" aria-pressed="false">1 W</button>
@@ -57,12 +61,15 @@
 <!-- ui:heute.html -->
 <!-- ui:training.html -->
 <!-- ui:leistung.html -->
+<!-- ui:freunde.html -->
 <!-- ui:schlaf.html -->
 <!-- ui:einheiten.html -->
 <!-- ui:einheit.html -->
+<!-- ui:freund.html -->
 <!-- ui:diagramm.html -->
 <!-- ui:balance.html -->
 <!-- ui:konto.html -->
+<!-- ui:radwetter.html -->
 </main>
 
 <nav class="tabs" aria-label="Bereiche">
@@ -79,16 +86,23 @@
 <!-- ui:core.js -->
 <!-- ui:icons.js -->
 <!-- ui:karte.js -->
+<!-- ui:export.js -->
 <!-- ui:heute.js -->
 <!-- ui:training.js -->
 <!-- ui:leistung.js -->
+<!-- ui:freunde.js -->
 <!-- ui:koerper.js -->
 <!-- ui:schlaf.js -->
 <!-- ui:einheiten.js -->
+<!-- ui:plan.js -->
 <!-- ui:einheit.js -->
+<!-- ui:freund.js -->
 <!-- ui:diagramm.js -->
 <!-- ui:balance.js -->
 <!-- ui:neu.js -->
+<!-- ui:figur.js -->
+<!-- ui:radwetter.js -->
+<!-- ui:radwetter-konto.js -->
 <!-- ui:konto.js -->
 <!-- ui:ablauf.js -->
 <!-- ui:daten.js -->

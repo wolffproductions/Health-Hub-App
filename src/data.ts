@@ -9,6 +9,7 @@ import { prognose, type PredMode } from "./prognose";
 import { assess } from "./ampel";
 import { DEFAULT_SRC_CFG, pickDaily, type SrcCfg } from "./quellen";
 import { mergeWhoop } from "./whoop/extract";
+import { mergeGoogle } from "./google/extract";
 
 /** Eigene Pulszonen (Grundlage, Tempo, Schwelle), Standard für /api/zones und die Auswertung */
 export const DEFAULT_ZONES = [[129, 160], [161, 175], [176, 191]];
@@ -37,8 +38,8 @@ export async function buildData(env: Env, days: number, opts: BuildOpts = {}) {
       .all<{ day: string; metric: string; source: string; value: number }>(),
     // Die Route selbst bleibt draußen (lädt die Oberfläche einzeln über /api/route), nur ein Hinweis „rt“
     // Ebenso die Verläufe (#17, /api/streams), nur ein Hinweis „st“
-    env.DB.prepare("SELECT source, data, laps, (route IS NOT NULL AND route <> '[]') AS has_route, (streams IS NOT NULL) AS has_streams, hr_hist FROM activities WHERE day >= ? ORDER BY day").bind(from)
-      .all<{ source: string; data: string; laps: string | null; has_route: number; has_streams: number; hr_hist: string | null }>(),
+    env.DB.prepare("SELECT source, data, laps, (route IS NOT NULL AND route <> '[]') AS has_route, (streams IS NOT NULL) AS has_streams, hr_hist, best, weather FROM activities WHERE day >= ? ORDER BY day").bind(from)
+      .all<{ source: string; data: string; laps: string | null; has_route: number; has_streams: number; hr_hist: string | null; best: string | null; weather: string | null }>(),
     kvGetJson(env, "garminZones", []),
     env.DB.prepare("SELECT MAX(updated_at) AS t FROM daily_metrics").first<{ t: number | null }>(),
     kvGetJson<number[][]>(env, "zones", DEFAULT_ZONES),
@@ -57,10 +58,14 @@ export async function buildData(env: Env, days: number, opts: BuildOpts = {}) {
     if (skip.has(r.source)) continue;
     const a = JSON.parse(r.data);
     if (a.hidden) continue; // bei Strava bzw. WHOOP gelöscht (#44, #119)
-    a.src = r.source === "strava" || r.source === "whoop" ? r.source : a.src || "garmin";
+    a.src = r.source === "strava" || r.source === "whoop" || r.source === "google" ? r.source : a.src || "garmin";
     if (r.laps) { a.laps = JSON.parse(r.laps); a.lp = 1; }
     if (r.has_route) a.rt = 1;
     if (r.has_streams) a.st = 1;
+    // Bestleistungen aus der .fit-Datei (d: Sekunden je Strecke, p: Watt je Zeitfenster), klein genug für /api/data
+    if (r.best) { try { a.bst = JSON.parse(r.best); } catch { /* kaputter Eintrag */ } }
+    // Wetter zur Mitte der Einheit (#54), nur wenn unter Konto eingeschaltet und schon geholt
+    if (r.weather && r.weather !== "{}") { try { a.wx = JSON.parse(r.weather); } catch { /* kaputter Eintrag */ } }
     // Sekunden und Meter je eigener Zone (Z1–Z5); das Histogramm selbst bleibt auf dem Server
     if (r.hr_hist) {
       const hist = JSON.parse(r.hr_hist) as HrHist;
@@ -71,7 +76,8 @@ export async function buildData(env: Env, days: number, opts: BuildOpts = {}) {
   // Gleiche Einheit von Garmin und Strava nur einmal, mit den Strava-Extras an der Garmin-Einheit (#44)
   const actsOut: Record<string, unknown> = {};
   // Ebenso Uhr + WHOOP-Band: die Einheit der Uhr bleibt, WHOOP-Strain hängt als `whoop` daran (#119)
-  for (const a of mergeWhoop(mergeDuplicates(list))) actsOut[a.id] = a;
+  // Und Garmin-Uhr + Fitbit: die Garmin-Einheit bleibt, Google hängt als `google` daran
+  for (const a of mergeGoogle(mergeWhoop(mergeDuplicates(list)))) actsOut[a.id] = a;
 
   // Erholungs-Ampel (#13): dieselbe Regel wie im Morgen-Push
   const loads = new Map<string, number>();

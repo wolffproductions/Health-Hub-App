@@ -2,7 +2,7 @@
 // Ausführen: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fitParse, STREAM_MAX_POINTS } from "../src/garmin/extract.ts";
+import { fitParse, STREAM_MAX_POINTS, PAUSE_MIN_S } from "../src/garmin/extract.ts";
 
 /** Minimale FIT-Datei mit Messpunkten: Zeit (s), Puls, Strecke (m), Tempo (m/s), Höhe (m), Leistung (W) */
 function buildFit(rows: Array<[number, number, number, number, number, number]>): Uint8Array {
@@ -34,6 +34,23 @@ test("Verläufe: nach Strecke gemittelt, Pausen zählen nicht zur Zeit, Höhe um
   assert.equal(s.v![s.v!.length - 1], 3.5);
   assert.equal(s.alt![s.alt!.length - 1], 30);
   assert.equal(s.pw![s.pw!.length - 1], 250);
+  // Die Pause von 5 Minuten liegt bei 1,8 km (#152), gemessen ab dem ersten Punkt (3 m)
+  assert.deepEqual(s.p, [[1797, 301]]);
+});
+
+test("Verläufe: Stehen bei laufender Uhr wird zur Pause, kurze Stopps nicht", () => {
+  const rows: Array<[number, number, number, number, number, number]> = [];
+  let t = 1000, m = 0;
+  const run = (n: number) => { for (let i = 0; i < n; i++) rows.push([t++, 150, (m += 3), 3, 20, 0]); };
+  const stand = (n: number) => { for (let i = 0; i < n; i++) rows.push([t++, 120, m, 0, 20, 0]); };
+  run(300); stand(45);              // Ampel bei 900 m, 45 s
+  run(300); stand(PAUSE_MIN_S - 8); // kurzer Stopp bei 1,8 km: zählt nicht
+  run(300); stand(10); run(5); stand(20); // zwei Stopps nah beieinander (15 m): eine Pause
+  run(100);
+  const s = fitParse(buildFit(rows)).streams!;
+  assert.equal(s.p!.length, 2);
+  assert.equal(s.p![0][0], 897); assert.equal(s.p![0][1], 45);
+  assert.ok(Math.abs(s.p![1][0] - 2697) <= 15); assert.equal(s.p![1][1], 30);
 });
 
 test("Verläufe: ohne Messpunkte keine Reihen", () => {

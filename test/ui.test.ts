@@ -36,3 +36,17 @@ test("das JavaScript der Seite hat keinen Syntaxfehler", () => {
   // nur übersetzen, nicht ausführen
   for (const code of scripts) assert.doesNotThrow(() => new Script(code));
 });
+
+test("icon() liefert HTML-Text: nie per append/textContent einfügen (sonst steht SVG-Code auf der Seite)", () => {
+  for (const [name, src] of Object.entries(parts)) {
+    const bad = src.split("\n").filter((l) => /\.(append|prepend|replaceChildren)\([^)]*\bicon\(/.test(l) || /(textContent|createTextNode)\s*[=(]\s*icon\(/.test(l));
+    assert.deepEqual(bad, [], name);
+  }
+});
+
+test("keine übrig gebliebenen Merge-Konfliktmarker in den Oberflächen-Teilen", () => {
+  for (const [name, src] of Object.entries({ ...parts, "shell.html": shell })) {
+    const bad = src.split("\n").filter((l) => /^(<{7}|={7}|>{7})( |$)/.test(l));
+    assert.deepEqual(bad, [], name);
+  }
+});

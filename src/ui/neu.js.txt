@@ -39,7 +39,10 @@ function openNews(entries, all) {
   const close = () => { neuMerken(news[0] ? news[0].id : ''); wrap.classList.add('zu'); setTimeout(() => wrap.remove(), 220); document.body.classList.remove('mapfull-open'); };
   ok.addEventListener('click', close);
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
-  panel.append(ok);
+  // Etwas stimmt nicht? Direkt zum Feedback (#162)
+  const fb = el('button', 'btn ghost neu-fb', 'Etwas stimmt nicht? Feedback geben'); fb.type = 'button';
+  fb.addEventListener('click', () => { close(); openFeedback(S.tab); });
+  panel.append(ok, fb);
   wrap.append(panel);
   document.body.append(wrap); document.body.classList.add('mapfull-open');
   ok.focus({ preventScroll: true });

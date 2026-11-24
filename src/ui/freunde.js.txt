@@ -1,0 +1,183 @@
+// ---------- FREUNDE (#87) ----------
+// Rangliste mit Freunden unter Statistiken → Freunde, getrennt nach Laufen und Rad. Daten: /api/freunde (eigene Werte
+// vollständig, Freunde nur, was sie freigegeben haben). Verwaltung (Link, QR-Code, Freigaben, Folgen) unter Konto → Freunde.
+const FR = { sport: 'run', span: 'w', metric: 'km', bestSpan: 'all', dist: '5000', watt: '1200', wunit: 'wkg', data: null, at: 0 };
+try { Object.assign(FR, JSON.parse(localStorage.getItem('fr') || '{}'), { data: null, at: 0 }); } catch {}
+const frSave = () => { try { const { data, at, ...rest } = FR; localStorage.setItem('fr', JSON.stringify(rest)); } catch {} };
+const FR_DIST = { run: [['1000', '1 km'], ['5000', '5 km'], ['10000', '10 km'], ['21097', 'HM'], ['42195', 'Marathon']], ride: [['10000', '10 km'], ['20000', '20 km'], ['40000', '40 km'], ['50000', '50 km'], ['100000', '100 km']] };
+const FR_WATT = [['5', '5 s'], ['60', '1 min'], ['300', '5 min'], ['1200', '20 min'], ['3600', '1 h']];
+const FR_METRIC = [['km', 'Kilometer'], ['h', 'Zeit'], ['hm', 'Höhenmeter'], ['n', 'Einheiten']];
+
+async function loadFriends(force) {
+  if (!force && FR.data && Date.now() - FR.at < 5 * 60000) return FR.data;
+  FR.data = await api('/api/freunde' + (force ? '?refresh=1' : '')); FR.at = Date.now();
+  return FR.data;
+}
+function frAvatar(p, cls = 'fr-av') {
+  const a = el('span', cls); a.setAttribute('aria-hidden', 'true');
+  if (p.img) { const im = el('img'); im.src = p.img; im.alt = ''; a.append(im); } else a.append(el('span', null, (p.name || '?').charAt(0).toUpperCase()));
+  return a;
+}
+// Kleine Auswahl als Chips (eine Zeile, waagerecht scrollbar)
+function frChips(opts, cur, on) {
+  const box = el('div', 'fr-chips'); box.setAttribute('role', 'group');
+  for (const [v, label] of opts) { const b = el('button', 'fr-chip', label); b.type = 'button'; b.setAttribute('aria-pressed', String(v === cur)); b.addEventListener('click', () => on(v)); box.append(b); }
+  return box;
+}
+// Zeile antippen öffnet das Profil des Freundes (#87)
+function frTap(li, id) {
+  // ohne Pfeil („tap“ rückt rechts ein und schiebt „Entfernen“ bzw. den Wert nach links)
+  li.classList.add('fr-tap'); li.tabIndex = 0; li.setAttribute('role', 'button');
+  li.addEventListener('click', (e) => { if (!e.target.closest('button')) openFriend(id); });
+  li.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === li) { e.preventDefault(); openFriend(id); } });
+}
+function frSeg(opts, cur, on) {
+  const s = el('div', 'seg'); s.setAttribute('role', 'group');
+  for (const [v, label] of opts) { const b = el('button', null, label); b.type = 'button'; b.setAttribute('aria-pressed', String(v === cur)); b.addEventListener('click', () => on(v)); s.append(b); }
+  return s;
+}
+// Rangliste: Personen mit Wert, sortiert; eigene Zeile hervorgehoben, Plätze 1–3 mit Medaillenfarbe
+function frBoard(title, controls, people, value, fmt, low) {
+  const card = el('div', 'card fr-card');
+  card.append(el('h3', null, title));
+  for (const c of controls) card.append(c);
+  const rows = people.map((p) => ({ p, v: value(p) })).filter((r) => r.v != null && r.v > 0).sort((a, b) => (low ? a.v - b.v : b.v - a.v));
+  const ul = el('ul', 'sessions fr-list');
+  if (!rows.length) ul.append(el('li', 'fr-none', 'Noch niemand mit Werten'));
+  rows.forEach((r, i) => {
+    const li = el('li', 'fr-row' + (r.p.me ? ' me' : ''));
+    const rank = el('span', 'fr-rank' + (i < 3 ? ' m' + (i + 1) : ''), String(i + 1));
+    const who = el('span', 'fr-who'); who.append(frAvatar(r.p), el('span', 'fr-name', r.p.me ? (r.p.name || 'Du') + ' (du)' : r.p.name));
+    li.append(rank, who, el('b', 'fr-val', fmt(r.v)));
+    if (!r.p.me && r.p.id) frTap(li, r.p.id);
+    ul.append(li);
+  });
+  card.append(ul);
+  return card;
+}
+
+async function renderFriends() {
+  const box = $('#fr-boards'); if (!box) return;
+  document.querySelectorAll('#fr-sport button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === FR.sport)));
+  let d;
+  try { d = await loadFriends(false); } catch (e) { $('#fr-note').textContent = 'Konnte nicht geladen werden: ' + e.message; return; }
+  const people = [{ ...d.me, me: true }, ...d.friends.filter((f) => f.status === 'ok' && f.data).map((f) => ({ ...f.data, id: f.id }))];
+  $('#fr-empty').hidden = d.friends.length > 0;
+  box.replaceChildren();
+  const sp = (p) => p[FR.sport] || {};
+  const re = () => { frSave(); renderFriends(); };
+  // Umfang: Woche / Monat / Jahr, Kennzahl wählbar
+  const unit = { km: (v) => num(v, v < 100 ? 1 : 0) + ' km', h: (v) => hm(v) + ' h', hm: (v) => num(v) + ' hm', n: (v) => String(v) };
+  box.append(frBoard(FR.sport === 'run' ? 'Laufen' : 'Rad',
+    [frSeg([['w', 'Woche'], ['m', 'Monat'], ['y', 'Jahr']], FR.span, (v) => { FR.span = v; re(); }), frChips(FR_METRIC, FR.metric, (v) => { FR.metric = v; re(); })],
+    people, (p) => (sp(p)[FR.span] || {})[FR.metric], unit[FR.metric], false));
+  // Bestzeiten je Strecke
+  const dists = FR_DIST[FR.sport];
+  if (!dists.some(([v]) => v === FR.dist)) FR.dist = dists[1][0];
+  box.append(frBoard('Bestzeiten',
+    [frSeg([['all', 'Gesamt'], ['year', 'Dieses Jahr']], FR.bestSpan, (v) => { FR.bestSpan = v; re(); }), frChips(dists, FR.dist, (v) => { FR.dist = v; re(); })],
+    people, (p) => ((sp(p).best || {})[FR.bestSpan] || {})[FR.dist], (s) => clockTime(s) + (FR.sport === 'run' ? ' · ' + pace(s / (Number(FR.dist) / 1000)) + ' /km' : ''), true));
+  // Rad: Leistung je Zeitfenster
+  // W/kg (Standard) ist fair zwischen leichten und schweren Fahrern; Gewicht jeweils zur Zeit der Fahrt
+  if (FR.sport === 'ride') box.append(frBoard('Leistung',
+    [frSeg([['wkg', 'W/kg'], ['w', 'Watt']], FR.wunit, (v) => { FR.wunit = v; re(); }),
+      frSeg([['all', 'Gesamt'], ['year', 'Dieses Jahr']], FR.bestSpan, (v) => { FR.bestSpan = v; re(); }), frChips(FR_WATT, FR.watt, (v) => { FR.watt = v; re(); })],
+    people, (p) => ((sp(p)[FR.wunit === 'wkg' ? 'wkg' : 'watt'] || {})[FR.bestSpan] || {})[FR.watt],
+    (v) => (FR.wunit === 'wkg' ? num(v, 2) + ' W/kg' : v + ' W'), false));
+  // Laufen: VO2max laut Garmin
+  if (FR.sport === 'run') box.append(frBoard('VO2max', [], people, (p) => p.vo2, (v) => String(v), false));
+  const stale = d.friends.filter((f) => f.err);
+  $('#fr-note').textContent = 'Du siehst deine eigenen Werte vollständig, deine Freunde nur, was sie freigegeben haben. Ohne Einheiten aus Strava und WHOOP.' +
+    (stale.length ? ' Nicht erreichbar: ' + stale.map((f) => f.name || 'Freund').join(', ') + '.' : '');
+}
+
+// ---------- Konto → Freunde: Link, QR-Code, Freigaben, Folgen ----------
+const QR_JS = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+let qrReady = null;
+function loadQr() {
+  if (window.QRCode) return Promise.resolve();
+  return qrReady ||= new Promise((ok, bad) => {
+    const s = document.createElement('script'); s.src = QR_JS; s.crossOrigin = 'anonymous';
+    s.integrity = 'sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU';
+    s.onload = ok; s.onerror = () => { qrReady = null; bad(new Error('QR-Code nicht geladen')); }; document.head.append(s);
+  });
+}
+const FR_SHARE = [['umfang', 'Kilometer, Zeit, Höhenmeter, Einheiten'], ['best', 'Bestzeiten'], ['watt', 'Leistung (Watt und W/kg, Rad)'], ['vo2', 'VO2max'], ['bild', 'Profilbild'], ['akt', 'Letzte 10 Aktivitäten mit Karte (ohne die ersten und letzten 200 m)']];
+
+async function renderFriendAdmin(force) {
+  if (!$('#konto-freunde')) return;
+  let d; try { d = force ? (FR.data = await api('/api/freunde'), FR.at = Date.now(), FR.data) : await loadFriends(false); } catch { return; }
+  $('#fr-link').value = d.link || '';
+  const sh = $('#fr-share'); sh.replaceChildren();
+  for (const [k, label] of FR_SHARE) {
+    const l = el('label', 'mcp-mood'); const c = el('input'); c.type = 'checkbox'; c.checked = !!d.share[k];
+    c.addEventListener('change', async () => { await api('/api/freunde', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'share', share: { [k]: c.checked } }) }).catch(() => {}); FR.at = 0; renderMenuFriends(); });
+    l.append(c, el('span', null, label)); sh.append(l);
+  }
+  const list = (ul, items, btns) => {
+    ul.replaceChildren(); ul.hidden = !items.length;
+    for (const it of items) {
+      const li = el('li'); const left = el('div', 'fr-who'); const nm = el('span', null, it.name || 'Ohne Namen');
+      if (it.status === 'pending') nm.append(el('span', 'fr-tag', 'Angefragt'));
+      left.append(frAvatar(it.data || it), nm);
+      if (it.status === 'ok' && it.data) frTap(li, it.id);
+      else if (it.friendId) frTap(li, it.friendId); // Follower, dem ich auch folge
+      const right = el('div', 'fr-btns'); for (const [label, action, ghost] of btns(it)) {
+        const b = el('button', 'btn small' + (ghost ? ' ghost' : ''), label); b.type = 'button';
+        b.addEventListener('click', async () => {
+          if (!['followBack', 'accept'].includes(action) && !confirm((it.name || 'Freund') + ': ' + label + '?')) return;
+          try { const r = await api('/api/freunde', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, id: it.id }) }); if (r.error) $('#fr-msg').textContent = r.error; else { FR.data = r; FR.at = Date.now(); } } catch (e) { $('#fr-msg').textContent = e.message; }
+          renderFriendAdmin(); renderMenuFriends();
+        });
+        right.append(b);
+      }
+      li.append(left, right); ul.append(li);
+    }
+  };
+  list($('#fr-requests'), d.requests || [], () => [['Annehmen', 'accept'], ['Ablehnen', 'decline', true]]);
+  $('#fr-requests-h').hidden = !(d.requests || []).length;
+  $('#fr-requests-h').textContent = 'Anfragen (' + (d.requests || []).length + ')';
+  list($('#fr-following'), d.friends, (f) => [[f.status === 'pending' ? 'Zurückziehen' : 'Entfernen', 'remove', true]]);
+  list($('#fr-followers'), d.followers, (f) => (f.following ? [] : [['Zurückfolgen', 'followBack']]).concat([['Entfernen', 'removeFollower', true]]));
+  $('#fr-following-h').textContent = 'Gefolgt (' + d.friends.length + ')';
+  $('#fr-followers-h').textContent = 'Follower (' + d.followers.length + ')';
+  renderMenuFriends();
+}
+// Zahlen im Profil-Kopf und in der Konto-Liste
+function renderMenuFriends() {
+  const d = FR.data; if (!d) return;
+  const on = FR_SHARE.filter(([k]) => d.share[k]).length;
+  const rq = (d.requests || []).length;
+  const m = $('#m-freunde'); if (m) m.textContent = rq ? rq + (rq === 1 ? ' neue Anfrage' : ' neue Anfragen') : on ? on + ' von ' + FR_SHARE.length + ' Bereichen geteilt' : 'Nichts geteilt';
+  const f = $('#me-follow'); if (f) f.replaceChildren(el('b', null, String(d.followers.length)), document.createTextNode(' Follower · '), el('b', null, String(d.friends.length)), document.createTextNode(' gefolgt'));
+}
+function initFriends() {
+  document.querySelectorAll('#fr-sport button').forEach((b) => b.addEventListener('click', () => { FR.sport = b.dataset.v; frSave(); renderFriends(); }));
+  document.querySelectorAll('[data-fr-manage]').forEach((b) => b.addEventListener('click', () => { S.kontoView = 'freunde'; showTab('konto'); showKontoView('freunde'); }));
+  $('#fr-refresh').addEventListener('click', async () => { $('#fr-note').textContent = 'Wird aktualisiert …'; try { await loadFriends(true); } catch {} renderFriends(); });
+  $('#fr-copy').addEventListener('click', async () => {
+    const link = $('#fr-link').value;
+    try { if (navigator.share) await navigator.share({ title: 'Folge mir in Health Hub', url: link }); else { await navigator.clipboard.writeText(link); $('#fr-msg').textContent = 'Link kopiert.'; } } catch {}
+  });
+  $('#fr-qr-btn').addEventListener('click', async () => {
+    const box = $('#fr-qr'); if (!box.hidden) { box.hidden = true; return; }
+    try { await loadQr(); box.replaceChildren(); new QRCode(box, { text: $('#fr-link').value, width: 220, height: 220, colorDark: '#000000', colorLight: '#ffffff' }); box.hidden = false; } catch (e) { $('#fr-msg').textContent = e.message; }
+  });
+  $('#fr-new').addEventListener('click', async () => {
+    if (!confirm('Neuen Link erzeugen? Der alte funktioniert dann nicht mehr, und alle, die dir bisher folgen, sehen deine Werte nicht mehr.')) return;
+    FR.data = await api('/api/freunde', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'newLink' }) }); FR.at = Date.now();
+    $('#fr-qr').hidden = true; $('#fr-msg').textContent = 'Neuer Link erstellt.'; renderFriendAdmin();
+  });
+  $('#fr-add').addEventListener('click', async () => {
+    const link = $('#fr-add-in').value.trim(); if (!link) return;
+    $('#fr-msg').textContent = 'Wird geprüft …';
+    try {
+      const r = await api('/api/freunde', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'add', link }) });
+      if (r.error) { $('#fr-msg').textContent = r.error; return; }
+      FR.data = r; FR.at = Date.now(); $('#fr-add-in').value = ''; $('#fr-msg').textContent = 'Anfrage gesendet. Sobald sie angenommen ist, erscheint ' + ((r.friends.find((f) => f.status === 'pending') || {}).name || 'dein Freund') + ' in deiner Rangliste.'; renderFriendAdmin();
+    } catch (e) { $('#fr-msg').textContent = e.message; }
+  });
+  // Link mit einem Tipp aus der Zwischenablage einfügen
+  $('#fr-paste').addEventListener('click', async () => { try { const t = (await navigator.clipboard.readText()).trim(); if (t) $('#fr-add-in').value = t; } catch { $('#fr-msg').textContent = 'Einfügen nicht erlaubt. Halte das Feld gedrückt und wähle „Einsetzen“.'; } });
+  $('#me-follow').addEventListener('click', (e) => { e.stopPropagation(); showKontoView('freunde'); });
+}

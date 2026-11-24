@@ -84,12 +84,21 @@
         <p class="note" id="pred-alt"></p>
       </details>
     </div>
+    <!-- Bestleistungen wie bei Strava: Laufen und Rad, Strecke und Leistung (Watt), gesamt oder dieses Jahr -->
+    <div class="card" id="best-card">
+      <h3>Bestleistungen</h3>
+      <div class="best-ctl" id="best-ctl"></div>
+      <ul class="sessions best-list" id="best-list"></ul>
+      <p class="note" id="best-note"></p>
+    </div>
+    <!-- Wetter und Tempo (#54): nur mit Wetter-Haken und genug Läufen -->
+    <div class="card" id="wx-card" hidden>
+      <h3>Wetter und Tempo</h3>
+      <p class="wx-head" id="wx-head"></p>
+      <ul class="sessions" id="wx-list"></ul>
+      <p class="note">Jeder Lauf ab 3 km verglichen mit deinem üblichen Tempo in den Wochen davor und danach. Grün schneller, rot langsamer. Wetter von Open-Meteo zur Mitte des Laufs.</p>
+    </div>
     <div class="grid">
-      <div class="card">
-        <h3>Bestzeiten</h3>
-        <p class="note">Schnellste Abschnitte innerhalb eines Laufs laut Garmin, also auch aus längeren Läufen. Offizielle Wettkampfzeiten können abweichen.</p>
-        <div class="tablewrap"><table id="t-best"></table></div>
-      </div>
       <div class="card">
         <h3>Laufdynamik</h3>
         <p class="note">Mittelwerte der Läufe ab 3 km.</p>

@@ -7,7 +7,7 @@ const SOURCES = [
   { id: 'strava', name: 'Strava', icon: 'route', color: '--accent-2', detail: 'strava', status: stravaSourceStatus },
   { id: 'withings', name: 'Withings', icon: 'scale', color: '--ok', detail: 'withings', status: withingsSourceStatus },
   { id: 'whoop', name: 'WHOOP', icon: 'band', color: '--warn', detail: 'whoop', status: whoopSourceStatus },
-  { id: 'google', name: 'Google Health / Fitbit', icon: 'band', color: '--muted', status: () => ({ light: '', text: 'In Prüfung', sub: 'z. B. Fitbit Air' }) },
+  { id: 'google', name: 'Google Health', icon: 'band', color: '--accent', detail: 'google', status: googleSourceStatus },
   { id: 'coros', name: 'COROS', icon: 'watch', color: '--muted', status: () => ({ light: '', text: 'In Prüfung', sub: 'Uhren von COROS' }) },
 ];
 
@@ -49,28 +49,40 @@ function renderSources() {
   }
 }
 
-// Unterseiten im Konto (iOS-artig „hineinnavigieren“); 'main' = Übersicht
-const KONTO_TITLES = { main: 'Konto', garmin: 'Garmin Connect', strava: 'Strava', withings: 'Withings', whoop: 'WHOOP' };
+// Unterseiten im Konto (iOS-artig „hineinnavigieren“); 'main' = Übersicht. Jede Unterseite ist ein <div id="konto-…">.
+const KONTO_TITLES = {
+  main: 'Konto', profil: 'Profil', freunde: 'Freunde', quellen: 'Datenquellen', push: 'Benachrichtigungen', claude: 'Claude', zonen: 'Pulszonen',
+  prognose: 'Wettkampfprognose', feedback: 'Feedback', radwetter: 'Rad-Wetter', anmeldung: 'Anmeldung', garmin: 'Garmin Connect', strava: 'Strava', withings: 'Withings', whoop: 'WHOOP', google: 'Google Health',
+};
+// Zurück führt von einer Quelle zu den Datenquellen, sonst zur Übersicht
+const KONTO_PARENT = { garmin: 'quellen', strava: 'quellen', withings: 'quellen', whoop: 'quellen', google: 'quellen' };
 function showKontoView(view) {
   S.kontoView = KONTO_TITLES[view] ? view : 'main';
-  $('#konto-main').hidden = S.kontoView !== 'main';
-  document.querySelectorAll('#konto-garmin, #konto-strava, #konto-withings, #konto-whoop').forEach((n) => { n.hidden = n.id !== 'konto-' + S.kontoView; });
+  document.querySelectorAll('section[data-tab="konto"] > div[id^="konto-"]').forEach((n) => { n.hidden = n.id !== 'konto-' + S.kontoView; });
   $('#konto-title').textContent = KONTO_TITLES[S.kontoView];
   document.body.dataset.konto = S.kontoView;
   if (S.tab === 'konto') $('#navTitle').textContent = KONTO_TITLES[S.kontoView];
+  if (S.kontoView === 'radwetter') renderRwSettings('laden'); // Rad-Wetter (#153): Felder frisch füllen
+  if (S.kontoView === 'feedback') renderFeedback();
   window.scrollTo(0, 0);
 }
 
 function renderAccount() {
+  renderMe();
+  renderWeatherCfg();
+  renderRwSettings(); // Rad-Wetter (#153)
+  renderFriendAdmin();
   renderZoneForm();
   renderVo2List();
   renderSources();
   renderWithings();
   renderStrava();
   renderWhoop();
+  renderGoogle();
   renderPush();
   renderSecurity();
   renderClaude();
+  renderMenu();
   const st = S.status; if (!st) return;
   const exp = keyExpiry(st);
   $('#key-state').textContent = (st.key === 'app' ? 'Ein Schlüssel ist in der App hinterlegt (verschlüsselt).' : st.key === 'secret' ? 'Ein Schlüssel ist als Cloudflare-Secret hinterlegt.' : 'Noch kein Schlüssel hinterlegt.')
@@ -286,13 +298,7 @@ function initWhoop() {
     try { await api('/api/whoop/sync', { method: 'POST' }); await loadData(); $('#wh-msg').textContent = 'Aktualisiert.'; }
     catch { $('#wh-msg').textContent = 'Aktualisieren fehlgeschlagen.'; } finally { b.disabled = false; }
   });
-  $('#wh-night').addEventListener('change', async (e) => {
-    try {
-      await api('/api/sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ night: e.target.value }) });
-      $('#wh-night-msg').textContent = 'Gespeichert. Nachtwerte kommen jetzt von ' + (e.target.value === 'garmin' ? 'Garmin.' : 'WHOOP.');
-      await loadData();
-    } catch { $('#wh-night-msg').textContent = 'Speichern fehlgeschlagen.'; }
-  });
+  $('#wh-night').addEventListener('change', (e) => saveNightSource(e.target.value, '#wh-night-msg'));
   // Rückkehr von WHOOP (/?whoop=…): direkt die WHOOP-Seite im Konto zeigen
   const res = new URLSearchParams(location.search).get('whoop');
   if (res) {
@@ -302,7 +308,93 @@ function initWhoop() {
   }
 }
 
-// ---------- Morgen-Push (#13) ----------
+// Welche Quelle zählt nachts (Schlaf, HRV, Ruhepuls, SpO2), wenn mehrere Geräte messen; auf WHOOP- und Google-Seite gleich
+const NIGHT_NAMES = { whoop: 'WHOOP', garmin: 'Garmin', google: 'Google Health / Fitbit' };
+async function saveNightSource(night, msg) {
+  try {
+    await api('/api/sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ night }) });
+    $(msg).textContent = 'Gespeichert. Nachtwerte kommen jetzt von ' + (NIGHT_NAMES[night] || night) + '.';
+    await loadData();
+  } catch { $(msg).textContent = 'Speichern fehlgeschlagen.'; }
+}
+
+// ---------- Google Health / Fitbit ----------
+function googleSourceStatus() {
+  const g = S.status && S.status.google;
+  if (!g) return { light: '', text: S.status ? 'Nicht eingerichtet' : 'Lädt …', sub: 'Fitbit, Pixel Watch' };
+  if (!g.app) return { light: '', text: 'Nicht eingerichtet', sub: 'Fitbit, Pixel Watch' };
+  if (g.expired) return { light: 'r', text: 'Verbindung abgelaufen', sub: 'Neu verbinden' };
+  if (!g.connected) return { light: 'r', text: 'Nicht verbunden', sub: 'Mit Google verbinden' };
+  const last = g.lastSleep ? 'Letzte Nacht ' + relTime(g.lastSleep) : 'Noch keine Nacht';
+  const left = googleDaysLeft(g);
+  // Kurz halten, sonst schneidet die Liste den Namen ab
+  if (left != null && left <= 2) return { light: 'y', text: left <= 0 ? 'Läuft heute ab' : 'Noch ' + left + (left === 1 ? ' Tag' : ' Tage'), sub: 'Neu verbinden' };
+  if (g.paused) return { light: 'y', text: 'Pause (Google-Limit)', sub: last };
+  if (g.lastError) return { light: 'y', text: 'Verbunden, letzter Abruf mit Fehler', sub: last };
+  return { light: 'g', text: 'Verbunden', sub: last + (g.complete ? '' : ' · Historie wird geladen') };
+}
+/** Ganze Tage, bis das Erneuerungs-Token abläuft (nur im Testmodus des Google-Projekts gesetzt) */
+function googleDaysLeft(g) {
+  return g && g.connected && g.refreshExpires ? Math.floor((g.refreshExpires - Date.now()) / 864e5) : null;
+}
+function renderGoogle() {
+  $('#gh-cb').textContent = location.origin + '/google/callback';
+  const g = S.status && S.status.google; if (!g) return;
+  const left = googleDaysLeft(g);
+  $('#gh-state').textContent = !g.app ? 'Noch nicht eingerichtet. Lege zuerst unten dein eigenes Google-Projekt an.'
+    : g.expired ? 'Die Verbindung ist abgelaufen. Bitte neu verbinden (und am besten die App in Google veröffentlichen, siehe unten).'
+    : !g.connected ? 'Projekt eingetragen, aber noch nicht mit deinem Google-Konto verbunden.'
+    : 'Verbunden.' + (g.lastOk ? ' Zuletzt abgerufen: ' + new Date(g.lastOk).toLocaleString('de-DE') + '.' : '')
+      + (g.count ? ' ' + g.count + ' Einheiten.' : '') + (g.complete ? ' Historie vollständig.' : ' Historie wird geladen.')
+      + (left != null ? ' Die Verbindung läuft am ' + new Date(g.refreshExpires).toLocaleDateString('de-DE') + ' ab (Testmodus).' : '')
+      + (g.missingScopes ? ' Es fehlen Rechte, bitte neu verbinden und alle Haken setzen.' : '')
+      + (g.paused ? ' Google bittet gerade um eine Pause, die App macht später von selbst weiter.' : '') + (g.lastError ? ' Hinweis: ' + g.lastError : '');
+  $('#gh-connect').textContent = g.connected ? 'Neu verbinden' : 'Mit Google verbinden';
+  $('#gh-connect').classList.toggle('ghost', g.connected && !(left != null && left <= 2));
+  $('#gh-actions').hidden = !g.app;
+  $('#gh-sync').hidden = !g.connected;
+  $('#gh-del').hidden = !g.app;
+  $('#gh-night').value = g.night || 'whoop';
+}
+const GH_RETURN = {
+  ok: 'Verbunden. Schlaf, Herzwerte und Trainings werden geladen.',
+  abgebrochen: 'Die Verbindung wurde bei Google abgebrochen.',
+  abgelaufen: 'Die Anmeldung bei Google ist abgelaufen. Bitte noch einmal verbinden.',
+  rechte: 'Verbunden, aber nicht alle Rechte erlaubt. Bitte neu verbinden und bei Google alle Haken setzen.',
+  fehler: 'Google hat die Verbindung abgelehnt. Stimmen Client-ID, Client-Secret und Weiterleitungs-URI, und steht deine Adresse bei den Testnutzern?',
+  app: 'Bitte zuerst Client-ID und Client-Secret eintragen.',
+};
+function initGoogle() {
+  $('#gh-copy').addEventListener('click', () => navigator.clipboard?.writeText($('#gh-cb').textContent).then(() => { $('#gh-app-msg').textContent = 'Adresse kopiert.'; }).catch(() => {}));
+  $('#gh-save').addEventListener('click', async () => {
+    const b = $('#gh-save'); b.disabled = true; $('#gh-app-msg').textContent = '';
+    try {
+      const r = await api('/api/google/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: $('#gh-id').value, secret: $('#gh-secret').value }) });
+      if (r.ok) { $('#gh-id').value = ''; $('#gh-secret').value = ''; $('#gh-app-msg').textContent = 'Gespeichert. Jetzt oben „Mit Google verbinden“.'; await loadData(); }
+      else $('#gh-app-msg').textContent = r.error || 'Speichern fehlgeschlagen.';
+    } finally { b.disabled = false; }
+  });
+  $('#gh-del').addEventListener('click', async () => {
+    if (!confirm('Google-Verbindung löschen? Geladene Werte bleiben erhalten.')) return;
+    await api('/api/google/app', { method: 'DELETE' });
+    $('#gh-app-msg').textContent = 'Verbindung gelöscht.'; await loadData();
+  });
+  $('#gh-sync').addEventListener('click', async () => {
+    const b = $('#gh-sync'); b.disabled = true; $('#gh-msg').textContent = 'Wird aktualisiert …';
+    try { await api('/api/google/sync', { method: 'POST' }); await loadData(); $('#gh-msg').textContent = 'Aktualisiert.'; }
+    catch { $('#gh-msg').textContent = 'Aktualisieren fehlgeschlagen.'; } finally { b.disabled = false; }
+  });
+  $('#gh-night').addEventListener('change', (e) => saveNightSource(e.target.value, '#gh-night-msg'));
+  // Rückkehr von Google (/?google=…): direkt die Google-Seite im Konto zeigen
+  const res = new URLSearchParams(location.search).get('google');
+  if (res) {
+    history.replaceState(null, '', location.pathname);
+    showTab('konto'); showKontoView('google');
+    $('#gh-msg').textContent = GH_RETURN[res] || '';
+  }
+}
+
+// ---------- Mitteilungen: Morgen-Push (#13), Freunde, neue Funktionen (#161) ----------
 // Web Push an die Homescreen-App. Auf dem iPhone nur, wenn die App über „Zum Home-Bildschirm“ geöffnet wurde (ab iOS 16.4).
 const PUSH = { info: null };
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -314,20 +406,41 @@ async function renderPush() {
   const sel = $('#push-time');
   if (!sel.options.length) for (let m = 5 * 60; m <= 12 * 60; m += 30) { const t = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); sel.append(new Option(t + ' Uhr', t)); }
   try { PUSH.info = await api('/api/push'); } catch { PUSH.info = null; }
-  const i = PUSH.info || { on: false, time: '09:00', devices: 0 };
-  sel.value = i.time;
+  const i = PUSH.info || { on: false, time: '09:00', mode: 'zeit', latest: '11:00', devices: 0 };
+  // Automatisch (nach dem Aufwachen) oder zur festen Uhrzeit; die Auswahl darunter ist dann „Spätestens um“ bzw. „Uhrzeit“
+  const auto = i.mode === 'auto';
+  PUSH.mode = auto ? 'auto' : 'zeit';
+  document.querySelectorAll('#push-mode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === PUSH.mode)));
+  $('#push-time-lbl').textContent = auto ? 'Spätestens um' : 'Uhrzeit';
+  $('#push-mode-note').textContent = auto
+    ? 'Der Bericht kommt, sobald der Schlaf der letzten Nacht da ist: bei Garmin, wenn deine Uhr nach dem Aufwachen mit dem Handy synchronisiert hat (die App schaut morgens alle 10 Minuten nach), bei WHOOP direkt nach dem Aufwachen. Ist bis zur Uhrzeit unten nichts da, kommt er mit dem letzten Stand.'
+    : 'Der Bericht kommt zur Uhrzeit unten. Ist der Schlaf dann noch nicht da, wartet die App bis zu drei Stunden darauf.';
+  sel.value = auto ? (i.latest || '11:00') : i.time;
   const sub = pushSupported() ? await currentSub() : null;
   const on = !!(i.on && sub);
   let state;
   if (!pushSupported()) state = standalone() ? 'Dieses Gerät unterstützt keine Push-Meldungen (auf dem iPhone ab iOS 16.4).' : 'Auf dem iPhone: in Safari „Teilen → Zum Home-Bildschirm“ wählen und die App von dort öffnen. Erst dann sind Push-Meldungen möglich.';
   else if (Notification.permission === 'denied') state = 'Mitteilungen sind für die App ausgeschaltet. Erlaube sie in den iPhone-Einstellungen unter „Mitteilungen → Health“.';
-  else if (on) state = `Aktiv: jeden Morgen um ${i.time} Uhr${i.devices > 1 ? ' an ' + i.devices + ' Geräte' : ''}.` + (i.lastSent ? ' Zuletzt gesendet: ' + dayLabel(i.lastSent) + '.' : '') + (i.lastResult && !/^Gesendet/.test(i.lastResult) ? ' ' + i.lastResult + '.' : '');
+  else if (on) state = '';
   else state = i.devices ? 'Auf einem anderen Gerät aktiv. Hier noch nicht eingeschaltet.' : 'Aus.';
+  // Arten (#161): fehlt die Angabe (ältere Instanz), gilt der Standard wie vorher
+  const kinds = i.kinds || { morgen: true, freunde: true, neu: false, wetter: false };
+  if (on) {
+    const list = [kinds.morgen && 'Morgenbericht' + (auto ? ' nach dem Aufwachen' : ' um ' + i.time + ' Uhr'), kinds.freunde && 'Freunde', kinds.neu && 'neue Funktionen', kinds.wetter && 'Rad-Wetter'].filter(Boolean);
+    state = list.length ? 'Aktiv' + (i.devices > 1 ? ' auf ' + i.devices + ' Geräten' : '') + ': ' + list.join(', ') + '.' : 'Aktiv, aber unten ist keine Art von Mitteilung ausgewählt.';
+    if (kinds.morgen && i.lastSent) state += ' Morgenbericht zuletzt am ' + dayLabel(i.lastSent) + '.';
+    if (kinds.morgen && i.lastResult && !/^Gesendet/.test(i.lastResult)) state += ' ' + i.lastResult + '.';
+  }
   $('#push-state').textContent = state;
-  $('#push-on').textContent = on ? 'Ausschalten' : 'Push aktivieren';
+  $('#push-on').textContent = on ? 'Auf diesem Gerät ausschalten' : 'Mitteilungen aktivieren';
   $('#push-on').classList.toggle('ghost', on);
   $('#push-on').hidden = !pushSupported() || Notification.permission === 'denied';
-  $('#push-test').hidden = !on;
+  $('#push-kinds').hidden = !on;
+  for (const k of ['morgen', 'freunde', 'neu', 'wetter']) $('#pk-' + k).checked = !!kinds[k];
+  $('#pk-morgen-opts').hidden = !kinds.morgen;
+  renderRwPush(i.radwetter, !!kinds.wetter); // Rad-Wetter (#153): Ankündigen, Erinnern, Ort
+  const names = [kinds.morgen && 'Morgenbericht', kinds.freunde && 'Freunde', kinds.neu && 'Neues', kinds.wetter && 'Rad-Wetter'].filter(Boolean);
+  $('#m-push').textContent = !on ? 'Aus' : names.length ? names.join(', ') : 'Keine ausgewählt';
 }
 
 function initPush() {
@@ -347,16 +460,36 @@ function initPush() {
         const reg = await navigator.serviceWorker.ready;
         const key = (PUSH.info && PUSH.info.key) || (await api('/api/push')).key;
         const s = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
-        const r = await api('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sub: s.toJSON(), time: $('#push-time').value }) });
-        msg.textContent = r.ok ? 'Eingeschaltet. Tipp: „Test senden“ zeigt dir die Meldung sofort.' : (r.error || 'Fehlgeschlagen.');
+        const v = $('#push-time').value;
+        const r = await api('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sub: s.toJSON(), mode: PUSH.mode || 'zeit', ...(PUSH.mode === 'auto' ? { latest: v } : { time: v }) }) });
+        msg.textContent = r.ok ? 'Eingeschaltet. Unten wählst du, welche Mitteilungen du bekommst.' : (r.error || 'Fehlgeschlagen.');
       }
     } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
     finally { b.disabled = false; renderPush(); }
   });
   $('#push-time').addEventListener('change', async () => {
-    await api('/api/push/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ time: $('#push-time').value }) }).catch(() => {});
+    const v = $('#push-time').value, auto = PUSH.mode === 'auto';
+    await api('/api/push/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(auto ? { latest: v } : { time: v }) }).catch(() => {});
     $('#push-msg').textContent = 'Uhrzeit gespeichert.'; renderPush();
   });
+  document.querySelectorAll('#push-mode button').forEach((b) => b.addEventListener('click', async () => {
+    if (b.dataset.mode === PUSH.mode) return;
+    PUSH.mode = b.dataset.mode;
+    await api('/api/push/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: PUSH.mode }) }).catch(() => {});
+    $('#push-msg').textContent = PUSH.mode === 'auto' ? 'Kommt jetzt automatisch nach dem Aufwachen.' : 'Kommt jetzt zur festen Uhrzeit.';
+    renderPush();
+  }));
+  // Arten einzeln an/aus (#161)
+  document.querySelectorAll('#push-kinds input[data-kind]').forEach((cb) => cb.addEventListener('change', async () => {
+    const k = cb.dataset.kind, v = cb.checked;
+    cb.disabled = true;
+    try {
+      const r = await api('/api/push/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kinds: { [k]: v } }) });
+      if (!r.ok) throw new Error('Nicht gespeichert');
+      $('#push-msg').textContent = '';
+    } catch { cb.checked = !v; $('#push-msg').textContent = 'Konnte die Einstellung nicht speichern.'; }
+    finally { cb.disabled = false; renderPush(); }
+  }));
   $('#push-test').addEventListener('click', async () => {
     const b = $('#push-test'); b.disabled = true; $('#push-msg').textContent = 'Wird gesendet …';
     try { const r = await api('/api/push/test', { method: 'POST' }); $('#push-msg').textContent = r.result || 'Gesendet.'; }
@@ -390,8 +523,12 @@ async function renderClaude() {
   $('#mcp-mood').checked = !!i.mood;
   $('#mcp-whoop').checked = !!i.whoop;
   $('#mcp-whoop-row').hidden = !i.whoopConnected && !i.whoop;
+  $('#mcp-google').checked = !!i.google;
+  $('#mcp-plan').checked = !!i.plan;
+  $('#mcp-google-row').hidden = !i.googleConnected && !i.google;
   const ul = $('#mcp-clients'); ul.replaceChildren();
   ul.hidden = !i.clients.length;
+  $('#m-claude').textContent = i.clients.length ? i.clients.length + (i.clients.length === 1 ? ' App verbunden' : ' Apps verbunden') : 'Nicht verbunden';
   for (const c of i.clients) {
     const li = el('li'), txt = el('span', 'mcp-txt');
     txt.append(el('span', null, c.name), el('span', 'mcp-sub', c.lastUsed ? 'Zuletzt ' + relTime(c.lastUsed) : 'Verbunden ' + relTime(c.created)));
@@ -421,6 +558,20 @@ function initClaude() {
       $('#mcp-msg').textContent = e.target.checked ? 'Claude darf jetzt deine WHOOP-Daten lesen.' : 'WHOOP-Daten sind für Claude wieder gesperrt.';
     } catch { $('#mcp-msg').textContent = 'Speichern fehlgeschlagen.'; }
   });
+  // Trainingsplan (#20): Claude darf nur den Plan schreiben, Standard aus
+  $('#mcp-plan').addEventListener('change', async (e) => {
+    try {
+      await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: e.target.checked }) });
+      $('#mcp-msg').textContent = e.target.checked ? 'Claude darf jetzt deinen Trainingsplan schreiben.' : 'Claude kann deinen Trainingsplan nur noch lesen.';
+    } catch { $('#mcp-msg').textContent = 'Speichern fehlgeschlagen.'; }
+  });
+  // Google Health: ebenfalls nur mit ausdrücklicher Freigabe (Googles Regeln für Gesundheitsdaten)
+  $('#mcp-google').addEventListener('change', async (e) => {
+    try {
+      await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ google: e.target.checked }) });
+      $('#mcp-msg').textContent = e.target.checked ? 'Claude darf jetzt deine Google-Health-Daten lesen.' : 'Google-Health-Daten sind für Claude wieder gesperrt.';
+    } catch { $('#mcp-msg').textContent = 'Speichern fehlgeschlagen.'; }
+  });
 }
 
 // ---------- Passkeys (#95) ----------
@@ -446,6 +597,7 @@ async function loadPasskeys() {
   $('#pk-state').textContent = !can ? 'Dieser Browser unterstützt keine Passkeys.'
     : keys.length ? `${keys.length} ${keys.length === 1 ? 'Passkey' : 'Passkeys'} eingetragen. Auf der Login-Seite erscheint „Mit Passkey anmelden“.`
     : 'Noch kein Passkey eingetragen.';
+  $('#m-anmeldung').textContent = keys.length ? 'Passkey und Passwort' : 'Passwort';
   for (const k of keys) {
     const li = el('li');
     const left = el('div');
@@ -496,5 +648,285 @@ function initPredCfg() {
       $('#pred-msg').textContent = 'Gespeichert. Die Prognose unter Leistung rechnet jetzt so.';
       loadData().catch(() => {});
     } catch { $('#pred-msg').textContent = 'Speichern fehlgeschlagen.'; }
+  });
+}
+
+// ---------- Konto-Übersicht wie die iPhone-Einstellungen ----------
+// Jede Zeile öffnet eine eigene Seite (showKontoView); darunter eine kurze Info zum Stand.
+function renderMenu() {
+  const on = SOURCES.filter((s) => { const st = s.status(); return st.light === 'g' || st.light === 'y'; }).map((s) => s.name);
+  $('#m-quellen').textContent = on.length ? on.join(', ') + ' verbunden' : 'Noch nichts verbunden';
+  const sel = $('#pred-mode');
+  $('#m-prognose').textContent = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text : '';
+  $('#m-zonen').textContent = 'Für Zeit in Zonen und Pace je Zone';
+}
+
+// ---------- Eigenes Profil: Name und Bild ----------
+const ME = { name: '', img: null, loaded: false };
+// Bild oder Anfangsbuchstabe bzw. Symbol in einen runden Platzhalter
+function fillAvatar(node) {
+  if (!node) return;
+  node.replaceChildren();
+  if (ME.img) { const im = el('img'); im.src = ME.img; im.alt = ''; node.append(im); }
+  else if (ME.name) node.append(el('span', 'me-ini', ME.name.trim().charAt(0).toUpperCase()));
+  else node.innerHTML = icon('konto');
+}
+function showMe() {
+  $('#me-name').textContent = ME.name || 'Dein Profil';
+  fillAvatar($('#me-av')); fillAvatar($('#me-av-big'));
+  $('#me-del').hidden = !ME.img;
+  if (document.activeElement !== $('#me-name-in')) $('#me-name-in').value = ME.name;
+  // Oben rechts neben dem Titel: dein Bild statt des Konto-Symbols
+  document.querySelectorAll('.navbtn.account').forEach((b) => {
+    if (ME.img) { b.classList.add('has-av'); b.replaceChildren(); const im = el('img'); im.src = ME.img; im.alt = ''; b.append(im); }
+    else if (b.classList.contains('has-av')) { b.classList.remove('has-av'); b.innerHTML = icon('konto'); }
+  });
+}
+async function renderMe(force) {
+  if (!ME.loaded || force) {
+    try { const r = await api('/api/me'); ME.name = r.name || ''; ME.img = r.img || null; ME.loaded = true; } catch { return; }
+  }
+  showMe();
+}
+async function saveMe(patch, okText) {
+  const msg = $('#me-msg'); msg.textContent = 'Wird gespeichert …';
+  try {
+    const r = await api('/api/me', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    if (!r.ok) { msg.textContent = r.error || 'Fehlgeschlagen.'; return; }
+    ME.name = r.name || ''; ME.img = r.img || null; msg.textContent = okText; showMe();
+  } catch (e) { msg.textContent = 'Fehler: ' + e.message; }
+}
+function initMe() {
+  document.querySelectorAll('#konto-main [data-view]').forEach((b) => b.addEventListener('click', () => showKontoView(b.dataset.view)));
+  $('#pred-mode').addEventListener('change', renderMenu);
+  $('#me-pick').addEventListener('click', () => $('#me-file').click());
+  $('#me-av').addEventListener('click', (e) => { if (ME.img) { e.stopPropagation(); openAvatarView(); } });
+  $('#me-av-big').addEventListener('click', () => (ME.img ? openAvatarView() : $('#me-file').click()));
+  $('#me-file').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try { const r = await cropImage(f); if (r) { ME.big = r.big; await saveMe(r, 'Bild gespeichert.'); } } catch (err) { $('#me-msg').textContent = err.message; }
+  });
+  $('#me-del').addEventListener('click', () => { ME.big = null; saveMe({ img: null }, 'Bild entfernt.'); });
+  $('#me-save').addEventListener('click', () => saveMe({ name: $('#me-name-in').value }, 'Name gespeichert.'));
+  renderMe();
+}
+
+// ---------- Profilbild groß ansehen ----------
+// Antippen des Bildes im Konto öffnet es groß über der Seite (wie bei Instagram oder Strava); Antippen oder Esc schließt.
+function openAvatarView() {
+  if (!ME.img) return;
+  const im = zoomAvatar(ME.big || ME.img, ME.name);
+  // Scharfe Fassung nachladen (beim ersten Öffnen), bis dahin das kleine Bild
+  if (im && !ME.big) api('/api/me?big=1').then((r) => { if (r.big) { ME.big = r.big; if (im.isConnected) im.src = r.big; } }).catch(() => {});
+}
+// Großansicht eines Profilbilds (eigenes oder eines Freundes, #87); liefert das Bild, damit eine schärfere Fassung nachkommen kann
+function zoomAvatar(src, name) {
+  if (!src || document.querySelector('.av-view')) return null;
+  const v = el('div', 'av-view'); v.setAttribute('role', 'dialog'); v.setAttribute('aria-modal', 'true'); v.setAttribute('aria-label', 'Profilbild');
+  const im = el('img'); im.src = src; im.alt = name ? 'Profilbild von ' + name : 'Profilbild';
+  im.draggable = false;
+  // Zoomen wie bei Instagram: zwei Finger ziehen den GANZEN Kreis samt Bild größer und schieben ihn mit,
+  // beim Loslassen gleitet er weich zurück. Am Rechner Mausrad (springt nach kurzer Pause zurück).
+  const frame = el('div', 'av-frame'); frame.append(im); v.append(frame);
+  if (name) v.append(el('div', 'av-view-name', name));
+  let s = 1, tx = 0, ty = 0, wheelT = 0;
+  const pts = new Map(); let start = null;
+  const apply = (anim) => {
+    frame.style.animation = 'none';
+    frame.style.transition = anim ? 'transform .32s cubic-bezier(.2,.8,.2,1)' : 'none';
+    frame.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+  };
+  const back = () => { s = 1; tx = 0; ty = 0; apply(true); };
+  const mid = (p) => [(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2];
+  frame.addEventListener('pointerdown', (e) => {
+    frame.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    const p = [...pts.values()];
+    if (p.length === 2) start = { d: Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]) || 1, s, tx, ty, m: mid(p) };
+  });
+  frame.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    const p = [...pts.values()];
+    if (p.length !== 2 || !start) return;
+    const d = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]), m = mid(p);
+    s = Math.max(1, Math.min(3, start.s * (d / start.d)));
+    tx = start.tx + m[0] - start.m[0]; ty = start.ty + m[1] - start.m[1];
+    apply(false);
+  });
+  const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) { start = null; back(); } };
+  frame.addEventListener('pointerup', up); frame.addEventListener('pointercancel', up);
+  frame.addEventListener('wheel', (e) => {
+    e.preventDefault(); s = Math.max(1, Math.min(3, s * Math.exp(-e.deltaY / 300))); apply(false);
+    clearTimeout(wheelT); wheelT = setTimeout(back, 350);
+  }, { passive: false });
+  // Tippen auf das Bild selbst schließt nicht (nur daneben)
+  frame.addEventListener('click', (e) => e.stopPropagation());
+  const close = () => { v.classList.add('zu'); document.removeEventListener('keydown', esc); setTimeout(() => v.remove(), 180); };
+  const esc = (e) => { if (e.key === 'Escape') close(); };
+  // Tippen neben den Kreis schließt
+  v.addEventListener('click', close); document.addEventListener('keydown', esc);
+  document.body.append(v);
+  return im;
+}
+
+// ---------- Profilbild zuschneiden ----------
+// Nach der Auswahl erscheint das Foto mit runder Schablone: ein Finger verschiebt, zwei Finger zoomen (am Rechner das Mausrad).
+// „Übernehmen“ schneidet genau den Kreis-Ausschnitt heraus (quadratisch 256 × 256 px, JPEG), „Abbrechen“ verwirft.
+function cropImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Bild konnte nicht gelesen werden')); };
+    im.onload = () => {
+      const W = im.naturalWidth, H = im.naturalHeight;
+      const ov = el('div', 'crop'); ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-label', 'Bild zuschneiden');
+      const stage = el('div', 'crop-stage');
+      const pic = el('img', 'crop-img'); pic.src = url; pic.alt = ''; pic.draggable = false;
+      const mask = el('div', 'crop-mask'); mask.setAttribute('aria-hidden', 'true');
+      stage.append(pic, mask);
+      const hint = el('p', 'crop-hint', 'Verschieben und mit zwei Fingern zoomen');
+      const row = el('div', 'crop-row');
+      const cancel = el('button', 'btn ghost', 'Abbrechen'); cancel.type = 'button';
+      const ok = el('button', 'btn', 'Übernehmen'); ok.type = 'button';
+      row.append(cancel, ok);
+      ov.append(el('div', 'crop-title', 'Bild zuschneiden'), stage, hint, row);
+      document.body.append(ov); document.body.classList.add('crop-open');
+
+      const V = stage.clientWidth; // Kantenlänge des Ausschnitts (Kreis passt genau hinein)
+      const base = V / Math.min(W, H); // Grundmaßstab: kurze Seite füllt den Kreis
+      let z = 1, x = (V - W * base) / 2, y = (V - H * base) / 2;
+      const clamp = () => {
+        const w = W * base * z, h = H * base * z;
+        x = Math.min(0, Math.max(V - w, x)); y = Math.min(0, Math.max(V - h, y));
+      };
+      const draw = () => { clamp(); pic.style.width = W * base * z + 'px'; pic.style.height = H * base * z + 'px'; pic.style.transform = `translate(${x}px, ${y}px)`; };
+      // Zoom um einen Punkt (cx, cy im Ausschnitt), damit die Stelle unter den Fingern stehen bleibt
+      const zoomTo = (nz, cx = V / 2, cy = V / 2) => {
+        nz = Math.min(4, Math.max(1, nz));
+        x = cx - (cx - x) * (nz / z); y = cy - (cy - y) * (nz / z); z = nz;
+        draw();
+      };
+      draw();
+
+      const pts = new Map();
+      let last = null; // { x, y, d } beim letzten Bewegen
+      const rel = (e) => { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+      const state = () => {
+        const p = [...pts.values()];
+        if (p.length === 1) return { x: p[0].x, y: p[0].y, d: null };
+        const [a, b] = p;
+        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
+      };
+      stage.addEventListener('pointerdown', (e) => { stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, rel(e)); last = state(); });
+      stage.addEventListener('pointermove', (e) => {
+        if (!pts.has(e.pointerId)) return;
+        pts.set(e.pointerId, rel(e));
+        const s = state();
+        if (last) {
+          x += s.x - last.x; y += s.y - last.y;
+          if (s.d && last.d) zoomTo(z * (s.d / last.d), s.x, s.y); else draw();
+        }
+        last = s;
+      });
+      const up = (e) => { pts.delete(e.pointerId); last = pts.size ? state() : null; };
+      stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+      stage.addEventListener('wheel', (e) => { e.preventDefault(); const p = rel(e); zoomTo(z * (e.deltaY < 0 ? 1.08 : 1 / 1.08), p.x, p.y); }, { passive: false });
+
+      const done = (val) => { ov.remove(); document.body.classList.remove('crop-open'); URL.revokeObjectURL(url); resolve(val); };
+      cancel.addEventListener('click', () => done(null));
+      // Zwei Größen: klein (256 px) für oben rechts, Listen und Freunde, groß (bis 1024 px, nie größer als das Original)
+      // für die Großansicht, damit sie auch auf dem iPhone-Bildschirm scharf ist
+      ok.addEventListener('click', () => {
+        const s = base * z, src = V / s;
+        const shot = (px, q) => { const c = document.createElement('canvas'); c.width = c.height = px; const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(im, -x / s, -y / s, src, src, 0, 0, px, px); return c.toDataURL('image/jpeg', q); };
+        done({ img: shot(256, 0.85), big: shot(Math.max(256, Math.min(1024, Math.round(src))), 0.85) });
+      });
+    };
+    im.src = url;
+  });
+}
+
+// ---------- Wetter (#54): Haken unter Konto → Datenquellen ----------
+async function renderWeatherCfg() {
+  let i; try { i = await api('/api/wetter'); } catch { return; }
+  $('#wx-on').checked = i.on;
+  $('#wx-state').textContent = !i.on ? 'Aus.' : i.open ? i.done + ' Einheiten mit Wetter, ' + i.open + ' folgen in den nächsten Stunden.' : i.done + ' Einheiten mit Wetter.';
+}
+function initWeatherCfg() {
+  $('#wx-on').addEventListener('change', async (e) => {
+    await api('/api/wetter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: e.target.checked }) }).catch(() => {});
+    renderWeatherCfg();
+  });
+}
+
+// ---------- Feedback (#162) ----------
+// Formular unter Konto → Feedback geben. Mitgeschickt wird nur, was hier angehakt und sichtbar ist; ein Screenshot nur,
+// wenn man ihn selbst anhängt (verkleinert auf höchstens 1280 px, JPEG). Ziel: Issue in hhub-team/feedback.
+const FB = { kind: 'fehler', img: null, from: null, init: false };
+// Direkt an den Feedback-Worker (Umweg über die eigene Instanz scheitert, wenn beide im selben Cloudflare-Konto laufen).
+// Adresse auch in der CSP (src/util.ts, connect-src) und in src/feedback-api.ts.
+const FB_URL = 'https://hhub-feedback.eddie-training.workers.dev/send';
+function fbView() { const t = FB.from || S.lastTab || 'heute'; return (TAB_TITLES[t] || t) + (t === 'training' || t === 'leistung' || t === 'schlaf' || t === 'freunde' ? ' → ' + { training: 'Training', leistung: 'Leistung', schlaf: 'Schlaf', freunde: 'Freunde' }[t] : ''); }
+function fbDevice() {
+  const ua = navigator.userAgent;
+  const os = /iPhone|iPad/.test(ua) ? (ua.match(/OS (\d+)_(\d+)/) ? 'iOS ' + RegExp.$1 + '.' + RegExp.$2 : 'iOS') : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Gerät';
+  const br = /CriOS|Chrome/.test(ua) ? 'Chrome' : /FxiOS|Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : 'Browser';
+  const app = window.matchMedia && matchMedia('(display-mode: standalone)').matches ? ', Homescreen-App' : '';
+  return os + ', ' + br + app + ', ' + window.innerWidth + ' px';
+}
+// Bild verkleinern: längste Seite höchstens 1280 px, JPEG; bei Bedarf stärker komprimieren (Ziel unter 1,5 MB)
+function fbShrink(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Bild konnte nicht gelesen werden')); };
+    im.onload = () => {
+      const f = Math.min(1, 1280 / Math.max(im.naturalWidth, im.naturalHeight));
+      const c = document.createElement('canvas'); c.width = Math.round(im.naturalWidth * f); c.height = Math.round(im.naturalHeight * f);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      let q = 0.82, out = c.toDataURL('image/jpeg', q);
+      while (out.length > 2_000_000 && q > 0.4) { q -= 0.12; out = c.toDataURL('image/jpeg', q); }
+      resolve(out);
+    };
+    im.src = url;
+  });
+}
+function openFeedback(from) { FB.from = from || S.lastTab || null; S.kontoView = 'feedback'; showTab('konto'); showKontoView('feedback'); }
+function renderFeedback() {
+  $('#fb-name-t').textContent = 'Dein Name' + (ME.name ? ' (' + ME.name + ')' : '');
+  $('#fb-name').disabled = !ME.name; if (!ME.name) $('#fb-name').checked = false;
+  $('#fb-ver-t').textContent = 'App-Version (' + ((S.status && S.status.version) || 'unbekannt') + ')';
+  $('#fb-dev-t').textContent = 'Gerät und Browser (' + fbDevice() + ')';
+  $('#fb-view-t').textContent = 'Wo du gerade warst (' + fbView() + ')';
+  if (FB.init) return;
+  FB.init = true;
+  const setKind = (k) => { FB.kind = k; document.querySelectorAll('#fb-kind button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === k))); };
+  document.querySelectorAll('#fb-kind button').forEach((b) => b.addEventListener('click', () => setKind(b.dataset.k)));
+  const showImg = () => { const p = $('#fb-prev'); p.hidden = !FB.img; if (FB.img) p.src = FB.img; else p.removeAttribute('src'); $('#fb-del').hidden = !FB.img; $('#fb-add').textContent = FB.img ? 'Anderen Screenshot wählen' : 'Screenshot anhängen'; };
+  $('#fb-add').addEventListener('click', () => $('#fb-file').click());
+  $('#fb-del').addEventListener('click', () => { FB.img = null; $('#fb-file').value = ''; showImg(); });
+  $('#fb-file').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    $('#fb-msg').textContent = 'Bild wird vorbereitet …';
+    try { FB.img = await fbShrink(f); $('#fb-msg').textContent = ''; } catch (err) { $('#fb-msg').textContent = err.message; }
+    showImg();
+  });
+  $('#fb-send').addEventListener('click', async () => {
+    const text = $('#fb-text').value.trim();
+    if (text.length < 3) { $('#fb-msg').textContent = 'Bitte ein paar Worte schreiben.'; $('#fb-text').focus(); return; }
+    const body = { kind: FB.kind, text, website: $('#fb-web').value };
+    if ($('#fb-name').checked && ME.name) body.name = ME.name;
+    if ($('#fb-ver').checked) body.version = (S.status && S.status.version) || 'unbekannt';
+    if ($('#fb-dev').checked) body.device = fbDevice();
+    if ($('#fb-view').checked) body.view = fbView();
+    if (FB.img) body.image = FB.img;
+    const btn = $('#fb-send'); btn.disabled = true; $('#fb-msg').textContent = 'Wird gesendet …';
+    try {
+      const res = await fetch(FB_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await res.json().catch(() => ({ ok: false, error: 'Feedback-Stelle nicht erreichbar (' + res.status + ').' }));
+      if (!r.ok) { $('#fb-msg').textContent = r.error || 'Senden fehlgeschlagen.'; return; }
+      $('#fb-text').value = ''; FB.img = null; $('#fb-file').value = ''; showImg(); setKind('fehler');
+      $('#fb-msg').textContent = 'Danke! Ist angekommen' + (r.nr ? ' (Nr. ' + r.nr + ')' : '') + '. Pablo und Eddie schauen es sich an.';
+    } catch (e) { $('#fb-msg').textContent = 'Senden fehlgeschlagen: ' + e.message; }
+    finally { btn.disabled = false; }
   });
 }

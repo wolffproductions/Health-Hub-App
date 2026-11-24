@@ -2,7 +2,7 @@
 // Ausführen: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { detectIntervals, prognose, raceFromVo2, type PAct, type PDay, type PLap } from "../src/prognose.ts";
+import { detectIntervals, endurancePenalty, latestVo2, prognose, raceFromVo2, type PAct, type PDay, type PLap } from "../src/prognose.ts";
 
 const today = "2026-11-13";
 const day = (n: number) => new Date(Date.parse(today + "T00:00:00Z") - n * 864e5).toISOString().slice(0, 10);
@@ -113,4 +113,30 @@ test("Harte Zeit (Wettkampf): 5 km in 15:48 zieht die Prognose mit, nie langsame
   assert.ok(Math.abs(ps.races[0].sec - same.races[0].sec) < 1, "Prognose wie ohne die Zeit");
   // Nur Garmin: keine eigene Quelle
   assert.deepEqual(prognose({ today, acts: [...base, race], days, hrMax: 195, mode: "garmin" }).sources.map((s) => s.key), ["garmin"]);
+});
+
+test("Prognose: Ausdauer-Aufschlag wächst mit fehlendem Umfang und langem Lauf", () => {
+  const hm = 21097.5, m = 42195;
+  assert.equal(endurancePenalty(hm, { long: 20, week: 60 }), 0);
+  assert.equal(endurancePenalty(m, { long: 33, week: 85 }), 0);
+  // synthetischer Läufer: 39 km/Woche, längster Lauf 16 km
+  const pHm = endurancePenalty(hm, { long: 16, week: 39 }), pM = endurancePenalty(m, { long: 16, week: 39 });
+  assert.ok(pHm > 0.025 && pHm < 0.045, "HM " + pHm);
+  assert.ok(pM > 0.17 && pM < 0.23, "M " + pM);
+  // 45 statt 70 km pro Woche kostet beim Marathon deutlich mehr als ein kürzerer langer Lauf
+  assert.ok(endurancePenalty(m, { long: 30, week: 45 }) > endurancePenalty(m, { long: 22, week: 75 }));
+  assert.ok(endurancePenalty(hm, { long: 0, week: 0 }) <= 0.08 + 1e-9);
+  assert.equal(endurancePenalty(10000, { long: 0, week: 0 }), 0);
+});
+
+test("Prognose: VO2max als Schnitt der letzten Werte, ein lockerer Lauf verschiebt sie kaum", () => {
+  const run = (date: string, vo2: number) => ({ date, type: "running", vo2 }) as PAct;
+  const g = latestVo2([run("2026-11-01", 62.6), run("2026-11-08", 62.4), run("2026-11-15", 63.1), run("2026-11-21", 62.8), run("2026-11-24", 61.6)])!;
+  assert.equal(g.n, 5);
+  assert.equal(g.v, 62.5);
+  assert.equal(g.d, "2026-11-24");
+  // Werte älter als 6 Wochen zählen nicht mit
+  const old = latestVo2([run("2026-09-01", 50), run("2026-11-24", 62)])!;
+  assert.equal(old.v, 62);
+  assert.equal(old.n, 1);
 });

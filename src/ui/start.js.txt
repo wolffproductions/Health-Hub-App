@@ -104,20 +104,28 @@ $('#b-day').addEventListener('click', () => {
 });
 window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 24), { passive: true });
 $('#todayDate').textContent = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
-// Homescreen-App: beim Zurückkehren aus dem Hintergrund neu laden
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadData().catch(() => {}); });
+// Homescreen-App: beim Zurückkehren aus dem Hintergrund neu laden. Lag die App länger als 15 Minuten im Hintergrund,
+// beginnt sie wieder auf „Heute“ (wie nach einem Neustart; Eddies Wunsch), sonst bleibt sie, wo man war.
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  if (hiddenAt && Date.now() - hiddenAt > 15 * 60000 && S.tab !== 'heute' && !document.querySelector('.av-view, .crop, .mapfull')) {
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    S.sub = null; S.kontoView = 'main';
+    showTab('heute'); window.scrollTo(0, 0);
+  }
+  hiddenAt = 0;
+  loadData().catch(() => {});
+});
 // Bleibt die App offen, alle 10 Minuten neu laden, damit z. B. die Body Battery mitläuft (#79)
 setInterval(() => { if (document.visibilityState === 'visible') loadData().catch(() => {}); }, 10 * 60000);
 let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
 
 try { let d = Number(localStorage.getItem('days')); if (d === 84 || d === 91) d = 28; if (PERIODS.includes(d)) { S.days = d; document.querySelectorAll('#seg button').forEach((x) => x.setAttribute('aria-pressed', String(Number(x.dataset.days) === d))); } } catch {}
-let startTab = 'heute';
-try { startTab = localStorage.getItem('tab') || 'heute'; } catch {}
-if (startTab === 'belastung' || startTab === 'volumen') startTab = 'training';
-if (startTab === 'trainings') startTab = 'einheiten'; // umbenannt (#59)
+// Die App startet immer auf „Heute“ (Eddies Wunsch), nicht im zuletzt offenen Reiter. Gemerkt wird nur,
+// welcher Bereich unter Statistiken zuletzt offen war (Training, Leistung, Schlaf, Freunde).
 try { const st = localStorage.getItem('statTab'); if (STAT_TABS.includes(st)) S.statTab = st; } catch {}
-// Konto ist kein Startbereich mehr, dann lieber „Heute“
-showTab(TAB_TITLES[startTab] && !SUB_TABS.includes(startTab) ? startTab : 'heute');
+showTab('heute');
 // Neu geladen auf einer Unterseite (#einheit/<id>): nach dem Laden wieder dorthin
 const startSub = subFromHash();
 loadData().then(() => { if (startSub) { history.replaceState(null, '', location.pathname); openSub(startSub.name, startSub.key); } })
@@ -126,8 +134,13 @@ loadData().then(() => { if (startSub) { history.replaceState(null, '', location.
 initWithings();
 initStrava();
 initWhoop();
+initGoogle();
 initPush();
 initSecurity();
 initClaude();
 initPredCfg();
 initPasskeys();
+initMe();
+initFriends();
+initWeatherCfg();
+initRadwetter();

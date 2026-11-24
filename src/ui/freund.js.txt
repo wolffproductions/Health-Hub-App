@@ -1,0 +1,142 @@
+// ---------- FREUND (#87): Profil eines Freundes ----------
+// Antippen in der Rangliste oder unter Konto → Freunde öffnet diese Seite. Aufbau wie bei Strava: oben Bild (antippen = groß,
+// zoombar) und Name, darunter Bereiche zum Aufklappen (Aktivitäten, Statistiken, Bestzeiten, Leistung). Alles nur, soweit
+// der Freund es freigegeben hat (seine Instanz schickt nichts anderes).
+function openFriend(id) { openSub('freund', id); }
+
+const FP = { open: {} };
+const fpTime = (s) => { const r = Math.round(s), h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60), x = String(r % 60).padStart(2, '0'); return h ? h + ':' + String(m).padStart(2, '0') + ':' + x : m + ':' + x; };
+const FP_SPAN = [['w', 'Diese Woche'], ['m', 'Dieser Monat'], ['y', 'Dieses Jahr']];
+const FP_SPORT = [['run', 'Laufen'], ['ride', 'Rad']];
+
+// Kennzahlen als Zeilen
+function fpRows(rows) {
+  const ul = el('ul', 'sessions fp-rows');
+  for (const [a, b] of rows) { const li = el('li'); li.append(el('span', null, a), el('b', 'fp-val', b)); ul.append(li); }
+  return ul;
+}
+// Ein Bereich zum Aufklappen: Kopf mit Symbol, Name, Kurzinfo und Pfeil; Inhalt wird erst beim Öffnen gebaut
+function fpSection(list, id, key, iconName, title, info, build) {
+  const k = id + ':' + key, open = !!FP.open[k];
+  const li = el('li', 'st-row fp-sec' + (open ? ' open' : ''));
+  const head = el('button', 'st-head'); head.type = 'button'; head.setAttribute('aria-expanded', String(open));
+  const name = el('span', 'st-name');
+  const ic = el('span', 'fp-ico'); ic.innerHTML = icon(iconName);
+  const chev = el('span', 'st-chev'); chev.innerHTML = icon('weiter');
+  name.append(ic, el('span', null, title), chev);
+  head.append(name);
+  if (info) head.append(el('span', 'fp-info', info));
+  const box = el('div', 'fp-secbody'); box.hidden = !open;
+  if (open) box.append(build());
+  head.addEventListener('click', () => {
+    FP.open[k] = !FP.open[k];
+    li.classList.toggle('open', FP.open[k]); head.setAttribute('aria-expanded', String(FP.open[k]));
+    if (FP.open[k] && !box.childElementCount) box.append(build());
+    box.hidden = !FP.open[k];
+  });
+  li.append(head, box); list.append(li);
+}
+
+async function renderFriendProfile() {
+  const body = $('#fp-body'); if (!body) return;
+  const id = S.sub && S.sub.key;
+  let d; try { d = await loadFriends(false); } catch { d = null; }
+  const f = d && d.friends.find((x) => x.id === id);
+  const key = f && f.data ? id + '|' + f.data.at : '';
+  if (key && body.dataset.key === key && body.childElementCount) return; // Karten nicht bei jedem Neuzeichnen neu laden
+  body.replaceChildren(); body.dataset.key = key;
+  if (!f || !f.data) {
+    $('#fp-title').textContent = 'Freund'; $('#fp-sub').textContent = '';
+    body.append(el('div', 'card empty', d ? 'Von dieser Person sind noch keine Daten da. Sie muss deine Anfrage angenommen haben.' : 'Lade Daten …'));
+    return;
+  }
+  const p = f.data;
+  $('#fp-title').textContent = p.name;
+  $('#fp-sub').textContent = p.at ? 'Stand ' + relTime(p.at) : '';
+  // Kopf wie ein Social-Media-Profil: Bild mit Ring (antippen = groß), daneben Aktivitäten, Follower, Gefolgt
+  const head = el('div', 'fp-head');
+  const av = frAvatar(p, 'fr-av fp-av');
+  if (p.img) { av.setAttribute('role', 'button'); av.setAttribute('aria-label', 'Profilbild groß ansehen'); av.removeAttribute('aria-hidden'); av.tabIndex = 0; av.addEventListener('click', () => zoomAvatar(p.img, p.name)); }
+  head.append(av);
+  const nums = el('div', 'fp-nums');
+  const big = (v, l) => { const x = el('div', 'fp-num'); x.append(el('b', null, v), el('span', null, l)); nums.append(x); };
+  const yr = (p.run && p.run.y ? p.run.y.n : 0) + (p.ride && p.ride.y ? p.ride.y.n : 0);
+  if (yr) big(num(yr, 0), 'Einheiten ' + S.today.slice(0, 4));
+  if (p.fol != null) big(num(p.fol, 0), 'Follower');
+  if (p.fing != null) big(num(p.fing, 0), 'Gefolgt');
+  if (nums.childElementCount) head.append(nums);
+  body.append(head);
+
+  // Bereiche zum Aufklappen; „Aktivitäten“ immer, damit klar ist, ob er sie teilt
+  const card = el('div', 'card fp-menu'); const list = el('ul', 'stats-rows'); card.append(list); body.append(card);
+  const acts = p.acts || [];
+  const last = acts[0];
+  fpSection(list, id, 'akt', 'einheiten', 'Aktivitäten', last ? acts.length + ' zuletzt · ' + dayLabel(last.date).split(',')[0] + ': ' + (last.name || (sportOf(last.type || '') || {}).label || '') : 'teilt noch keine', () => {
+    if (!acts.length) return el('p', 'note fp-hint', p.name + ' teilt seine Aktivitäten noch nicht. Freigeben kann er das unter Konto → Freunde („Letzte 10 Aktivitäten mit Karte“). Danach dauert es bis zu 15 Minuten.');
+    const w = el('div', 'actposts fp-acts'); for (const a of acts) w.append(fpPost(a)); return w;
+  });
+  const sports = FP_SPORT.filter(([sp]) => p[sp] && (p[sp].w || p[sp].m || p[sp].y));
+  if (sports.length) {
+    const w0 = sports.map(([sp, l]) => l + ' ' + num((p[sp].w || { km: 0 }).km, 0) + ' km').join(' · ');
+    fpSection(list, id, 'stat', 'statistiken', 'Statistiken', 'Diese Woche: ' + w0, () => {
+      const w = el('div', 'fp-stat');
+      for (const [sp, label] of sports) {
+        const s = p[sp]; w.append(el('div', 'fp-sub', label));
+        w.append(fpRows(FP_SPAN.filter(([k]) => s[k]).map(([k, t]) => [t, num(s[k].km, 0) + ' km · ' + hm(s[k].h) + ' h · ' + s[k].n + (s[k].n === 1 ? ' Einheit' : ' Einheiten') + (s[k].hm ? ' · ' + num(s[k].hm, 0) + ' hm' : '')])));
+      }
+      return w;
+    });
+  }
+  const run = p.run && p.run.best ? p.run.best : null;
+  if (run && Object.keys(run.all).length) {
+    const k5 = run.all['5000'];
+    fpSection(list, id, 'best', 'auszeichnung', 'Bestzeiten', k5 ? '5 km in ' + fpTime(k5) : Object.keys(run.all).length + ' Strecken', () =>
+      fpRows(FR_DIST.run.filter(([k]) => run.all[k]).map(([k, t]) => [t, fpTime(run.all[k]) + (run.year[k] && run.year[k] !== run.all[k] ? ' · dieses Jahr ' + fpTime(run.year[k]) : run.year[k] ? ' · dieses Jahr' : '')])));
+  }
+  const rb = p.ride && p.ride.best ? p.ride.best.all : null;
+  const w = p.ride && (p.ride.watt || p.ride.wkg);
+  if (w || (rb && Object.keys(rb).length)) {
+    const lbl = (sec) => (sec >= 3600 ? sec / 3600 + ' h' : sec >= 60 ? sec / 60 + ' min' : sec + ' s');
+    const ftp = p.ride.wkg && p.ride.wkg.all['1200'];
+    fpSection(list, id, 'watt', 'rad', 'Leistung Rad', ftp ? '20 min: ' + num(ftp, 2) + ' W/kg' : 'Watt und Bestzeiten', () => {
+      const box = el('div', 'fp-stat');
+      if (w) {
+        const ks = [...new Set([...Object.keys((p.ride.watt || {}).all || {}), ...Object.keys((p.ride.wkg || {}).all || {})])].map(Number).sort((a, b) => a - b);
+        box.append(el('div', 'fp-sub', 'Beste Leistung'));
+        box.append(fpRows(ks.map((k) => [lbl(k), [p.ride.watt && p.ride.watt.all[k] ? num(p.ride.watt.all[k], 0) + ' W' : '', p.ride.wkg && p.ride.wkg.all[k] ? num(p.ride.wkg.all[k], 2) + ' W/kg' : ''].filter(Boolean).join(' · ')])));
+      }
+      if (rb && Object.keys(rb).length) { box.append(el('div', 'fp-sub', 'Bestzeiten')); box.append(fpRows(FR_DIST.ride.filter(([k]) => rb[k]).map(([k, t]) => [t, fpTime(rb[k])]))); }
+      return box;
+    });
+  }
+  if (f.err) body.append(el('p', 'note', 'Zuletzt nicht erreichbar: ' + f.err));
+}
+
+// Eine Aktivität wie ein Post: Titel, Datum, Kennzahlen, Karte (erst laden, wenn sie ins Bild kommt)
+function fpPost(a) {
+  const sp = sportOf(a.type || '') || SPORTS[SPORTS.length - 1];
+  const c = el('div', 'card fp-post');
+  const top = el('div', 'fp-ptop');
+  top.append(el('b', null, a.name || sp.label), el('span', 'meta', dayLabel(a.date) + ' · ' + sp.label));
+  c.append(top);
+  const facts = [];
+  if (a.km) facts.push(['Distanz', num(a.km, a.km < 100 ? 1 : 0) + ' km']);
+  if (a.min) facts.push(['Zeit', hm(a.min / 60)]);
+  if (a.km && a.min) facts.push(sp.key === 'run' ? ['Pace', fpTime((a.min * 60) / a.km) + ' /km'] : ['Tempo', num(a.km / (a.min / 60), 1) + ' km/h']);
+  if (a.hm) facts.push(['Höhe', num(a.hm, 0) + ' m']);
+  if (a.hr) facts.push(['Puls', num(a.hr, 0)]);
+  const g = el('div', 'fp-facts');
+  for (const [k, v] of facts) { const x = el('div'); x.append(el('span', null, k), el('b', null, v)); g.append(x); }
+  c.append(g);
+  if (a.route && a.route.length > 1) {
+    const m = el('div', 'fp-map');
+    c.append(m);
+    const io = new IntersectionObserver((es) => {
+      if (!es.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      routeMap(m, a.route, false).catch(() => m.replaceChildren(el('div', 'empty', 'Karte konnte nicht geladen werden.')));
+    }, { rootMargin: '200px' });
+    io.observe(m);
+  }
+  return c;
+}

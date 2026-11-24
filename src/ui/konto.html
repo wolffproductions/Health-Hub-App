@@ -1,34 +1,147 @@
   <!-- KONTO (#28): Übersicht im Stil der iOS-Einstellungen, Quellen als Unterseiten -->
   <section data-tab="konto" hidden>
     <h2 id="konto-title">Konto</h2>
+    <!-- Übersicht wie die iPhone-Einstellungen: Profil oben, darunter eine Zeile je Bereich, jede öffnet eine eigene Seite -->
     <div id="konto-main">
-      <h3 class="sec">Datenquellen</h3>
+      <button class="me-head" id="me-head" type="button" data-view="profil" aria-label="Profil bearbeiten">
+        <span class="me-av" id="me-av" aria-hidden="true"></span>
+        <span class="me-txt"><span class="me-name" id="me-name">Dein Profil</span><span class="me-sub" id="me-follow" role="button" tabindex="0">Name und Bild</span></span>
+        <span class="chev"><i data-icon="weiter"></i></span>
+      </button>
+      <ul class="srclist konto-menu" aria-label="Einstellungen">
+        <li><button class="srcrow" type="button" data-view="quellen"><span class="srcicon"><i data-icon="stecker"></i></span><span class="srctext"><span class="srcname">Datenquellen</span><span class="srcsub" id="m-quellen"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+        <li><button class="srcrow" type="button" data-view="push"><span class="srcicon"><i data-icon="glocke"></i></span><span class="srctext"><span class="srcname">Benachrichtigungen</span><span class="srcsub" id="m-push"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+        <li><button class="srcrow" type="button" data-view="claude"><span class="srcicon"><i data-icon="funken"></i></span><span class="srctext"><span class="srcname">Claude</span><span class="srcsub" id="m-claude"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+        <li><button class="srcrow" type="button" data-view="freunde"><span class="srcicon"><i data-icon="freunde"></i></span><span class="srctext"><span class="srcname">Freunde und Freigaben</span><span class="srcsub" id="m-freunde"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+      </ul>
+      <ul class="srclist konto-menu" aria-label="Training">
+        <li><button class="srcrow" type="button" data-view="zonen"><span class="srcicon"><i data-icon="puls"></i></span><span class="srctext"><span class="srcname">Pulszonen</span><span class="srcsub" id="m-zonen"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+        <li><button class="srcrow" type="button" data-view="prognose"><span class="srcicon"><i data-icon="zielscheibe"></i></span><span class="srctext"><span class="srcname">Wettkampfprognose</span><span class="srcsub" id="m-prognose"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+        <li><button class="srcrow" type="button" data-view="radwetter"><span class="srcicon"><i data-icon="rad"></i></span><span class="srctext"><span class="srcname">Rad-Wetter</span><span class="srcsub" id="m-radwetter"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+      </ul>
+      <ul class="srclist konto-menu" aria-label="Sicherheit">
+        <li><button class="srcrow" type="button" data-view="anmeldung"><span class="srcicon"><i data-icon="schloss"></i></span><span class="srctext"><span class="srcname">Anmeldung</span><span class="srcsub" id="m-anmeldung"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+      </ul>
+      <ul class="srclist konto-menu" aria-label="Mehr">
+        <li><button class="srcrow" type="button" data-view="feedback"><span class="srcicon"><i data-icon="nachricht"></i></span><span class="srctext"><span class="srcname">Feedback geben</span><span class="srcsub">Fehler, Wünsche, Lob an Pablo und Eddie</span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+        <li><button class="srcrow" type="button" id="neu-open"><span class="srcicon"><i data-icon="info"></i></span><span class="srctext"><span class="srcname">Was ist neu?</span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
+        <li><a class="srcrow danger" href="/logout"><span class="srcicon"><i data-icon="abmelden"></i></span><span class="srctext"><span class="srcname">Abmelden</span></span></a></li>
+      </ul>
+      <p class="note konto-version" id="app-version"></p>
+    </div>
+
+    <!-- Profil: Name und Bild (nur für dich, z. B. das Bild oben rechts) -->
+    <div id="konto-profil" hidden>
+      <div class="card form">
+        <div class="me-edit">
+          <span class="me-av big" id="me-av-big" aria-hidden="true"></span>
+          <div class="row"><button class="btn" id="me-pick" type="button"><i data-icon="kamera"></i>Bild auswählen</button><button class="btn ghost" id="me-del" type="button" hidden>Entfernen</button></div>
+          <input type="file" id="me-file" accept="image/*" hidden>
+        </div>
+        <label>Name<input id="me-name-in" maxlength="40" autocomplete="nickname" placeholder="z. B. Eddie"></label>
+        <div class="row"><button class="btn" id="me-save" type="button">Speichern</button></div>
+        <p class="msg" id="me-msg" role="status"></p>
+        <p class="note">Name und Bild bleiben in deinem Cloudflare-Konto und erscheinen nur in deiner App. Das Bild wird vorher verkleinert.</p>
+      </div>
+    </div>
+
+    <!-- Freunde (#87): eigener Link, QR-Code, was geteilt wird, Folgen und Follower -->
+    <div id="konto-freunde" hidden>
+      <div class="card form">
+        <h3>Dein Freundeslink</h3>
+        <p class="note">Wer diesen Link in seiner Health-Hub-App einträgt, schickt dir eine Anfrage. Erst wenn du annimmst, sieht er in seiner Rangliste genau das, was du unten freigibst. Den Link kannst du also ruhig weitergeben.</p>
+        <label>Link<input id="fr-link" readonly></label>
+        <div class="row"><button class="btn" id="fr-copy" type="button">Teilen</button><button class="btn ghost" id="fr-qr-btn" type="button">QR-Code</button></div>
+        <div class="fr-qr" id="fr-qr" hidden></div>
+        <button class="btn small ghost" id="fr-new" type="button">Neuen Link erzeugen</button>
+      </div>
+      <div class="card form">
+        <h3>Was andere sehen</h3>
+        <div class="fr-share" id="fr-share"></div>
+        <p class="note">Nie geteilt: Stimmung, Schlaf, HRV, Ruhepuls, Gewicht, Routen und Einheiten aus Strava oder WHOOP. Name immer, alles andere nur mit Haken.</p>
+      </div>
+      <div class="card form">
+        <h3>Freund hinzufügen</h3>
+        <label>Freundeslink<input id="fr-add-in" placeholder="https://…/f/…" autocomplete="off" inputmode="url"></label>
+        <div class="row"><button class="btn" id="fr-add" type="button">Anfrage senden</button><button class="btn ghost" id="fr-paste" type="button">Einfügen</button></div>
+        <p class="msg" id="fr-msg" role="status"></p>
+      </div>
+      <div class="card">
+        <h3 id="fr-requests-h" hidden>Anfragen</h3>
+        <ul class="sessions fr-people" id="fr-requests"></ul>
+        <h3 id="fr-following-h">Gefolgt</h3>
+        <ul class="sessions fr-people" id="fr-following"></ul>
+        <h3 id="fr-followers-h">Follower</h3>
+        <ul class="sessions fr-people" id="fr-followers"></ul>
+      </div>
+    </div>
+
+    <div id="konto-quellen" hidden>
       <ul class="srclist" id="sources" aria-label="Datenquellen"></ul>
       <p class="note">Jede Quelle verbindest du mit deinem eigenen Zugang. Deine Daten bleiben in deinem Cloudflare-Konto.</p>
-      <h3 class="sec">Benachrichtigungen</h3>
+      <!-- Wetter je Einheit (#54) über Open-Meteo, nur mit Zustimmung -->
+      <div class="card form" id="wx-cfg">
+        <h3>Wetter</h3>
+        <p class="note">Zeigt bei jeder Einheit mit GPS das Wetter (Temperatur, Wind, Regen) und unter Leistung, wie das Wetter dein Tempo beeinflusst. Dafür gehen Startort (auf etwa 10 km gerundet) und Startzeit an den kostenlosen Wetterdienst Open-Meteo, ohne deinen Namen.</p>
+        <label class="mcp-mood"><input type="checkbox" id="wx-on"><span>Wetter von Open-Meteo holen</span></label>
+        <p class="note" id="wx-state"></p>
+      </div>
+    </div>
+
+    <div id="konto-push" hidden>
+      <!-- Mitteilungen (#161): oben das Gerät an/aus, darunter jede Art einzeln -->
       <div class="card form" id="push-card">
-        <h3>Morgen-Push</h3>
-        <p class="note">Jeden Morgen die Erholungs-Ampel aufs iPhone, z. B. „🟢 Training normal möglich · HRV 62 ms · Ruhepuls 47 · Schlaf 7:12 h“. Sind die Schlafdaten noch nicht bei Garmin, wartet die App bis zu drei Stunden darauf.</p>
+        <h3>Mitteilungen</h3>
+        <p class="note">Meldungen aufs iPhone, auch wenn die App zu ist. Unten wählst du, welche du bekommst.</p>
         <p class="note" id="push-state">Wird geprüft …</p>
-        <label class="push-time">Uhrzeit<select id="push-time"></select></label>
-        <div class="row"><button class="btn" id="push-on" type="button">Push aktivieren</button><button class="btn ghost" id="push-test" type="button" hidden>Test senden</button></div>
+        <div class="row"><button class="btn" id="push-on" type="button">Mitteilungen aktivieren</button></div>
         <p class="msg" id="push-msg" role="status"></p>
       </div>
-      <!-- Claude-Zugang (#5): eigene Daten als Connector in Claude -->
-      <h3 class="sec">Claude</h3>
+      <div class="card form" id="push-kinds" hidden>
+        <h3>Was du bekommst</h3>
+        <div class="push-kinds">
+          <label class="push-kind"><span class="pk-text"><span class="pk-name">Morgenbericht</span><span class="pk-sub">Jeden Morgen die Erholungs-Ampel, z. B. „🟢 Training normal möglich · HRV 62 ms · Schlaf 7:12 h“.</span></span><input type="checkbox" id="pk-morgen" data-kind="morgen"></label>
+          <div class="pk-opts" id="pk-morgen-opts">
+            <div class="seg" id="push-mode" role="group" aria-label="Wann kommt der Bericht?">
+              <button type="button" data-mode="auto" aria-pressed="false">Nach dem Aufwachen</button>
+              <button type="button" data-mode="zeit" aria-pressed="true">Feste Uhrzeit</button>
+            </div>
+            <p class="note" id="push-mode-note"></p>
+            <label class="push-time"><span id="push-time-lbl">Uhrzeit</span><select id="push-time"></select></label>
+            <div class="row"><button class="btn ghost" id="push-test" type="button">Test senden</button></div>
+          </div>
+          <label class="push-kind"><span class="pk-text"><span class="pk-name">Freunde</span><span class="pk-sub">Wenn dir jemand folgen möchte oder deine Anfrage annimmt.</span></span><input type="checkbox" id="pk-freunde" data-kind="freunde"></label>
+          <label class="push-kind"><span class="pk-text"><span class="pk-name">Neue Funktionen</span><span class="pk-sub">Eine kurze Meldung, wenn deine App etwas Neues kann. Nur tagsüber.</span></span><input type="checkbox" id="pk-neu" data-kind="neu"></label>
+          <label class="push-kind"><span class="pk-text"><span class="pk-name">Rad-Wetter</span><span class="pk-sub">Wenn sich ein gutes Fenster zum Radfahren auftut, z. B. „🚴 Gutes Fenster morgen: 10–14 Uhr trocken, 15 °C“, und auf Wunsch kurz bevor es losgeht.</span></span><input type="checkbox" id="pk-wetter" data-kind="wetter"></label>
+          <div class="pk-opts" id="pk-wetter-opts" hidden>
+            <label class="mcp-mood"><input type="checkbox" id="pk-rw-announce"><span>Neue, verschobene und ausfallende Fenster melden</span></label>
+            <label class="push-time"><span>Erinnerung vor dem Start</span><select id="pk-rw-remind"><option value="0">Keine</option><option value="15">15 Minuten vorher</option><option value="30">30 Minuten vorher</option><option value="60">1 Stunde vorher</option></select></label>
+            <label class="push-time"><span>Für den Ort</span><select id="pk-rw-place"></select></label>
+            <p class="note" id="pk-rw-note"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="konto-claude" hidden>
       <div class="card form" id="mcp-card">
         <h3>Claude-Zugang</h3>
-        <p class="note">Verbinde deine Daten mit Claude und frag einfach drauflos, z. B. „Wie habe ich diese Woche geschlafen?“ oder „Wie liefen meine 1200er im Vergleich zum letzten Monat?“. Claude kann nur lesen, nichts ändern.</p>
+        <p class="note">Verbinde deine Daten mit Claude und frag einfach drauflos, z. B. „Wie habe ich diese Woche geschlafen?“ oder „Wie liefen meine 1200er im Vergleich zum letzten Monat?“. Claude kann nur lesen. Einzige Ausnahme ist dein Trainingsplan, wenn du es unten erlaubst.</p>
         <label>Adresse für Claude<input id="mcp-url" readonly></label>
         <div class="row"><button class="btn" id="mcp-copy" type="button">Adresse kopieren</button></div>
         <p class="note">In Claude unter Einstellungen → Connectors einen eigenen Connector mit dieser Adresse hinzufügen und dann mit deinem App-Passwort erlauben.</p>
         <label class="mcp-mood"><input type="checkbox" id="mcp-mood"><span>Stimmung (Balance) für Claude freigeben</span></label>
         <label class="mcp-mood" id="mcp-whoop-row" hidden><input type="checkbox" id="mcp-whoop"><span>WHOOP-Daten für Claude freigeben</span></label>
+        <label class="mcp-mood" id="mcp-google-row" hidden><input type="checkbox" id="mcp-google"><span>Google-Health-Daten (Fitbit) für Claude freigeben</span></label>
+        <label class="mcp-mood"><input type="checkbox" id="mcp-plan"><span>Claude darf meinen Trainingsplan schreiben</span></label>
+        <p class="note">Damit kann Claude Einheiten in deinen Plan eintragen und ändern, sonst nichts. Der Plan erscheint unter Einheiten und auf „Heute“.</p>
         <p class="note">Was Claude abruft, wird Teil des Gesprächs und damit an Anthropic übertragen.</p>
         <ul class="mcp-list" id="mcp-clients" aria-label="Verbundene Apps"></ul>
         <p class="msg" id="mcp-msg" role="status"></p>
       </div>
-      <h3 class="sec">Einstellungen</h3>
+    </div>
+
+    <div id="konto-zonen" hidden>
     <div class="card form">
       <h3>Pulszonen</h3>
       <p class="note">Für „Zeit in Herzfrequenzzonen“ und „Pace je Zone“ unter „Leistung“. Die drei Bereiche sind Z2–Z4, Z1 liegt darunter, Z5 darüber (wie bei Strava). Vorbelegt mit Beispielwerten, trag deine eigenen ein (z. B. aus Strava oder vom Leistungstest). Ganze Werte, aufsteigend, ohne Überschneidung.</p>
@@ -36,8 +149,44 @@
       <div class="row"><button class="btn" id="zone-save" type="button">Speichern</button><button class="btn ghost" id="zone-reset" type="button">Beispielwerte einsetzen</button></div>
       <p class="msg" id="zone-msg" role="status"></p>
     </div>
-    <!-- Anmeldung mit Passkey (#95) -->
-    <h3 class="sec">Anmeldung</h3>
+    </div>
+
+    <!-- Feedback (#162): geht über die eigene Instanz an den Feedback-Worker (Issue in hhub-team/feedback) -->
+    <div id="konto-feedback" hidden>
+    <div class="card form" id="fb-form">
+      <h3>Feedback geben</h3>
+      <p class="note">Was ist dir aufgefallen? Fehler, Wünsche oder Lob gehen direkt an Pablo und Eddie.</p>
+      <div class="seg" id="fb-kind" role="group" aria-label="Art"><button type="button" data-k="fehler" aria-pressed="true">Fehler</button><button type="button" data-k="wunsch" aria-pressed="false">Wunsch</button><button type="button" data-k="sonstiges" aria-pressed="false">Sonstiges</button></div>
+      <label>Deine Nachricht<textarea id="fb-text" rows="6" maxlength="5000" placeholder="Was ist passiert, und wo in der App?"></textarea></label>
+      <div class="fb-shot">
+        <input type="file" id="fb-file" accept="image/*" hidden>
+        <div class="row"><button class="btn ghost" id="fb-add" type="button">Screenshot anhängen</button><button class="btn ghost" id="fb-del" type="button" hidden>Entfernen</button></div>
+        <img id="fb-prev" alt="Vorschau des Screenshots" hidden>
+        <p class="note">Auf Screenshots sind oft deine Werte zu sehen. Sie gehen nur an Pablo und Eddie.</p>
+      </div>
+      <div class="fb-meta">
+        <div class="pl-lbl">Mitschicken (hilft beim Finden)</div>
+        <label class="mcp-mood"><input type="checkbox" id="fb-name" checked><span id="fb-name-t">Dein Name</span></label>
+        <label class="mcp-mood"><input type="checkbox" id="fb-ver" checked><span id="fb-ver-t">App-Version</span></label>
+        <label class="mcp-mood"><input type="checkbox" id="fb-dev" checked><span id="fb-dev-t">Gerät und Browser</span></label>
+        <label class="mcp-mood"><input type="checkbox" id="fb-view" checked><span id="fb-view-t">Wo du gerade warst</span></label>
+      </div>
+      <input type="text" id="fb-web" tabindex="-1" autocomplete="off" aria-hidden="true" class="fb-hp">
+      <div class="row"><button class="btn" id="fb-send" type="button">Senden</button></div>
+      <p class="msg" id="fb-msg" role="status"></p>
+    </div>
+    </div>
+
+    <div id="konto-prognose" hidden>
+    <div class="card form" id="pred-cfg">
+      <h3>Wettkampfprognose</h3>
+      <p class="note">Woraus die Prognose unter Statistiken → Leistung rechnet. „Automatisch“ passt für fast alle: Garmins VO2max, dazu deine Läufe und echte Intervalle, je nachdem wie verlässlich sie sind.</p>
+      <label>Prognose berechnen aus<select id="pred-mode"><option value="auto">Automatisch (empfohlen)</option><option value="garmin">Nur Garmin-VO2max</option><option value="intervalle">Mit meinen Intervallen</option></select></label>
+      <p class="msg" id="pred-msg" role="status"></p>
+    </div>
+    </div>
+
+    <div id="konto-anmeldung" hidden>
     <div class="card form" id="pk-card">
       <h3>Passkeys</h3>
       <p class="note">Mit einem Passkey meldest du dich per Face ID oder Touch ID an, ohne Passwort. Er liegt in deinem iCloud-Schlüsselbund und ist damit auch auf Mac und iPad da. Die App speichert nur einen öffentlichen Schlüssel.</p>
@@ -57,17 +206,6 @@
         <div class="row"><button class="btn" id="pw-save" type="button">Passwort ändern</button></div>
       </div>
       <p class="msg" id="pw-msg" role="status"></p>
-    </div>
-    <div class="card form" id="pred-cfg">
-      <h3>Wettkampfprognose</h3>
-      <p class="note">Woraus die Prognose unter Statistiken → Leistung rechnet. „Automatisch“ passt für fast alle: Garmins VO2max, dazu deine Läufe und echte Intervalle, je nachdem wie verlässlich sie sind.</p>
-      <label>Prognose berechnen aus<select id="pred-mode"><option value="auto">Automatisch (empfohlen)</option><option value="garmin">Nur Garmin-VO2max</option><option value="intervalle">Mit meinen Intervallen</option></select></label>
-      <p class="msg" id="pred-msg" role="status"></p>
-    </div>
-    <div class="card">
-      <a class="btn ghost" href="/logout">Abmelden</a>
-      <p class="note" id="app-version"></p>
-      <button class="btn small ghost" id="neu-open" type="button">Was ist neu?</button>
     </div>
     </div>
 
@@ -118,7 +256,7 @@
     <div class="card form" id="wh-night-card">
       <h3>Garmin und WHOOP zusammen</h3>
       <p class="note">Trägst du beides, zählt für Schlaf, HRV, Ruhepuls und Sauerstoff nur eine Quelle, damit sich die Werte nicht mischen. Trainings kommen immer von der Uhr (GPS, Runden), WHOOP-Strain hängt daran.</p>
-      <label>Nachtwerte von<select id="wh-night"><option value="whoop">WHOOP (empfohlen)</option><option value="garmin">Garmin</option></select></label>
+      <label>Nachtwerte von<select id="wh-night"><option value="whoop">WHOOP (empfohlen)</option><option value="garmin">Garmin</option><option value="google">Google Health / Fitbit</option></select></label>
       <p class="msg" id="wh-night-msg" role="status"></p>
     </div>
     <div class="card form">
@@ -143,6 +281,48 @@
       <p class="msg" id="wh-app-msg" role="status"></p>
       <p class="note">„Verbindung löschen“ widerruft den Zugriff bei WHOOP und entfernt App-Daten und Zugang. Bereits geladene Werte bleiben erhalten.</p>
       <p class="note">WHOOP-Daten siehst nur du. Beim Claude-Zugang sind sie nur dabei, wenn du sie unter „Claude“ ausdrücklich freigibst (so verlangen es die WHOOP-Bedingungen).</p>
+    </div>
+    </div>
+
+    <!-- Unterseite Google Health (Fitbit, Pixel Watch) -->
+    <div id="konto-google" hidden>
+    <div class="card form">
+      <h3>Verbindung</h3>
+      <p class="note" id="gh-state">Status wird geladen …</p>
+      <div class="row" id="gh-actions"><a class="btn" id="gh-connect" href="/google/connect">Mit Google verbinden</a><button class="btn ghost" id="gh-sync" type="button">Jetzt aktualisieren</button></div>
+      <p class="msg" id="gh-msg" role="status"></p>
+      <p class="note">Die App holt Schlaf, HRV, Ruhepuls, Sauerstoff, Atemfrequenz, Hauttemperatur, Schritte, Gewicht und Trainings alle 30 Minuten. Beim ersten Mal kommt die Historie des letzten Jahres, in Etappen. Google liefert keinen Schlafscore, keine GPS-Route und keine Runden.</p>
+    </div>
+    <div class="card form">
+      <h3>Mehrere Geräte</h3>
+      <p class="note">Trägst du zusätzlich eine Garmin-Uhr oder ein WHOOP-Band, zählt für Schlaf, HRV, Ruhepuls und Sauerstoff nur eine Quelle, damit sich die Werte nicht mischen. Trainings, die auch die Garmin-Uhr aufgezeichnet hat, zeigt die App nur einmal.</p>
+      <label>Nachtwerte von<select id="gh-night"><option value="whoop">WHOOP</option><option value="garmin">Garmin</option><option value="google">Google Health / Fitbit</option></select></label>
+      <p class="msg" id="gh-night-msg" role="status"></p>
+    </div>
+    <div class="card form">
+      <h3>Eigenes Google-Projekt</h3>
+      <p class="note">Google gibt Gesundheitsdaten nur an registrierte Apps heraus. Das richtest du einmal ein, kostenlos, in etwa zehn Minuten. Am Computer geht es leichter, am iPhone in Safari mit „Desktop-Website anfordern“.</p>
+      <ol class="wi-steps">
+        <li>Auf <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">console.cloud.google.com ↗</a> mit dem Google-Konto anmelden, in dem deine Fitbit-Daten liegen, und ein Projekt anlegen (Name z. B. „Mein Health Hub“).</li>
+        <li>In diesem Projekt die <a href="https://console.cloud.google.com/apis/library/health.googleapis.com" target="_blank" rel="noopener">Google Health API ↗</a> aktivieren.</li>
+        <li>Unter <b>Google Auth Platform</b> → „Jetzt starten“: App-Name „Mein Health Hub“, deine E-Mail-Adresse, Zielgruppe <b>Extern</b>. Unter <b>Zielgruppe → Testnutzer</b> deine eigene Google-Adresse hinzufügen.</li>
+        <li>Unter <b>Datenzugriff</b> → „Bereiche hinzufügen“: nach „Google Health API“ suchen und die drei Lese-Rechte für Schlaf, Aktivität und Gesundheitswerte anhaken (sie enden auf „.readonly“), speichern.</li>
+        <li>Unter <b>Clients</b> → „Client erstellen“ → Typ <b>Webanwendung</b>. Bei „Autorisierte Weiterleitungs-URIs“ genau diese Adresse eintragen:<br><code id="gh-cb"></code> <button class="btn small ghost" id="gh-copy" type="button">Kopieren</button></li>
+        <li>Client-ID und Client-Secret hier eintragen, speichern, dann oben „Mit Google verbinden“.</li>
+      </ol>
+      <label class="note" for="gh-id">Client-ID (endet auf .apps.googleusercontent.com)</label>
+      <input id="gh-id" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Client-ID einfügen">
+      <label class="note" for="gh-secret">Client-Secret (wird verschlüsselt gespeichert und nie wieder angezeigt)</label>
+      <input id="gh-secret" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Client-Secret einfügen">
+      <div class="row"><button class="btn" id="gh-save" type="button">Speichern</button><button class="btn danger" id="gh-del" type="button">Verbindung löschen</button></div>
+      <p class="msg" id="gh-app-msg" role="status"></p>
+      <p class="note">„Verbindung löschen“ widerruft den Zugriff bei Google und entfernt App-Daten und Zugang. Bereits geladene Werte bleiben erhalten.</p>
+    </div>
+    <div class="card form">
+      <h3>Nicht alle 7 Tage neu verbinden</h3>
+      <p class="note">Solange dein Google-Projekt im Status „Testing“ ist, läuft die Verbindung nach 7 Tagen ab, und du musst hier neu verbinden. Die App erinnert dich daran.</p>
+      <p class="note">Damit sie dauerhaft hält: in der Google Cloud Console unter <b>Google Auth Platform → Zielgruppe</b> auf „App veröffentlichen“ tippen und danach hier neu verbinden. Google zeigt dann einmal „Google hat diese App nicht überprüft“. Das ist deine eigene App: auf „Erweitert“ und „Weiter zu Mein Health Hub“ tippen.</p>
+      <p class="note">Google-Daten siehst nur du. Für Freunde sind sie nie dabei, beim Claude-Zugang nur, wenn du sie unter „Claude“ ausdrücklich freigibst (so verlangen es Googles Regeln für Gesundheitsdaten).</p>
     </div>
     </div>
 

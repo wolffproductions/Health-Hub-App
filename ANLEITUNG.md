@@ -97,7 +97,40 @@ funktioniert damit auch auf Mac und iPad. Dein Passwort bleibt als Reserve gült
 Jede Person legt ihre **eigene** WHOOP-App an. Die Grenze von 10 Mitgliedern für Apps ohne Prüfung durch WHOOP
 stört deshalb nicht.
 
+## 9. Fitbit / Google Health verbinden (freiwillig)
+
+Fitbit-Daten (auch Pixel Watch und Fitbit Air) liegen inzwischen in deinem Google-Konto. Die App holt sie über die
+Google Health API. Dafür brauchst du ein eigenes, kostenloses Google-Cloud-Projekt (ca. 10 Minuten, am Computer leichter).
+Die Schritte stehen auch in der App unter Konto → Datenquellen → **Google Health**.
+
+1. Auf https://console.cloud.google.com/projectcreate mit dem Google-Konto anmelden, in dem die Fitbit-Daten liegen,
+   und ein Projekt anlegen (Name z. B. „Mein Health Hub“). Kostenlos, keine Zahlungsdaten nötig.
+2. Die **Google Health API** aktivieren: https://console.cloud.google.com/apis/library/health.googleapis.com
+3. **Google Auth Platform** → „Jetzt starten“: App-Name, eigene E-Mail, Zielgruppe **Extern**. Unter
+   **Zielgruppe → Testnutzer** die eigene Google-Adresse eintragen.
+4. **Datenzugriff** → „Bereiche hinzufügen“ → nach „Google Health API“ suchen → die drei Lese-Rechte für Schlaf,
+   Aktivität und Gesundheitswerte anhaken (enden auf „.readonly“) → speichern.
+5. **Clients** → „Client erstellen“ → Typ **Webanwendung** → bei „Autorisierte Weiterleitungs-URIs“ die Adresse
+   eintragen, die die App unter Konto → **Google Health** anzeigt (endet auf `/google/callback`).
+6. Client-ID (endet auf `.apps.googleusercontent.com`) und Client-Secret in Health Hub eintragen → **„Speichern“** →
+   **„Mit Google verbinden“**. Bei Google alle Haken setzen.
+7. Damit die Verbindung nicht nach 7 Tagen abläuft: unter **Google Auth Platform → Zielgruppe** auf **„App
+   veröffentlichen“** und in der App **„Neu verbinden“**. Google warnt dann einmal „Google hat diese App nicht
+   überprüft“: Es ist deine eigene App, also **„Erweitert“** → **„Weiter zu Mein Health Hub“**.
+
+Google liefert keinen Schlafscore, keine GPS-Route und keine Runden. Trägst du zusätzlich eine Garmin-Uhr, zeigt die
+App gleiche Trainings nur einmal; unter Konto → Google Health wählst du, woher die Nachtwerte kommen.
+
 ---
+
+## Rad-Wetter: Wann kann ich fahren? (freiwillig)
+
+1. In der App unter **Einheiten** oben auf **Rad-Wetter** tippen.
+2. **Zuhause festlegen:** „Standort verwenden“, „Start meiner Fahrten“ oder unter Konto → Rad-Wetter einen Ort suchen. Nur dieser Ort,
+   auf etwa 1 km gerundet, geht an den kostenlosen Wetterdienst Open-Meteo.
+3. Die App zeigt gute Fenster der nächsten 48 Stunden mit Countdown, was du anziehen solltest und welche Lieblingsrunde zum Wind passt.
+   Kriterien, Kleidungsregeln und Lieblingsrunden stellst du unter Konto → Rad-Wetter ein.
+4. Mitteilungen dazu unter Konto → Benachrichtigungen → **Rad-Wetter**.
 
 ## Claude mit deinen Daten verbinden (freiwillig)
 
@@ -107,7 +140,7 @@ stört deshalb nicht.
 3. Es öffnet sich deine App: mit dem App-Passwort **„Erlauben“**.
 4. Jetzt einfach fragen, z. B. „Wie habe ich diese Woche geschlafen?“. Claude kann nur lesen.
    Den Zugriff entziehst du jederzeit unter Konto → Claude.
-5. WHOOP-Daten sieht Claude nur, wenn du sie unter Konto → Claude ausdrücklich freigibst.
+5. WHOOP- und Google-Health-Daten sieht Claude nur, wenn du sie unter Konto → Claude ausdrücklich freigibst.
 
 ## Gut zu wissen
 

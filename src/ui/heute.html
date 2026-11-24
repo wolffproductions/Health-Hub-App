@@ -1,24 +1,35 @@
-  <!-- HEUTE -->
+  <!-- HEUTE: wie eine Morgenausgabe (#117): Datum oben, Erholung als Schlagzeile, Werte als Zeilen -->
   <section data-tab="heute">
     <h2>Heute</h2>
-    <p class="subtitle" id="todayDate"></p>
-    <!-- Erholungs-Ampel als schmale Zeile, Begründung zum Aufklappen (#15) -->
-    <details class="card readiness" id="readiness">
-      <summary><i class="light" id="r-light"></i><span class="verdict" id="r-verdict">Lade Daten …</span><span class="more">Details</span></summary>
+    <p class="subtitle eyebrow" id="todayDate"></p>
+    <!-- Erholungs-Ampel als Schlagzeile, Begründung zum Aufklappen (#15) -->
+    <details class="readiness" id="readiness">
+      <summary>
+        <span class="r-top"><span class="r-lbl">Erholung</span><span class="r-state" id="r-state"><i class="light" id="r-light"></i><span id="r-state-txt"></span></span></span>
+        <!-- Bereitschaft 0–100 als Ring neben der Schlagzeile -->
+        <span class="r-main"><span class="r-ring" id="r-ring" hidden></span><span class="verdict" id="r-verdict">Lade Daten …</span></span>
+        <span class="r-chips" id="r-chips"></span>
+        <span class="more">Details</span>
+      </summary>
       <p class="note" id="r-date"></p>
       <ul class="factors" id="r-factors"></ul>
+      <div class="r-parts" id="r-parts" hidden></div>
       <p class="note">Eigene Einschätzung aus deinen Werten (Garmin bzw. WHOOP) und deinen letzten Einheiten (Erholungszeit), keine Garmin Training Readiness. Die Regeln stehen neben jedem Punkt.</p>
       <p class="note">Was Garmin über die Personal API nicht herausgibt, steht unter „Konto“.</p>
     </details>
-    <div class="tiles" id="today-tiles"></div>
-    <p class="note">Vergleich jeweils mit deinem eigenen Schnitt der 30 Tage davor. Verlauf: letzte 14 Tage, bei der Body Battery der heutige Tag (aktualisiert sich alle 30 Minuten, sobald deine Uhr mit Garmin Connect synchronisiert hat).</p>
+    <!-- Trainingsplan von Claude (#20): Einheit des Tages und Notiz -->
+    <div class="tr-todaybox" id="today-plan" hidden></div>
+    <!-- Kernwerte als Zeilen: Wert, Verlauf, dein üblicher Bereich -->
+    <div class="mrows" id="today-tiles"></div>
+    <p class="note">Dein Bereich: dein üblicher Wert in den 30 Tagen davor (Schnitt ± Streuung, bei der HRV Garmins Normalbereich). Verlauf: letzte 14 Tage, bei der Body Battery der heutige Tag (aktualisiert sich alle 30 Minuten, sobald deine Uhr mit Garmin Connect synchronisiert hat).</p>
     <!-- Aktualisieren direkt auf „Heute“ (#104): alle verbundenen Quellen, Stand darunter -->
     <div class="refresh">
       <button class="btn ghost" id="refresh-btn" type="button"><i data-icon="aktualisieren"></i>Aktualisieren</button>
       <p class="note" id="refresh-state" role="status"></p>
     </div>
+    <!-- Rad-Wetter (#153): nächstes gutes Fenster mit Countdown, nur wenn eingerichtet -->
+    <div class="rw-today" id="rw-today" hidden></div>
     <!-- Aktivitäten des Tages als Mini-Post mit Karte (#16) -->
     <h3 class="sec" id="acts-title">Heute trainiert</h3>
     <div class="actposts" id="today-acts"></div>
   </section>
-

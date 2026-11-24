@@ -4,15 +4,8 @@ function renderLoad() {
   const series = loadSeries(cur[0], cur[1]);
   const last = series[series.length - 1];
   const actsCur = S.acts.filter((a) => inR(a.date, cur)), actsPrev = S.acts.filter((a) => inR(a.date, prev));
-  const tiles = $('#load-tiles'); tiles.replaceChildren();
-  const ratio = last && last.chronic ? last.acute / last.chronic : null;
-  tile(tiles, { label: 'Akut zu chronisch · heute', value: num(ratio, 2), cmp: { text: ratio == null ? '' : ratio > 1.5 ? 'deutlicher Sprung' : ratio > 1.3 ? 'erhöht' : ratio < 0.8 ? 'Entlastung' : 'im grünen Bereich', cls: ratio > 1.5 ? 'bad' : ratio > 1.3 ? 'warn' : 'good' } });
-  const w = S.days / 7;
-  tile(tiles, { label: 'Last pro Woche', value: num(sum(actsCur.map((a) => a.load)) / w), cmp: cmpLine(sum(actsCur.map((a) => a.load)) / w, sum(actsPrev.map((a) => a.load)) / w, 0, null) });
-  const hard = (arr) => arr.filter((a) => (a.te || 0) >= 4 || (a.teAn || 0) >= 3).length / w;
-  tile(tiles, { label: 'Harte Einheiten pro Woche', value: num(hard(actsCur), 1), cmp: cmpLine(hard(actsCur), hard(actsPrev), 1, null) });
-  const share = (arr) => { const t = sum(arr.map((a) => a.min)); return t ? sum(arr.filter((a) => ['RECOVERY', 'AEROBIC_BASE'].includes(a.label)).map((a) => a.min)) / t * 100 : null; };
-  tile(tiles, { label: 'Anteil ruhiger Einheiten', value: num(share(actsCur)), unit: ' %', cmp: cmpLine(share(actsCur), share(actsPrev), 0, null, ' %-Pkt.') });
+  // Kennzahlen als Zeilen wie auf „Heute“ (#159): Wert der letzten 7 Tage, Verlauf über 8 Wochen, „Dein Bereich“
+  loadRows();
 
   // Akut/chronisch
   const node = $('#c-acwr');
@@ -68,6 +61,33 @@ function renderLoad() {
 
 }
 
+// Belastung als Zeilen (#159). Immer die letzten 7 Tage bis heute; „Dein Bereich“ = Schnitt ± Streuung der 8 Wochen davor
+// (Last: fester grüner Bereich 0,8–1,3 wie in der Ampel). Antippen öffnet das Diagramm darunter bzw. im Vollbild.
+function loadRows() {
+  const box = $('#load-tiles'); box.className = 'mrows load-rows'; box.replaceChildren(rowHead('8 Wochen'));
+  const today = S.today;
+  // je 7-Tage-Fenster rückwärts: 0 = letzte 7 Tage, 1 = die 7 davor …
+  const win = (i) => S.acts.filter((a) => a.date > addDays(today, -7 * (i + 1)) && a.date <= addDays(today, -7 * i));
+  const hardN = (arr) => arr.filter((a) => (a.te || 0) >= 4 || (a.teAn || 0) >= 3).length;
+  const calm = (arr) => { const t = sum(arr.map((a) => a.min)); return t ? (sum(arr.filter((a) => ['RECOVERY', 'AEROBIC_BASE'].includes(a.label)).map((a) => a.min)) / t) * 100 : null; };
+  const wk = (fn) => Array.from({ length: 9 }, (_, i) => fn(win(i))); // [jetzt, davor, …] 9 Werte
+  const own = (vals) => { const b = vals.slice(1).filter((v) => v != null); if (b.length < 4) return null; const m = mean(b), sd = Math.sqrt(mean(b.map((v) => (v - m) ** 2))); return [Math.max(0, m - sd), m + sd]; };
+  const spark = (vals) => vals.map((v, i) => ({ d: addDays(today, -7 * i), v })).reverse();
+  // Last akut zu chronisch, Verlauf der letzten 8 Wochen wöchentlich
+  const ser = loadSeries(addDays(today, -56), today);
+  const rAt = (d) => { const s = ser.find((x) => x.d === d); return s && s.chronic ? s.acute / s.chronic : null; };
+  const ratios = Array.from({ length: 9 }, (_, i) => rAt(addDays(today, -7 * i)));
+  const r = ratios[0];
+  mrow(box, { label: 'Last', value: r == null ? '–' : num(r, 2), v: r, range: r == null ? null : [0.8, 1.3], up: false, fmt: (v) => num(v, 1), spark: spark(ratios), open: () => openChart('c-acwr') });
+  const loads = wk((a) => sum(a.map((x) => x.load)));
+  mrow(box, { label: 'Wochenlast', value: num(loads[0]), v: loads[0], range: own(loads), up: null, fmt: (v) => num(v), spark: spark(loads), open: () => openChart('c-acwr') });
+  const hards = wk(hardN);
+  mrow(box, { label: 'Harte Einheiten', value: String(hards[0]), v: hards[0], range: own(hards), up: null, fmt: (v) => num(v, 1), spark: spark(hards), open: () => openChart('c-cats') });
+  const calms = wk(calm);
+  mrow(box, { label: 'Anteil ruhig', value: calms[0] == null ? '–' : num(calms[0]), unit: calms[0] == null ? '' : ' %', v: calms[0], range: calms[0] == null ? null : [70, 90], up: true, fmt: (v) => num(v), spark: spark(calms), open: () => openChart('c-cats') });
+  box.append(el('p', 'note', 'Letzte 7 Tage. Last = Belastung der letzten 7 Tage im Verhältnis zu den letzten 28 Tagen, gut zwischen 0,8 und 1,3; darüber steigt das Verletzungsrisiko. Ruhig = Erholung und Grundlage, für Ausdauer sind 70–90 % üblich. Sonst ist „Dein Bereich“ dein Schnitt der 8 Wochen davor.'));
+}
+
 function stackedWeeks(node, rows, keys, fmt) {
   if (!rows.some((r) => keys.some((k) => r[k.key] > 0))) { empty(node, 'Keine Einheiten im Zeitraum.'); return; }
   const f = frame(node, 230);
@@ -79,7 +99,7 @@ function stackedWeeks(node, rows, keys, fmt) {
   yAxis(f, y, ml, f.w - 6, 4, tickFmt);
   const bw = Math.min(28, x.bandwidth()), off = (x.bandwidth() - bw) / 2;
   stack.forEach((layer, i) => {
-    f.svg.append('g').selectAll('rect').data(layer).join('rect').attr('class', 'bar').attr('rx', i === stack.length - 1 ? 3 : 1)
+    f.svg.append('g').selectAll('rect').data(layer).join('rect').attr('class', 'bar').attr('rx', 1)
       .attr('x', (d) => x(d.data.wk) + off).attr('width', bw).attr('y', (d) => y(d[1])).attr('height', (d) => Math.max(0, y(d[0]) - y(d[1])))
       .style('fill', keys[i].color);
   });
@@ -167,7 +187,7 @@ function renderForm() {
   // Form als Balken um die Nulllinie: frisch grün, im Aufbau grau, hohe Ermüdung rot
   const bw = Math.max(1.5, (f.w - ml - 10) / (series.length + 1) - 1);
   f.svg.append('g').selectAll('rect').data(series).join('rect').attr('class', 'bar')
-    .attr('x', (s) => x(parse(s.d)) - bw / 2).attr('width', bw).attr('rx', Math.min(2, bw / 2))
+    .attr('x', (s) => x(parse(s.d)) - bw / 2).attr('width', bw).attr('rx', Math.min(1, bw / 2))
     .attr('y', (s) => y(Math.max(0, s.tsb))).attr('height', (s) => Math.abs(y(s.tsb) - y(0)))
     .style('fill', (s) => { const k = formOf(s.tsb, s.ctl)[3]; return k === 'good' ? css('--ok') : k === 'bad' ? css('--bad') : css('--prev'); });
   glowLine(f, series, { x: (s) => x(parse(s.d)), y: (s) => y(s.atl), color: css('--accent-2'), width: 1.5, area: false });

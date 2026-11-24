@@ -2,8 +2,8 @@
 // Ausführen: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assess, loadRatio, pushText } from "../src/ampel.ts";
-import { decide } from "../src/ampel.ts";
+import { assess, loadRatio, pushText, readiness } from "../src/ampel.ts";
+import { decide, decideAuto } from "../src/ampel.ts";
 import { encryptPayload, vapidAuth } from "../src/webpush.ts";
 import { b64u } from "../src/util.ts";
 
@@ -32,7 +32,7 @@ test("Last akut zu chronisch und Meldungstext", () => {
   const days = Array.from({ length: 28 }, (_, i) => ({ d: day(i), rhr: 47, hrv: 62, hrvLo: 52, hrvHi: 70, score: 81, slp: 7.2 }));
   const a = assess(days, loads)!;
   const t = pushText(a, days[27]);
-  assert.equal(t.title, "🔴 Erholung hat Vorrang");
+  assert.match(t.title, /^🔴 Bereitschaft \d{1,2} · Erholung hat Vorrang$/);
   assert.equal(t.body, "HRV 62 ms · Ruhepuls 47 · Schlaf 7:12 h (Score 81) · Last 1,60");
 });
 
@@ -44,6 +44,27 @@ test("Morgen-Push: Uhrzeit, einmal am Tag, auf Schlafdaten warten", () => {
   assert.equal(decide(cfg, "2026-11-11", "12:00", "2026-11-10"), "send-stale");
   assert.equal(decide({ ...cfg, lastSent: "2026-11-11" }, "2026-11-11", "10:00", "2026-11-11"), "skip");
   assert.equal(decide({ ...cfg, on: false }, "2026-11-11", "10:00", "2026-11-11"), "skip");
+});
+
+test("Morgen-Push automatisch: sobald Schlaf (und HRV) da sind, spätestens zur eingestellten Zeit", () => {
+  const cfg = { on: true, latest: "11:00" };
+  const n = (sleep: boolean, hrv: boolean, sleepSeenMin: number | null = null, hrvUsual = true) => ({ sleep, hrv, hrvUsual, sleepSeenMin });
+  // Nacht läuft noch: nie vor 3 Uhr, auch nicht mit Werten
+  assert.equal(decideAuto(cfg, "2026-11-11", "02:30", n(true, true)), "skip");
+  // Noch nichts da → warten
+  assert.equal(decideAuto(cfg, "2026-11-11", "06:10", n(false, false)), "wait");
+  // Schlaf und HRV da → sofort senden
+  assert.equal(decideAuto(cfg, "2026-11-11", "06:40", n(true, true, 0)), "send");
+  // Schlaf da, HRV fehlt noch → kurz warten, nach 45 Minuten ohne HRV senden
+  assert.equal(decideAuto(cfg, "2026-11-11", "06:40", n(true, false, 10)), "wait");
+  assert.equal(decideAuto(cfg, "2026-11-11", "07:30", n(true, false, 50)), "send");
+  // Wer sonst keine HRV hat (Uhr ohne HRV), bekommt den Bericht direkt mit dem Schlaf
+  assert.equal(decideAuto(cfg, "2026-11-11", "06:40", n(true, false, 0, false)), "send");
+  // Bis „spätestens“ nichts da → mit dem letzten Stand
+  assert.equal(decideAuto(cfg, "2026-11-11", "11:00", n(false, false)), "send-stale");
+  // Einmal am Tag, nur wenn eingeschaltet
+  assert.equal(decideAuto({ ...cfg, lastSent: "2026-11-11" }, "2026-11-11", "07:00", n(true, true)), "skip");
+  assert.equal(decideAuto({ ...cfg, on: false }, "2026-11-11", "07:00", n(true, true)), "skip");
 });
 
 test("Web Push: aes128gcm lässt sich mit dem Schlüssel des Geräts wieder entschlüsseln (RFC 8291)", async () => {
@@ -170,4 +191,25 @@ test("HRV über den Wochenschnitt, sehr kurzer Schlaf bleibt rot", () => {
   assert.equal(a.light, "r");
   // 6 h → gelb
   assert.equal(at({ slp: 6 }).items.find((i) => i.key === "score")!.st, "y");
+});
+
+test("Bereitschaft 0–100: Bausteine, fehlende Werte, Zahl passt immer zur Ampelfarbe", () => {
+  const top = readiness({ hrv: 80, hrvWk: 78, hrvLo: 70, score: 90, slp: 8, recH: 0, ratio: 1, rhr: 42, rhrBase: 42, bb: 95 }, "g");
+  assert.equal(top.score, 97); // Schlafscore 90 und Body Battery 95 kosten zusammen knapp 3 Punkte
+  assert.equal(top.parts.reduce((t, p) => t + p.max, 0), 100);
+  assert.deepEqual(top.parts.map((p) => p.key), ["hrv", "sleep", "recovery", "load", "rhr", "bb"]);
+  // offene Erholung 24 h und kurzer Schlaf kosten Punkte
+  const tired = readiness({ hrv: 80, hrvWk: 78, hrvLo: 70, score: 70, slp: 6, recH: 24, ratio: 1, rhr: 42, rhrBase: 42 }, "g");
+  assert.ok(tired.score! < top.score! && tired.score! >= 70, "grün bleibt 70–100: " + tired.score);
+  assert.equal(tired.parts.find((p) => p.key === "recovery")!.pts, Math.round(tired.parts.find((p) => p.key === "recovery")!.max / 2));
+  // gleiche Werte, aber Ampel rot → Zahl unter 40; gelb → 40–69
+  assert.ok(readiness({ hrv: 80, hrvLo: 70, score: 90, slp: 8 }, "r").score! <= 39);
+  const y = readiness({ hrv: 80, hrvLo: 70, score: 90, slp: 8 }, "y").score!;
+  assert.ok(y >= 40 && y <= 69);
+  // ohne Body Battery: Gewichte werden hochgerechnet
+  const nobb = readiness({ hrv: 80, hrvLo: 70, score: 90, slp: 8 }, "g");
+  assert.equal(nobb.parts.reduce((t, p) => t + p.max, 0), 100);
+  // zu wenig Bausteine oder keine Ampel → keine Zahl
+  assert.equal(readiness({ score: 90 }, "g").score, null);
+  assert.equal(readiness({ hrv: 80, hrvLo: 70, score: 90 }, "").score, null);
 });

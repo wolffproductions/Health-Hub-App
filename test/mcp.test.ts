@@ -57,3 +57,9 @@ test("OAuth: PKCE S256 und erlaubte Rückleitungsadressen", async () => {
   assert.equal(redirectAllowed("http://example.com/cb"), false);
   assert.equal(redirectAllowed("javascript:alert(1)"), false);
 });
+
+test("MCP: schreibende Werkzeuge sind als schreibend markiert", async () => {
+  const w = [{ name: "w", title: "W", description: "", inputSchema: {}, write: true, run: async () => ({}) }];
+  const l: any = await handleRpc({ jsonrpc: "2.0", id: 9, method: "tools/list" }, w as any, ctx);
+  assert.equal(l.result.tools[0].annotations.readOnlyHint, false);
+});

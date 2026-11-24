@@ -1,0 +1,98 @@
+  <!-- RAD-WETTER (#153): eigene Unterseite (#radwetter/<ort>), geöffnet aus Einheiten, von „Heute“ oder aus einer Mitteilung -->
+  <section data-tab="radwetter" hidden>
+    <h2 id="rw-title">Rad-Wetter</h2>
+    <p class="subtitle" id="rw-sub"></p>
+    <div id="rw-body" class="rw-body"></div>
+  </section>
+  <!-- Konto → Rad-Wetter: Einstellungen. Wandert beim Start in den Konto-Bereich (initRadwetter) -->
+  <div id="konto-radwetter" hidden>
+    <div class="card form">
+      <h3>Rad-Wetter</h3>
+      <p class="note">Sucht in der Wettervorhersage der nächsten zwei Tage gute Fenster zum Radfahren nach deinen Kriterien, sagt, was du anziehen solltest, und welche Lieblingsrunde zum Wind passt. Dafür gehen deine gespeicherten Orte, auf etwa 1 km gerundet, an den kostenlosen Wetterdienst Open-Meteo, ohne deinen Namen. Abzeichen und Rückmeldungen bleiben privat: nicht für Freunde, nicht für den Claude-Zugang.</p>
+      <label class="mcp-mood"><input type="checkbox" id="rwk-on"><span>Rad-Wetter einschalten</span></label>
+      <p class="msg" id="rwk-on-msg" role="status"></p>
+    </div>
+
+    <div class="card form" id="rwk-places">
+      <h3>Orte</h3>
+      <ul class="sessions rwk-list" id="rwk-list" aria-label="Gespeicherte Orte"></ul>
+      <p class="note">Zuhause festlegen oder ändern:</p>
+      <div class="row"><button class="btn ghost" id="rwk-loc" type="button">Standort verwenden</button><button class="btn ghost" id="rwk-rides" type="button">Start meiner Fahrten</button></div>
+      <label>Ort suchen<input id="rwk-q" placeholder="z. B. Potsdam" autocomplete="off" enterkeyhint="search"></label>
+      <ul class="sessions rwk-results" id="rwk-results" aria-label="Suchergebnisse"></ul>
+      <label>Lieblingsrunde aus deinen Fahrten<select id="rwk-ride"></select></label>
+      <div class="row"><button class="btn" id="rwk-add" type="button">Runde hinzufügen</button></div>
+      <p class="msg" id="rwk-msg" role="status"></p>
+      <p class="note">Bis zu fünf Lieblingsrunden. Für ihr Wetter zählt die Mitte der Runde (verrät weniger als der Start). Die App merkt sich, in welche Richtung die erste Hälfte führt, und schlägt die Runde vor, die zuerst gegen den Wind geht. Bei der Ortssuche geht nur der eingegebene Name an Open-Meteo.</p>
+    </div>
+
+    <div class="card form" id="rwk-crit">
+      <h3>Gutes Fenster</h3>
+      <p class="note">Jede Stunde wird mit diesen Grenzen bewertet. Ein Fenster sind zusammenhängende gute Stunden in deinen Zeiten.</p>
+      <div class="fields">
+        <label>Regenrisiko höchstens (%)<input type="number" id="rwk-prob" inputmode="numeric" min="0" max="100" step="5"></label>
+        <label>Niederschlag je Stunde<select id="rwk-mm"><option value="0">kein messbarer</option><option value="0.2">bis 0,2 mm</option><option value="0.5">bis 0,5 mm</option><option value="1">bis 1 mm</option></select></label>
+        <label>Wind höchstens (km/h)<input type="number" id="rwk-wind" inputmode="numeric" min="5" max="80"></label>
+        <label>Böen höchstens (km/h)<input type="number" id="rwk-gust" inputmode="numeric" min="10" max="120"></label>
+        <label>Temperatur ab (°C, leer = egal)<input type="number" id="rwk-tmin" inputmode="decimal" min="-20" max="30"></label>
+        <label>Temperatur bis (°C, leer = egal)<input type="number" id="rwk-tmax" inputmode="decimal" min="0" max="45"></label>
+        <label>Mindestdauer<select id="rwk-minh"><option value="1">1 Stunde</option><option value="2">2 Stunden</option><option value="3">3 Stunden</option><option value="4">4 Stunden</option></select></label>
+        <label>Nach kräftigem Regen trocken in<select id="rwk-wait"><option value="2">2 Stunden</option><option value="3">3 Stunden</option><option value="4">4 Stunden</option><option value="5">5 Stunden</option></select></label>
+      </div>
+      <label class="mcp-mood"><input type="checkbox" id="rwk-dry"><span>Straße muss trocken sein</span></label>
+      <label class="mcp-mood"><input type="checkbox" id="rwk-light"><span>Nur bei Tageslicht</span></label>
+      <p class="note">An diesen Tagen:</p>
+      <div class="tagrow" id="rwk-days" role="group" aria-label="Wochentage"></div>
+      <div class="fields">
+        <label>Mo–Fr ab<select id="rwk-wk0"></select></label>
+        <label>Mo–Fr bis<select id="rwk-wk1"></select></label>
+        <label>Sa/So ab<select id="rwk-we0"></select></label>
+        <label>Sa/So bis<select id="rwk-we1"></select></label>
+      </div>
+      <div class="row"><button class="btn" id="rwk-crit-save" type="button">Speichern</button><button class="btn ghost" id="rwk-crit-reset" type="button">Vorschläge</button></div>
+      <p class="msg" id="rwk-crit-msg" role="status"></p>
+    </div>
+
+    <div class="card form" id="rwk-wear">
+      <h3>Kleidung</h3>
+      <p class="note">Alle Grenzen meinen „gefühlt auf dem Rad“: die gefühlte Temperatur von Open-Meteo (Luft, Wind, Feuchte, Sonne) minus Fahrtwind. Die Empfehlung zeigt immer, welche Regel gegriffen hat.</p>
+      <div class="fields">
+        <label>Tempo für den Fahrtwind (km/h, 0 = aus)<input type="number" id="rwk-speed" inputmode="numeric" min="0" max="60"></label>
+        <label>Übliche Dauer<select id="rwk-dur"><option value="60">1 Stunde</option><option value="90">1,5 Stunden</option><option value="120">2 Stunden</option><option value="180">3 Stunden</option><option value="240">4 Stunden</option></select></label>
+        <label>Abnehmbar statt dicker ab Unterschied (°C)<input type="number" id="rwk-swing" inputmode="decimal" min="2" max="15" step="0.5"></label>
+        <label>Nasse Stunden kälter rechnen (°C)<input type="number" id="rwk-wetcold" inputmode="decimal" min="0" max="8" step="0.5"></label>
+        <label>Regen ab Regenrisiko (%)<input type="number" id="rwk-wetprob" inputmode="numeric" min="10" max="100" step="5"></label>
+      </div>
+      <h4 class="rw-sub">Grundstufen</h4>
+      <div class="rwk-levels" id="rwk-levels"></div>
+      <h4 class="rw-sub">Zusatzteile</h4>
+      <p class="note">Antippen zeigt die Regel zum Ändern. Mehrere Bedingungen einer Regel müssen alle zutreffen, bei „oder“ reicht eine Regel.</p>
+      <div class="rwk-items" id="rwk-items"></div>
+      <h4 class="rw-sub">Eigenes Teil</h4>
+      <div class="fields">
+        <label>Name<input id="rwk-own-name" maxlength="30" placeholder="z. B. Brille klar"></label>
+        <label>Wann<select id="rwk-own-cond"><option value="below">gefühlt unter (°C)</option><option value="from">gefühlt ab (°C)</option><option value="wind">Wind ab (km/h)</option><option value="gust">Böen ab (km/h)</option><option value="rain">Regenrisiko ab (%)</option><option value="wet">bei Nässe</option><option value="dark">im Dunkeln</option></select></label>
+        <label>Wert<input type="number" id="rwk-own-val" inputmode="decimal"></label>
+      </div>
+      <div class="row"><button class="btn ghost" id="rwk-own-add" type="button">Teil hinzufügen</button></div>
+      <div class="row"><button class="btn" id="rwk-wear-save" type="button">Speichern</button><button class="btn ghost" id="rwk-wear-reset" type="button">Vorschläge</button></div>
+      <p class="msg" id="rwk-wear-msg" role="status"></p>
+    </div>
+
+    <div class="card form" id="rwk-learn">
+      <h3>Gelernt aus deinen Rückmeldungen</h3>
+      <p class="note">Nach einer Fahrt fragt die App „zu kalt, passt oder zu warm?“. Jedes „zu kalt“ rechnet für dich 0,5 °C kälter, jedes „zu warm“ 0,5 °C wärmer, höchstens 4 °C. So rücken alle Grenzen behutsam in deine Richtung.</p>
+      <p id="rwk-learn-text"></p>
+      <ul class="sessions" id="rwk-moves" aria-label="Letzte Verschiebungen"></ul>
+      <div class="row"><button class="btn ghost" id="rwk-learn-reset" type="button" hidden>Zurücksetzen</button></div>
+      <p class="msg" id="rwk-learn-msg" role="status"></p>
+    </div>
+
+    <div class="card form" id="rwk-game-card">
+      <h3>Dranbleiben</h3>
+      <label class="mcp-mood"><input type="checkbox" id="rwk-game"><span>Wochenziel, Serie und Abzeichen zeigen</span></label>
+      <label>Wochenziel<select id="rwk-goal"><option value="1">1 gutes Fenster nutzen</option><option value="2">2 gute Fenster nutzen</option><option value="3">3 gute Fenster nutzen</option></select></label>
+      <p class="note">Gibt es in einer Woche weniger gute Fenster, sinkt das Ziel mit. Alles aus deinen eigenen Fahrten, nur für dich.</p>
+      <p class="msg" id="rwk-game-msg" role="status"></p>
+    </div>
+  </div>

@@ -89,7 +89,40 @@ export function sameUnit(g: Obj, s: Obj): boolean {
 }
 
 /** Was Strava zur Garmin-Einheit beiträgt (die Messwerte selbst kommen von Garmin) */
-export const STRAVA_EXTRAS = ["sid", "re", "rpe", "prs", "ach", "kudos", "comments", "photos", "commute", "wt", "gear"] as const;
+export const STRAVA_EXTRAS = ["sid", "re", "rpe", "prs", "ach", "kudos", "comments", "photos", "commute", "wt", "gear", "seg", "be"] as const;
+
+/** Runde im Format der Garmin-Runden (m Meter, s Sekunden in Bewegung, v m/s, hr bpm; tg 2 = Auto-Runde nach Distanz) */
+export interface StravaLap { hr: number | null; v: number | null; s: number | null; m: number | null; tg?: number }
+/** Segment-Versuch (#50): n Name, id Segment, m Länge, s Zeit, pr eigener Rang 1–3 (1 = neue Bestzeit), kom Platz in Stravas Top 10 */
+export interface StravaSeg { n: string; id: number; m: number | null; s: number; pr: number | null; kom: number | null; hr: number | null; g: number | null }
+/** Stravas Bestleistung in diesem Lauf (400 m, 1 km, 5 km …), pr eigener Rang 1–3 */
+export interface StravaBest { n: string; m: number; s: number; pr: number | null }
+
+/**
+ * Detailansicht einer Aktivität (GET /activities/{id}?include_all_efforts=true) → Runden, Segmente, Bestleistungen.
+ * Runden: die von der Uhr bzw. App; gibt es nur eine (kein Runden-Knopf), die Kilometer-Splits als Auto-Runden.
+ */
+export function stravaDetail(a: Obj): { laps: StravaLap[]; seg: StravaSeg[]; be: StravaBest[] } {
+  const lap = (l: Obj, auto: boolean): StravaLap => {
+    const s = num(l.moving_time ?? l.elapsed_time, 0), m = num(l.distance, 0);
+    const out: StravaLap = { hr: num(l.average_heartrate, 0), v: num(l.average_speed, 3) ?? (s && m ? num(m / s, 3) : null), s, m };
+    if (auto) out.tg = 2;
+    return out;
+  };
+  const own = Array.isArray(a?.laps) ? a.laps.filter((l: Obj) => (l?.moving_time ?? l?.elapsed_time) > 0) : [];
+  const splits = Array.isArray(a?.splits_metric) ? a.splits_metric.filter((l: Obj) => l?.distance > 50 && l?.moving_time > 0) : [];
+  const laps = own.length > 1 ? own.map((l: Obj) => lap(l, false)) : splits.length > 1 ? splits.map((l: Obj) => lap(l, true)) : [];
+  const rank = (v: unknown, max: number) => (typeof v === "number" && v >= 1 && v <= max ? v : null);
+  const seg: StravaSeg[] = (Array.isArray(a?.segment_efforts) ? a.segment_efforts : [])
+    .filter((e: Obj) => e && e.segment && typeof e.elapsed_time === "number")
+    .slice(0, 60)
+    .map((e: Obj) => ({ n: String(e.name || e.segment.name || "Segment").slice(0, 80), id: Number(e.segment.id), m: num(e.distance ?? e.segment.distance, 0), s: e.elapsed_time,
+      pr: rank(e.pr_rank, 3), kom: rank(e.kom_rank, 10), hr: num(e.average_heartrate, 0), g: num(e.segment.average_grade, 1) }));
+  const be: StravaBest[] = (Array.isArray(a?.best_efforts) ? a.best_efforts : [])
+    .filter((b: Obj) => b && typeof b.elapsed_time === "number" && typeof b.distance === "number")
+    .map((b: Obj) => ({ n: String(b.name || "").slice(0, 30), m: Math.round(b.distance), s: b.elapsed_time, pr: rank(b.pr_rank, 3) }));
+  return { laps, seg, be };
+}
 
 /**
  * Stravas automatische Namen nach der Tageszeit („Morgenlauf“, „Lauf am Abend“, „Morning Run“). Die API kennzeichnet

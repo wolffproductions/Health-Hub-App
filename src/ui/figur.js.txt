@@ -1,0 +1,139 @@
+// ---------- FIGUR (#153): Mini-Person auf dem Rad, angezogen nach der Kleidungsempfehlung ----------
+// Eine Illustration wie ein Diagramm, kein UI-Symbol (Ausnahme in CLAUDE.md festgehalten). Seitenansicht nach rechts,
+// aufgebaut aus Ebenen: hinteres Bein, Rad, Körper mit Kopf und Helm, vorderes Bein, vorderer Arm. Jedes Kleidungsteil
+// liegt als eigene Ebene darüber (data-part) und wird nur ein- und ausgeblendet, damit der Wechsel zwischen Stunden weich
+// ist. Linienstil wie die Tabler-Symbole (Strich etwa 2, Körper in currentColor), je Teil eine eigene Farbe (CSS --fig-…).
+// Formen entstehen aus dicken, runden Linien: erst alle Umrisse (etwas breiter, in der Linienfarbe), dann die Flächen
+// darüber, so verschmelzen Gelenke ohne Nähte.
+const FIG_P = {
+  hip: [90, 79], sh: [132, 56], neck: [141, 48], head: [149, 38], el: [144, 74], hand: [160, 91],
+  knee: [118, 100], ank: [108, 127], toe: [121, 131], knee2: [104, 104], ank2: [86, 121], toe2: [98, 126],
+};
+// Körperteile: [von, nach, Breite]; Kreise: [Mitte, Radius]
+const FIG_SEG = {
+  thigh2: ['hip', 'knee2', 13], shin2: ['knee2', 'ank2', 10], foot2: ['ank2', 'toe2', 7],
+  torso: ['hip', 'sh', 21], neck: ['sh', 'neck', 8],
+  thigh: ['hip', 'knee', 14], shin: ['knee', 'ank', 10], foot: ['ank', 'toe', 7],
+  upper: ['sh', 'el', 9], fore: ['el', 'hand', 8],
+};
+const FIG_GROUPS = [
+  { id: 'hinten', segs: ['thigh2', 'shin2', 'foot2'] },
+  { id: 'rad' },
+  { id: 'koerper', segs: ['torso', 'neck'], head: true },
+  { id: 'vorn', segs: ['thigh', 'shin', 'foot'] },
+  { id: 'arm', segs: ['upper', 'fore'], hand: true },
+];
+// Kleidung: Farbe (CSS-Variable --fig-<c>) und Abschnitte [Körperteil, von, bis, zusätzliche Breite]; 'handc' = Hand
+const FIG_PARTS = {
+  unterhemd: { c: 'unterhemd', segs: [['neck', 0, .62, 3]] },
+  hoseKurz: { c: 'hose', segs: [['thigh2', 0, .76, 2], ['thigh', 0, .76, 2], ['torso', 0, .15, 3]] },
+  hoseLang: { c: 'hose', segs: [['thigh2', 0, 1, 2], ['shin2', 0, .92, 2], ['thigh', 0, 1, 2], ['shin', 0, .92, 2], ['torso', 0, .15, 3]] },
+  hoseWinter: { c: 'winter', segs: [['thigh2', 0, 1, 3], ['shin2', 0, .92, 3], ['thigh', 0, 1, 3], ['shin', 0, .92, 3], ['torso', 0, .17, 4]] },
+  trikotKurz: { c: 'trikot', segs: [['torso', .1, 1, 2], ['upper', 0, .5, 2.5]] },
+  trikotLang: { c: 'trikot', segs: [['torso', .1, 1, 2], ['upper', 0, 1, 2.5], ['fore', 0, .9, 2.5]] },
+  jackeWinter: { c: 'winter', segs: [['torso', .08, 1, 4], ['neck', 0, .75, 4], ['upper', 0, 1, 3.5], ['fore', 0, .92, 3.5]] },
+  armlinge: { c: 'linge', segs: [['upper', .44, 1, 2.5], ['fore', 0, .9, 2.5]] },
+  knielinge: { c: 'linge', segs: [['thigh2', .66, 1, 2.5], ['shin2', 0, .38, 2.5], ['thigh', .66, 1, 2.5], ['shin', 0, .38, 2.5]] },
+  beinlinge: { c: 'linge', segs: [['thigh2', .66, 1, 2.5], ['shin2', 0, .92, 2.5], ['thigh', .66, 1, 2.5], ['shin', 0, .92, 2.5]] },
+  gilet: { c: 'gilet', segs: [['torso', .14, .97, 6]] },
+  windjacke: { c: 'wind', segs: [['torso', .1, 1, 6], ['upper', 0, 1, 4.5], ['fore', 0, .86, 4.5]] },
+  regenjacke: { c: 'regen', segs: [['torso', .02, 1, 7], ['neck', 0, .85, 6], ['upper', 0, 1, 5], ['fore', 0, .9, 5]] },
+  ueberschuhe: { c: 'schuh', segs: [['foot2', 0, 1, 4], ['shin2', .8, 1, 3], ['foot', 0, 1, 4], ['shin', .8, 1, 3]] },
+  handschuhKurz: { c: 'hand', segs: [['handc', 0, 1, 1]] },
+  handschuhLang: { c: 'hand', segs: [['fore', .8, 1, 3], ['handc', 0, 1, 1.5]] },
+  muetze: { c: 'muetze', cap: true },
+};
+// Reihenfolge von innen nach außen
+const FIG_ORDER = ['unterhemd', 'hoseKurz', 'hoseLang', 'hoseWinter', 'trikotKurz', 'trikotLang', 'jackeWinter', 'armlinge', 'knielinge', 'beinlinge',
+  'gilet', 'windjacke', 'regenjacke', 'ueberschuhe', 'handschuhKurz', 'handschuhLang', 'muetze'];
+const FIG_OUT = 3.6; // Umriss: auf jeder Seite 1,8 breiter
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  if (parent) parent.append(e);
+  return e;
+}
+const figAt = (seg, t) => { const [a, b] = FIG_SEG[seg]; const A = FIG_P[a], B = FIG_P[b]; return [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]; };
+/** Dicke runde Linie (ein Glied) */
+function figLine(g, seg, t0, t1, w, cls) {
+  const a = figAt(seg, t0), b = figAt(seg, t1);
+  return svgEl('line', { x1: a[0].toFixed(1), y1: a[1].toFixed(1), x2: b[0].toFixed(1), y2: b[1].toFixed(1), 'stroke-width': w, 'stroke-linecap': 'round', class: cls }, g);
+}
+
+/**
+ * Figur zeichnen. Liefert {svg, set(parts)}: set blendet genau die genannten Teile ein (weich, außer bei „Bewegung
+ * reduzieren“). onPick(part) wird beim Antippen eines Teils gerufen.
+ */
+function drawFigure(holder, onPick) {
+  holder.replaceChildren();
+  const svg = svgEl('svg', { viewBox: '18 8 184 154', class: 'fig', role: 'img', 'aria-label': 'Figur auf dem Rad' });
+  holder.append(svg);
+  const partEls = {};
+  const addPart = (g, id) => {
+    const def = FIG_PARTS[id];
+    const pg = svgEl('g', { class: 'fig-part', 'data-part': id, style: `--fc: var(--fig-${def.c})` }, g);
+    (partEls[id] = partEls[id] || []).push(pg);
+    return pg;
+  };
+  for (const grp of FIG_GROUPS) {
+    const g = svgEl('g', { class: 'fig-' + grp.id }, svg);
+    if (grp.id === 'rad') { figBike(g); continue; }
+    // Körper: Umriss, dann Fläche
+    const body = svgEl('g', { class: 'fig-body' }, g);
+    for (const pass of ['o', 'f']) {
+      for (const s of grp.segs) figLine(body, s, 0, 1, FIG_SEG[s][2] + (pass === 'o' ? FIG_OUT : 0), 'fig-' + pass + (s.startsWith('foot') ? ' fig-shoe' : ''));
+      if (grp.head) svgEl('circle', { cx: FIG_P.head[0], cy: FIG_P.head[1], r: 9.5 + (pass === 'o' ? FIG_OUT / 2 : 0), class: 'fig-' + pass }, body);
+      if (grp.hand) svgEl('circle', { cx: FIG_P.hand[0], cy: FIG_P.hand[1], r: 4.6 + (pass === 'o' ? FIG_OUT / 2 : 0), class: 'fig-' + pass }, body);
+    }
+    // Kleidung dieser Ebene
+    for (const id of FIG_ORDER) {
+      const def = FIG_PARTS[id];
+      if (def.cap) {
+        if (!grp.head) continue;
+        const pg = addPart(g, id);
+        // Mütze unter dem Helm: Band über Stirn und Ohr
+        for (const pass of ['o', 'f']) svgEl('path', { d: 'M139.4 41.5 Q148.5 46.2 158.2 40.6', 'stroke-width': 5.2 + (pass === 'o' ? FIG_OUT : 0), 'stroke-linecap': 'round', fill: 'none', class: 'fig-' + pass }, pg);
+        continue;
+      }
+      const mine = def.segs.filter(([s]) => (s === 'handc' ? grp.hand : grp.segs.includes(s)));
+      if (!mine.length) continue;
+      const pg = addPart(g, id);
+      for (const pass of ['o', 'f']) {
+        for (const [s, t0, t1, extra] of mine) {
+          if (s === 'handc') { svgEl('circle', { cx: FIG_P.hand[0], cy: FIG_P.hand[1], r: 4.6 + extra + (pass === 'o' ? FIG_OUT / 2 : 0), class: 'fig-' + pass }, pg); continue; }
+          figLine(pg, s, t0, t1, FIG_SEG[s][2] + extra + (pass === 'o' ? FIG_OUT : 0), 'fig-' + pass);
+        }
+      }
+    }
+    if (grp.head) figHelmet(g);
+  }
+  // Antippen eines Teils: oberstes Teil an der Stelle
+  svg.addEventListener('click', (e) => {
+    const pg = e.target.closest && e.target.closest('.fig-part.on');
+    if (pg && onPick) onPick(pg.dataset.part);
+  });
+  const set = (parts) => {
+    const on = new Set(parts || []);
+    for (const [id, els] of Object.entries(partEls)) for (const el of els) el.classList.toggle('on', on.has(id));
+  };
+  const hi = (part) => { for (const [id, els] of Object.entries(partEls)) for (const el of els) el.classList.toggle('hi', id === part); svg.classList.toggle('picking', !!part); };
+  return { svg, set, hi };
+}
+function figHelmet(g) {
+  const h = svgEl('g', { class: 'fig-helm' }, g);
+  // Schale mit Lüftungsschlitzen, Brille
+  svgEl('path', { d: 'M137.6 40.2 C137.8 30.6 145 25.6 152.2 26.8 C158.7 27.8 162.6 32.8 161.2 39.4 L157.6 39.9 C153.8 37.2 145.2 37.6 137.6 40.2 Z', class: 'fig-helm-s' }, h);
+  svgEl('path', { d: 'M144.5 30.4 L147 35.2 M151 28.6 L152.4 34.6 M156.6 30.4 L156.4 35.4', class: 'fig-helm-v' }, h);
+  svgEl('path', { d: 'M152.6 42.4 L159.4 42.2', class: 'fig-glas' }, h);
+}
+function figBike(g) {
+  const wheel = (x, y) => { svgEl('circle', { cx: x, cy: y, r: 27, class: 'fig-wheel' }, g); svgEl('circle', { cx: x, cy: y, r: 2.4, class: 'fig-hub' }, g); };
+  wheel(52, 132); wheel(168, 132);
+  // Rahmen, Gabel, Sattel, Lenker, Kurbel
+  svgEl('path', { d: 'M52 132 L100 134 L92 86 L52 132 M92 88 L150 89 L100 134 M150 88 L153 101 L168 132', class: 'fig-frame' }, g);
+  svgEl('path', { d: 'M78 82.5 L99 81.5', class: 'fig-saddle' }, g);
+  svgEl('path', { d: 'M150 88 L156 84.5 L163.5 88 C166 91 166 98 162.5 102 L158 102.5', class: 'fig-bar' }, g);
+  svgEl('circle', { cx: 100, cy: 134, r: 7.5, class: 'fig-ring' }, g);
+  svgEl('path', { d: 'M100 134 L113 130.5', class: 'fig-crank' }, g);
+}

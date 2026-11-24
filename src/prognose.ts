@@ -63,8 +63,12 @@ export const PRED_WEIGHTS: Record<number, [number, number, number, number]> = {
 const RACE_SAME = 2;
 /** Ab diesem Anteil vom Maximalpuls (Schnitt der Einheit) gilt ein Lauf als hart */
 const HARD_HR = 0.88;
-const ENDURANCE: Record<number, { long: number; week: number; maxPen: number }> = {
-  21097.5: { long: 16, week: 30, maxPen: 0.05 }, 42195: { long: 30, week: 50, maxPen: 0.12 },
+/**
+ * Ab diesem längsten Lauf / Wochenumfang (km) gilt die Ausdauer als gedeckt; maxPen = Aufschlag ganz ohne Umfang,
+ * wWeek = Gewicht des Wochenumfangs (Rest: langer Lauf). Beim Marathon zählt der Umfang mehr als ein einzelner langer Lauf.
+ */
+const ENDURANCE: Record<number, { long: number; week: number; maxPen: number; wWeek: number }> = {
+  21097.5: { long: 18, week: 55, maxPen: 0.08, wWeek: 0.4 }, 42195: { long: 32, week: 80, maxPen: 0.28, wWeek: 0.6 },
 };
 /** Höchste erlaubte Abweichung von Garmins VO2max, sonst zählt die Quelle nicht */
 export const MAX_DEV = { form: 0.10, intervalle: 0.15 };
@@ -99,13 +103,21 @@ const de = (d: string) => { const [, m, dd] = d.split("-"); return Number(dd) + 
 const clock = (s: number) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = String(s % 60).padStart(2, "0"); return h ? h + ":" + String(m).padStart(2, "0") + ":" + ss : m + ":" + ss; };
 const pace = (sPerKm: number) => Math.floor(sPerKm / 60) + ":" + String(Math.round(sPerKm % 60)).padStart(2, "0");
 
-/** Neuester VO2max-Wert fürs Laufen: Garmin je Einheit, am selben Tag gewinnt ein eigener Eintrag */
-export function latestVo2(acts: PAct[], manual: PVo2[] = []): { d: string; v: number; auto: boolean } | null {
+/**
+ * VO2max fürs Laufen: Garmin je Einheit, am selben Tag gewinnt ein eigener Eintrag. Wert = Schnitt der letzten bis zu 5
+ * Werte aus den 6 Wochen bis zum neuesten (#187), damit ein lockerer Lauf die Prognose nicht um einen Punkt verschiebt.
+ * d = Tag des neuesten Werts, n = Anzahl im Schnitt.
+ */
+export function latestVo2(acts: PAct[], manual: PVo2[] = []): { d: string; v: number; auto: boolean; n: number } | null {
   const by = new Map<string, { d: string; v: number; auto: boolean }>();
   for (const a of acts) if (isRun(a) && a.vo2) { const e = by.get(a.date); if (!e || a.vo2 > e.v) by.set(a.date, { d: a.date, v: a.vo2, auto: true }); }
   for (const e of manual) if (e.sport === "run") by.set(e.d, { d: e.d, v: e.v, auto: false });
   const all = [...by.values()].sort((x, y) => (x.d < y.d ? -1 : 1));
-  return all.length ? all[all.length - 1] : null;
+  if (!all.length) return null;
+  const last = all[all.length - 1];
+  const from = new Date(Date.parse(last.d + "T12:00:00Z") - 42 * 864e5).toISOString().slice(0, 10);
+  const w = all.filter((e) => e.d > from).slice(-5);
+  return { d: last.d, v: Math.round((w.reduce((t, e) => t + e.v, 0) / w.length) * 10) / 10, auto: last.auto, n: w.length };
 }
 
 /** Maximal- und Ruhepuls: übergeben bzw. höchster Puls des letzten Jahres; Ruhepuls als Median der letzten 14 Tage */
@@ -218,11 +230,14 @@ export function volumeStats(inp: PredInput) {
   for (const a of inp.acts) if (isRun(a) && inLast(inp.today, a.date, VOL_DAYS)) { long = Math.max(long, a.km || 0); sum += a.km || 0; }
   return { long, week: sum / (VOL_DAYS / 7) };
 }
-/** Aufschlag (Anteil) für fehlende Ausdauer: fehlender Anteil am langen Lauf zählt 60 %, am Wochenumfang 40 % */
+/**
+ * Aufschlag (Anteil) für fehlende Ausdauer: fehlender Anteil am Wochenumfang (Gewicht wWeek) und am langen Lauf.
+ * Wurzel statt linear: schon eine kleine Lücke kostet spürbar (die Daniels-Hochrechnung setzt volle Ausdauer voraus).
+ */
 export function endurancePenalty(d: number, vol: { long: number; week: number }) {
   const e = ENDURANCE[d]; if (!e) return 0;
   const gapLong = Math.max(0, e.long - vol.long) / e.long, gapWeek = Math.max(0, e.week - vol.week) / e.week;
-  return e.maxPen * (0.6 * gapLong + 0.4 * gapWeek);
+  return e.maxPen * Math.sqrt((1 - e.wWeek) * gapLong + e.wWeek * gapWeek);
 }
 
 export interface HardEffort { d: string; dist: number; label: string; sec: number; v: number }
@@ -265,7 +280,7 @@ export function prognose(inp: PredInput): Prognose {
   if (g) {
     const age = ageDays(inp.today, g.d);
     sources.push({ key: "garmin", vo2: g.v, used: true, conf: age > 60 ? 0.7 : 1, label: "Garmin-VO2max " + fmt(g.v),
-      why: (g.auto ? "Garmins VO2max vom " : "Dein Eintrag vom ") + de(g.d) + (age > 60 ? " Schon über zwei Monate alt, deshalb zählt er etwas weniger." : "") });
+      why: (g.n > 1 ? "Schnitt deiner letzten " + g.n + " VO2max-Werte bis " : g.auto ? "Garmins VO2max vom " : "Dein Eintrag vom ") + de(g.d) + (age > 60 ? " Schon über zwei Monate alt, deshalb zählt er etwas weniger." : "") });
   }
   const dev = (x: number) => (g ? Math.abs(x - g.v) / g.v : 0);
 
