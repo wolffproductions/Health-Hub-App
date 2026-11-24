@@ -5,6 +5,14 @@ export interface NewsEntry { id: string; titel: string; punkte: string[] }
 
 export const NEWS: NewsEntry[] = [
   {
+    id: "2026-11-29",
+    titel: "Freunde: Zurückfolgen ohne Bestätigen",
+    punkte: [
+      "Folgst du jemandem zurück, der dir schon folgt, muss er das nicht mehr bestätigen. Ihr folgt euch dann sofort gegenseitig.",
+      "„Zurückfolgen“ trifft jetzt immer die richtige Person, und Follower ohne Namen bekommen ihren Namen nachträglich.",
+    ],
+  },
+  {
     id: "2026-11-28d",
     titel: "Bereitschaft von 0 bis 100",
     punkte: [

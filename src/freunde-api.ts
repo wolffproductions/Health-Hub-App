@@ -111,6 +111,18 @@ export async function publicFriendRoute(req: Request, env: Env, path: string, ct
     // Folgt schon (z. B. erneute Anfrage nach Neuinstallation): Zugang einfach noch einmal schicken
     if (known) { ctx.waitUntil(postJson(`${l.origin}/f/${l.token}/zugang`, { link: myLink(c), key: known.key }).catch(() => null)); return json({ ok: true, status: "ok" }); }
     const reqs = (await kvGetJson<FollowRequest[]>(env, "friendRequests", [])).filter((r) => r.origin !== l.origin);
+    // Gegenseitig (#87): Folge ich dieser Instanz schon (oder habe dort angefragt), gilt das als Zustimmung, also sofort annehmen.
+    // Sicher, weil der Schlüssel nur an die angegebene Adresse geht, nie an den, der die Anfrage geschickt hat.
+    const mutual = (await kvGetJson<Friend[]>(env, "friends", [])).some((f) => f.origin === l.origin);
+    if (mutual && followers.length < MAX_FOLLOWERS) {
+      const key = newToken();
+      followers.push({ id: fid(l.origin, l.token), origin: l.origin, token: l.token, name, at: new Date().toISOString(), key });
+      await save(env, "followers", followers);
+      await save(env, "friendRequests", reqs);
+      ctx.waitUntil(postJson(`${l.origin}/f/${l.token}/zugang`, { link: myLink(c), key }).catch(() => null));
+      ctx.waitUntil(notify(env, "Neuer Follower", name + " folgt dir jetzt in Health Hub."));
+      return json({ ok: true, status: "ok" });
+    }
     reqs.push({ id: fid(l.origin, l.token), origin: l.origin, token: l.token, name, at: new Date().toISOString() });
     await save(env, "friendRequests", reqs.slice(-MAX_REQUESTS));
     ctx.waitUntil(notify(env, "Neue Anfrage", name + " möchte dir in Health Hub folgen."));
