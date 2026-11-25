@@ -1,8 +1,9 @@
 // Google-Health-Sync (Fitbit, Pixel Watch, Fitbit Air). Läuft im Cron um :20 und :50 (eigener Aufruf, damit das
 // Workers-Limit von 50 Anfragen nicht mit Garmin, WHOOP & Co. geteilt wird). Pro Lauf höchstens 20 Anfragen:
 //   1. die letzten Tage neu (ab dem letzten Erfolg minus 1 Tag, mind. 3, höchstens 28 Tage),
-//   2. Historie rückwärts in 30-Tage-Fenstern bis BACKFILL_DAYS.
-// Ein Fenster = Schlaf, Trainings, 5 Tageswerte, Gewicht, Körperfett, Schritte (je nach Menge 10–14 Anfragen).
+//   2. Historie rückwärts in 14-Tage-Fenstern bis BACKFILL_DAYS (passt ein Fenster nicht ins Kontingent, wird es halbiert).
+// Ein Fenster = Schlaf, Trainings, 5 Tageswerte, Gewicht, Körperfett, Schritte (etwa 10–12 Anfragen, sobald die
+// Filternamen je Typ gelernt sind).
 // Ohne Webhooks: Googles Benachrichtigungen brauchen ein eigenes Cloud-Projekt mit Abonnenten-Endpunkt, das lohnt
 // sich für eine Person nicht. Fitbit synchronisiert ohnehin in Abständen.
 import type { Env } from "../env";
@@ -11,7 +12,8 @@ import { backfillDays, saveMetrics } from "../garmin/sync";
 import { dailyRollUp, getAccess, list, RateLimited } from "./client";
 import { DAILY, dataPoints, extractBody, extractDaily, extractSleep, extractSteps, normalizeExercise } from "./extract";
 
-const RECENT_DAYS = 3, WINDOW_DAYS = 30, MAX_REQUESTS = 20, MAX_PAGES = 6;
+// Eigener Cron-Aufruf: 30 von 50 ausgehenden Anfragen, Rest für Token-Erneuerung und Reserve
+const RECENT_DAYS = 3, WINDOW_DAYS = 14, MAX_REQUESTS = 30, MAX_PAGES = 6;
 
 export interface GoogleMeta {
   lastRun?: string;
@@ -23,6 +25,10 @@ export interface GoogleMeta {
   lastSleep?: string | null;
   count?: number;
   pauseUntil?: number | null;
+  /** Gelernter Filtername je Datentyp: s = snake_case, c = camelCase (spart die doppelte Anfrage) */
+  fields?: Record<string, "s" | "c">;
+  /** Aktuelle Fenstergröße der Historie in Tagen (halbiert, wenn ein Fenster nicht ins Kontingent passt) */
+  win?: number;
 }
 
 const addDays = (d: string, n: number) => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
@@ -49,19 +55,23 @@ export async function saveExercises(env: Env, points: unknown[]) {
   for (let i = 0; i < rows.length; i += 50) await env.DB.batch(rows.slice(i, i + 50));
 }
 
-interface Budget { left: number; skipped: string[] }
+interface Budget { left: number; skipped: string[]; fields: Record<string, "s" | "c"> }
 const camel = (t: string) => t.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 const snake = (t: string) => t.replace(/-/g, "_");
 
 /**
- * Wie listAll, aber robust gegen Googles uneinheitliche Filternamen: erst camelCase (wie im Doku-Beispiel
- * `dailyHeartRateVariability.date`), bei HTTP 400 snake_case. Scheitert beides, wird der Typ übersprungen
- * (in `skipped` vermerkt) statt den ganzen Abgleich abzubrechen.
+ * Wie listAll, aber robust gegen Googles uneinheitliche Filternamen: erst der zuletzt erfolgreiche Name, sonst
+ * snake_case (laut Hinweis in der Doku), bei HTTP 400 camelCase (wie im Doku-Beispiel `dailyHeartRateVariability.date`).
+ * Der passende Name wird gemerkt (`budget.fields`). Scheitert beides, wird der Typ übersprungen (in `skipped`
+ * vermerkt) statt den ganzen Abgleich abzubrechen.
  */
 async function listTyped(token: string, type: string, filterFor: (field: string) => string, budget: Budget, extra: Record<string, string> = {}): Promise<unknown[] | null> {
-  for (const field of [camel(type), snake(type)]) {
+  const order: Array<"s" | "c"> = budget.fields[type] === "c" ? ["c", "s"] : ["s", "c"];
+  for (const k of order) {
     try {
-      return await listAll(token, type, filterFor(field), budget, extra);
+      const r = await listAll(token, type, filterFor(k === "s" ? snake(type) : camel(type)), budget, extra);
+      if (r) budget.fields[type] = k;
+      return r;
     } catch (e) {
       if ((e as any).status !== 400) throw e;
     }
@@ -145,7 +155,7 @@ export async function googleStep(env: Env): Promise<GoogleMeta> {
     const profile = await kvGetJson<{ tz?: string } | null>(env, "profile", null);
     const tz = profile?.tz || env.TIMEZONE || "Europe/Berlin";
     const today = todayIn(tz), tomorrow = addDays(today, 1);
-    const budget: Budget = { left: MAX_REQUESTS, skipped: [] };
+    const budget: Budget = { left: MAX_REQUESTS, skipped: [], fields: { ...(meta.fields || {}) } };
     // Während die Historie lädt, die letzten Tage nur alle 2 Stunden neu, sonst bei jedem Lauf
     const recentDue = meta.complete || !meta.lastOk || Date.now() - Date.parse(meta.lastOk) > 2 * 3600000 || !meta.oldest;
     if (recentDue) {
@@ -161,8 +171,13 @@ export async function googleStep(env: Env): Promise<GoogleMeta> {
     // Historie rückwärts
     const cutoff = addDays(today, -backfillDays(env));
     while (!meta.complete && meta.oldest && budget.left >= 10) {
-      const to = meta.oldest, from = [addDays(to, -WINDOW_DAYS), cutoff].sort()[1];
-      if (!(await syncWindow(env, token, from, to, budget, meta))) break;
+      const win = Math.max(1, Math.min(WINDOW_DAYS, meta.win || WINDOW_DAYS)), startLeft = budget.left;
+      const to = meta.oldest, from = [addDays(to, -win), cutoff].sort()[1];
+      if (!(await syncWindow(env, token, from, to, budget, meta))) {
+        // Passt das Fenster nicht einmal mit vollem Kontingent, beim nächsten Mal kleiner (sonst ewig dasselbe Fenster)
+        if (startLeft >= MAX_REQUESTS - 1) meta.win = Math.max(1, Math.floor(win / 2));
+        break;
+      }
       meta.oldest = from;
       if (from <= cutoff) meta.complete = true;
     }
@@ -171,6 +186,7 @@ export async function googleStep(env: Env): Promise<GoogleMeta> {
     // Übersprungene Datentypen zeigen, aber nicht als Fehler
     meta.lastError = budget.skipped.length ? "Nicht lesbar: " + [...new Set(budget.skipped)].join(", ") : null;
     meta.pauseUntil = null;
+    meta.fields = budget.fields;
     await kvDelete(env, "googleExpired");
   } catch (e) {
     if (e instanceof RateLimited) meta.pauseUntil = Date.now() + e.wait * 1000;
