@@ -5,6 +5,14 @@ export interface NewsEntry { id: string; titel: string; punkte: string[] }
 
 export const NEWS: NewsEntry[] = [
   {
+    id: "2026-12-01",
+    titel: "Abzeichen in Bronze, Silber und Gold",
+    punkte: [
+      "Unter Konto → Level gibt es jetzt Abzeichen: Kilometer im Monat (Laufen, Rad), Höhenmeter, Wochenserie, lange Einheiten, Frühaufsteher, Wettkämpfe und Plan-Treue.",
+      "Die Monats-Abzeichen kannst du jeden Monat neu holen. Jede neue Stufe bringt Punkte fürs Level: Bronze +25, Silber +50, Gold +100.",
+    ],
+  },
+  {
     id: "2026-11-30",
     titel: "Level und Punkte",
     punkte: [
