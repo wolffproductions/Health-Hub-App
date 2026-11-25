@@ -631,7 +631,8 @@
   .mr-bar .trk { fill: var(--line); }
   .mr-bar .band { fill: var(--prev); }
   .mr-bar .mark { fill: var(--fg); }
-  .mr-bar .mark.good { fill: var(--ok); } .mr-bar .mark.warn { fill: var(--warn); }
+  .mr-bar .mark.good { fill: var(--ok); } .mr-bar .mark.warn { fill: var(--warn); } .mr-bar .mark.bad { fill: var(--bad); }
+  .mr-txt.good { color: var(--ok-txt) !important; } .mr-txt.warn { color: var(--warn-txt) !important; } .mr-txt.bad { color: var(--bad-txt) !important; }
   .mr-txt, .mr-side { font-family: var(--mono); font-size: 9.5px; letter-spacing: .02em; color: var(--ter); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .mr-side { white-space: normal; line-height: 1.35; }
   /* Einheiten des Tages: ruhiger Kopf, Kennzahlen in Mono-Beschriftung */

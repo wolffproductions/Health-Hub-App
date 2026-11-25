@@ -61,31 +61,44 @@ function renderLoad() {
 
 }
 
-// Belastung als Zeilen (#159). Immer die letzten 7 Tage bis heute; „Dein Bereich“ = Schnitt ± Streuung der 8 Wochen davor
-// (Last: fester grüner Bereich 0,8–1,3 wie in der Ampel). Antippen öffnet das Diagramm darunter bzw. im Vollbild.
+// Belastung als Zeilen (#159), folgen dem gewählten Zeitraum und der Woche oben.
+// 1 Woche: Werte der gewählten 7 Tage. Länger: Schnitt pro Woche im Zeitraum (Anteil ruhig über alle Minuten).
+// „Dein Bereich“ = Schnitt ± Streuung der Wochenwerte davor (gleich lang wie der Zeitraum, mindestens 8 Wochen);
+// Last: Stand am Ende des Zeitraums, fester grüner Bereich 0,8–1,3 wie in der Ampel.
+// Verlauf: Wochenwerte über den Zeitraum (mindestens 9 Wochen). Antippen öffnet das Diagramm darunter bzw. im Vollbild.
 function loadRows() {
-  const box = $('#load-tiles'); box.className = 'mrows load-rows'; box.replaceChildren(rowHead('8 Wochen'));
-  const today = S.today;
-  // je 7-Tage-Fenster rückwärts: 0 = letzte 7 Tage, 1 = die 7 davor …
-  const win = (i) => S.acts.filter((a) => a.date > addDays(today, -7 * (i + 1)) && a.date <= addDays(today, -7 * i));
+  const end = ranges().cur[1];
+  const nW = Math.max(1, Math.round(S.days / 7)); // Wochen im Zeitraum
+  const sW = Math.max(nW, 9), bW = Math.max(nW, 8); // Wochen im Verlauf bzw. für „Dein Bereich“
+  const box = $('#load-tiles'); box.className = 'mrows load-rows';
+  box.replaceChildren(rowHead(nW > 9 ? periodName() : '8 Wochen'));
+  // je 7-Tage-Fenster rückwärts ab dem Ende des Zeitraums: 0 = letzte 7 Tage, 1 = die 7 davor …
+  // Wochen vor der ersten Einheit zählen nicht (sonst drücken leere Wochen Schnitt und Bereich auf 0)
+  const first = S.acts.reduce((m, a) => (a.date && a.date < m ? a.date : m), '9999-12-31');
+  const win = (i) => (addDays(end, -7 * i) < first ? null : S.acts.filter((a) => a.date > addDays(end, -7 * (i + 1)) && a.date <= addDays(end, -7 * i)));
+  const span = (from, n) => S.acts.filter((a) => a.date > addDays(end, -7 * (from + n)) && a.date <= addDays(end, -7 * from));
   const hardN = (arr) => arr.filter((a) => (a.te || 0) >= 4 || (a.teAn || 0) >= 3).length;
   const calm = (arr) => { const t = sum(arr.map((a) => a.min)); return t ? (sum(arr.filter((a) => ['RECOVERY', 'AEROBIC_BASE'].includes(a.label)).map((a) => a.min)) / t) * 100 : null; };
-  const wk = (fn) => Array.from({ length: 9 }, (_, i) => fn(win(i))); // [jetzt, davor, …] 9 Werte
-  const own = (vals) => { const b = vals.slice(1).filter((v) => v != null); if (b.length < 4) return null; const m = mean(b), sd = Math.sqrt(mean(b.map((v) => (v - m) ** 2))); return [Math.max(0, m - sd), m + sd]; };
-  const spark = (vals) => vals.map((v, i) => ({ d: addDays(today, -7 * i), v })).reverse();
-  // Last akut zu chronisch, Verlauf der letzten 8 Wochen wöchentlich
-  const ser = loadSeries(addDays(today, -56), today);
+  const wk = (fn) => Array.from({ length: sW + bW }, (_, i) => { const w = win(i); return w ? fn(w) : null; }); // Wochenwerte [jüngste, davor, …]
+  const cur = (vals) => { const v = vals.slice(0, nW).filter((x) => x != null); return v.length ? mean(v) : null; }; // Schnitt pro Woche im Zeitraum
+  const own = (vals) => { const b = vals.slice(nW, nW + bW).filter((v) => v != null); if (b.length < 4) return null; const m = mean(b), sd = Math.sqrt(mean(b.map((v) => (v - m) ** 2))); return [Math.max(0, m - sd), m + sd]; };
+  const spark = (vals) => vals.slice(0, sW).map((v, i) => ({ d: addDays(end, -7 * i), v })).reverse();
+  const avg = nW > 1 ? ' Ø' : '';
+  // Last akut zu chronisch, wöchentlich über den Verlauf
+  const ser = loadSeries(addDays(end, -7 * (sW - 1)), end);
   const rAt = (d) => { const s = ser.find((x) => x.d === d); return s && s.chronic ? s.acute / s.chronic : null; };
-  const ratios = Array.from({ length: 9 }, (_, i) => rAt(addDays(today, -7 * i)));
+  const ratios = Array.from({ length: sW }, (_, i) => rAt(addDays(end, -7 * i)));
   const r = ratios[0];
   mrow(box, { label: 'Last', value: r == null ? '–' : num(r, 2), v: r, range: r == null ? null : [0.8, 1.3], up: false, fmt: (v) => num(v, 1), spark: spark(ratios), open: () => openChart('c-acwr') });
-  const loads = wk((a) => sum(a.map((x) => x.load)));
-  mrow(box, { label: 'Wochenlast', value: num(loads[0]), v: loads[0], range: own(loads), up: null, fmt: (v) => num(v), spark: spark(loads), open: () => openChart('c-acwr') });
-  const hards = wk(hardN);
-  mrow(box, { label: 'Harte Einheiten', value: String(hards[0]), v: hards[0], range: own(hards), up: null, fmt: (v) => num(v, 1), spark: spark(hards), open: () => openChart('c-cats') });
-  const calms = wk(calm);
-  mrow(box, { label: 'Anteil ruhig', value: calms[0] == null ? '–' : num(calms[0]), unit: calms[0] == null ? '' : ' %', v: calms[0], range: calms[0] == null ? null : [70, 90], up: true, fmt: (v) => num(v), spark: spark(calms), open: () => openChart('c-cats') });
-  box.append(el('p', 'note', 'Letzte 7 Tage. Last = Belastung der letzten 7 Tage im Verhältnis zu den letzten 28 Tagen, gut zwischen 0,8 und 1,3; darüber steigt das Verletzungsrisiko. Ruhig = Erholung und Grundlage, für Ausdauer sind 70–90 % üblich. Sonst ist „Dein Bereich“ dein Schnitt der 8 Wochen davor.'));
+  const loads = wk((a) => sum(a.map((x) => x.load))), lNow = cur(loads);
+  mrow(box, { label: 'Wochenlast' + avg, value: lNow == null ? '–' : num(lNow), v: lNow, range: own(loads), up: null, fmt: (v) => num(v), spark: spark(loads), open: () => openChart('c-acwr') });
+  const hards = wk(hardN), hNow = cur(hards);
+  mrow(box, { label: 'Harte Einheiten' + avg, value: hNow == null ? '–' : num(hNow, nW > 1 ? 1 : 0), v: hNow, range: own(hards), up: null, fmt: (v) => num(v, 1), spark: spark(hards), open: () => openChart('c-cats') });
+  const calms = wk(calm), cNow = calm(span(0, nW));
+  mrow(box, { label: 'Anteil ruhig', value: cNow == null ? '–' : num(cNow), unit: cNow == null ? '' : ' %', v: cNow, range: cNow == null ? null : [70, 90], up: true, fmt: (v) => num(v), spark: spark(calms), open: () => openChart('c-cats') });
+  const bis = end === S.today ? '' : ' bis ' + dayLabel(end).replace(/^[^,]+, /, '').replace(/\.$/, '');
+  const what = nW > 1 ? 'Schnitt pro Woche in ' + (nW === 4 ? 'den 4 Wochen' : nW > 30 ? 'dem Jahr' : 'den 6 Monaten') + bis : (bis ? '7 Tage' + bis : 'Letzte 7 Tage');
+  box.append(el('p', 'note', what + '. Last = Belastung der letzten 7 Tage im Verhältnis zu den letzten 28 Tagen (Stand am Ende des Zeitraums), gut zwischen 0,8 und 1,3; darüber steigt das Verletzungsrisiko. Ruhig = Erholung und Grundlage, für Ausdauer sind 70–90 % üblich. Sonst ist „Dein Bereich“ dein üblicher Wochenwert ' + (bW > 8 ? 'im gleich langen Zeitraum davor' : 'der 8 Wochen davor') + '.'));
 }
 
 function stackedWeeks(node, rows, keys, fmt) {

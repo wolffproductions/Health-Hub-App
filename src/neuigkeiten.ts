@@ -5,6 +5,15 @@ export interface NewsEntry { id: string; titel: string; punkte: string[] }
 
 export const NEWS: NewsEntry[] = [
   {
+    id: "2026-11-29b",
+    titel: "Farben für deinen Bereich",
+    punkte: [
+      "Auf „Heute“ ist ein Wert jetzt grün, wenn er in deinem üblichen Bereich oder auf der guten Seite liegt. Gelb heißt etwas daneben, rot deutlich daneben, zum Beispiel ein Ruhepuls weit über deinem Normalwert.",
+      "Unter Statistiken → Training folgt die Belastung oben jetzt der gewählten Woche bzw. dem Zeitraum. Bei 4 Wochen, 6 Monaten und 1 Jahr siehst du den Schnitt pro Woche.",
+      "Intervalle im Trainingsplan werden fairer abgehakt: Ein- und Auslaufen zählen nicht mehr als Wiederholung, und wenn der Plan weniger Wiederholungen erlaubt, gibt es dafür volle Punkte.",
+    ],
+  },
+  {
     id: "2026-11-29",
     titel: "Freunde: Zurückfolgen ohne Bestätigen",
     punkte: [

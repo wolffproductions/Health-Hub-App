@@ -70,7 +70,7 @@ function renderToday() {
       // Ist der letzte Wert nicht von heute, steht der Tag dabei
       label: label + (lastV && lastV.d !== S.today ? ' · ' + dayLabel(lastV.d).split(',')[0] : ''),
       value: lastV ? fmt(lastV[k]) : '–', unit: lastV ? unit : '',
-      v: lastV ? lastV[k] : null, range, up, fmt,
+      v: lastV ? lastV[k] : null, range, up, fmt, redMin: k === 'rhr' ? 5 : 0,
       spark: last14.map((x) => ({ d: x.d, v: x[k] })),
       open: () => openLast7(k)
     });
@@ -129,7 +129,7 @@ function factorOpen(it) {
 
 // Eine Werte-Zeile: Name und Wert, kleiner Verlauf (grau, letzter Wert in Akzent), dein Bereich mit Marke.
 // Antippen öffnet das Diagramm im Vollbild (#61), wie früher die Kachel.
-function mrow(parent, { label, value, unit, v, range, up, fmt, spark, open, side, sparkFn }) {
+function mrow(parent, { label, value, unit, v, range, up, fmt, spark, open, side, sparkFn, redMin }) {
   const r = el('div', 'mrow tap'); r.tabIndex = 0; r.setAttribute('role', 'button');
   r.addEventListener('click', open); r.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
   const left = el('div', 'mr-main');
@@ -144,13 +144,23 @@ function mrow(parent, { label, value, unit, v, range, up, fmt, spark, open, side
   else if (range && v != null) {
     const [lo, hi] = range;
     const pos = v < lo ? 'unter' : v > hi ? 'über' : 'in';
-    // Farbe der Marke: im Bereich neutral, auf der guten Seite grün, auf der schlechten gelb
-    const cls = pos === 'in' || up == null ? '' : (pos === 'über') === up ? 'good' : 'warn';
-    right.append(rangeBar(lo, hi, v, cls), el('span', 'mr-txt', pos.toUpperCase() + ' ' + fmt(lo) + '–' + fmt(hi)));
+    const cls = rangeTone(v, lo, hi, up, redMin);
+    right.append(rangeBar(lo, hi, v, cls), el('span', 'mr-txt' + (cls ? ' ' + cls : ''), pos.toUpperCase() + ' ' + fmt(lo) + '–' + fmt(hi)));
     said = pos + ' deinem Bereich ' + fmt(lo) + ' bis ' + fmt(hi);
   } else right.append(el('span', 'mr-side', v == null ? '' : 'noch kein Bereich'));
   r.setAttribute('aria-label', label + ' ' + value + (unit || '') + (said ? ', ' + said : ''));
   if (sparkFn) sparkFn(sp); else rowSpark(sp, spark);
+}
+
+// Farbe zu „Dein Bereich“ (#158): im Bereich und auf der guten Seite grün, auf der schlechten Seite gelb,
+// deutlich daneben rot. „Deutlich“ = mehr als eine halbe Bereichsbreite über die Grenze hinaus (der Bereich ist
+// Schnitt ± 1 Streuung, also rot ab 2 Streuungen vom Schnitt), mindestens redMin (Ruhepuls: 5 bpm).
+// Ohne Richtung (up == null) bleibt die Marke neutral.
+function rangeTone(v, lo, hi, up, redMin = 0) {
+  if (up == null) return '';
+  const off = up ? lo - v : v - hi; // wie weit auf der schlechten Seite draußen
+  if (off <= 0) return 'good';
+  return off > Math.max((hi - lo) / 2, redMin) ? 'bad' : 'warn';
 }
 
 // Bereichs-Balken: Spur, üblicher Bereich als Band, heutiger Wert als Strich
