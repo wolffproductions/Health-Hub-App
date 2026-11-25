@@ -184,6 +184,20 @@ test("Plan: Abhaken – gelaufene Einheiten mit Prozent, getauschter Tag, verpas
   const iv2 = p2.weeks[1].sessions.find((s) => s.type === "interval")!;
   checkOff(p2, [{ id: "x", date: iv2.date, km: iv2.km, min: 50, laps: Array.from({ length: iv2.reps! - 1 }, () => lap(180, iv2.pace! * 1.1, 175)) }], "2026-11-30");
   assert.ok(iv2.done!.pct! < 70, "zu langsam und eine zu wenig: " + iv2.done!.pct);
+  // weniger Wiederholungen als geplant: Ein- und Auslaufen füllen nicht auf und drücken nicht das Tempo
+  const p3 = buildPlan(goal({ hardDay: 1 }), { vdot: 55, weekKm: 40, longKm: 16, hr });
+  const iv3 = p3.weeks[1].sessions.find((s) => s.type === "interval")!;
+  const few = Array.from({ length: iv3.reps! - 2 }, () => lap(180, iv3.pace!, 175));
+  checkOff(p3, [{ id: "y", date: iv3.date, km: iv3.km, min: 50, laps: [lap(300, iv3.pace! * 1.5, 140), ...few, lap(280, iv3.pace! * 1.45, 140)] }], "2026-11-30");
+  assert.equal(iv3.done!.pct, Math.round((100 * (iv3.reps! - 2)) / iv3.reps!));
+  assert.match(iv3.done!.why, /Tempo getroffen/);
+  // Plan erlaubt weniger Wiederholungen (repsMin): dann zählt die Anzahl voll
+  const p4 = buildPlan(goal({ hardDay: 1 }), { vdot: 55, weekKm: 40, longKm: 16, hr });
+  const iv4 = p4.weeks[1].sessions.find((s) => s.type === "interval")!;
+  iv4.repsMin = iv4.reps! - 2;
+  checkOff(p4, [{ id: "z", date: iv4.date, km: iv4.km, min: 50, laps: [lap(300, iv4.pace! * 1.5, 140), ...few, lap(280, iv4.pace! * 1.45, 140)] }], "2026-11-30");
+  assert.equal(iv4.done!.pct, 100);
+  assert.match(iv4.done!.why, /mindestens/);
   // Zukunft bleibt offen
   assert.ok(p.weeks[3].sessions.every((s) => !s.done && !s.missed));
 });

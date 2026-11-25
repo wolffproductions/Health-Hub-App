@@ -37,7 +37,7 @@ export async function trainingView(env: Env, opts: { from?: string; to?: string;
     const zl = (Array.isArray(data.zones) ? data.zones : []) as Array<{ sport?: string; max?: number }>;
     const zone = zl.find((z) => z && /RUN/i.test(z.sport || "") && z.max) || zl.find((z) => z && z.max);
     // checkOff kennt nur die Plan-Einheiten des Regel-Plans: hier in Wochen gruppiert nachgebaut
-    const conv = due.map((s) => ({ src: s, ses: { date: s.date, type: s.type === "recovery" ? "easy" : s.type, title: s.title, km: s.km ?? 0, detail: s.detail, zone: "", reps: s.reps ?? undefined, pace: s.pace ?? undefined } as Session }));
+    const conv = due.map((s) => ({ src: s, ses: { date: s.date, type: s.type === "recovery" ? "easy" : s.type, title: s.title, km: s.km ?? 0, detail: s.detail, zone: "", reps: s.reps ?? undefined, repsMin: s.repsMin ?? undefined, pace: s.pace ?? undefined } as Session }));
     const weeks = new Map<string, Session[]>();
     for (const c of conv) weeks.set(mondayOf(c.ses.date), [...(weeks.get(mondayOf(c.ses.date)) || []), c.ses]);
     const p = { weeks: [...weeks.entries()].map(([start, sessions]) => ({ start, sessions })), paces: { hr: zonesFrom(zone) } } as unknown as Plan;

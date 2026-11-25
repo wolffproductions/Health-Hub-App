@@ -29,6 +29,7 @@ const SESSION_SCHEMA = {
     km: { type: "number", description: "Gesamtstrecke inkl. Ein-/Auslaufen" },
     min: { type: "number", description: "Dauer in Minuten (statt km, z. B. Kraft)" },
     reps: { type: "number", description: "Anzahl Wiederholungen harter Einheiten (fürs Abhaken in Prozent)" },
+    reps_min: { type: "number", description: "Optional, kleiner als reps: so viele Wiederholungen reichen auch (z. B. „nach 8 aufhören“ erlaubt). Ab dieser Zahl zählt die Anzahl voll" },
     pace_per_km: { type: "string", description: "Zielpace der Belastung bzw. Obergrenze locker als „m:ss“" },
     hr_max: { type: "number", description: "obere Pulsgrenze in bpm (z. B. lockere Läufe)" },
   },
@@ -295,7 +296,7 @@ export const TOOLS: McpTool<Env>[] = [
     title: "Trainingsplan lesen",
     description: "Der Trainingsplan in der App mit Ziel, Wochen-Notiz und Einheiten. Vergangene Einheiten sind mit der gelaufenen " +
       "Einheit abgeglichen: done.pct = Erfüllung in % (locker/lang: Strecke und Puls über 79 % HFmax; Schwelle/Intervalle: " +
-      "Wiederholungen und Tempo zu pace_per_km), done.why = Begründung, missed = nicht gelaufen. Standard: 14 Tage zurück bis 28 Tage voraus. " +
+      "Wiederholungen (ab reps_min voll) und Tempo zu pace_per_km), done.why = Begründung, missed = nicht gelaufen. Standard: 14 Tage zurück bis 28 Tage voraus. " +
       "Vor dem Anpassen eines Plans zuerst lesen.",
     inputSchema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, additionalProperties: false },
     async run(env, args) {
@@ -305,8 +306,8 @@ export const TOOLS: McpTool<Env>[] = [
       const v = await trainingView(env, { from, to, exclude: mcpExclude(set) });
       return {
         today: v.today, goal: v.goal, weekNote: v.note, canWrite: !!set.plan, updated: v.updated || null,
-        sessions: v.sessions.map(({ index, moved, pace, hrMax, done, ...s }) => ({
-          ...s, pace_per_km: pace ? Math.floor(pace / 60) + ":" + String(pace % 60).padStart(2, "0") : undefined, hr_max: hrMax ?? undefined,
+        sessions: v.sessions.map(({ index, moved, pace, hrMax, repsMin, done, ...s }) => ({
+          ...s, reps_min: repsMin ?? undefined, pace_per_km: pace ? Math.floor(pace / 60) + ":" + String(pace % 60).padStart(2, "0") : undefined, hr_max: hrMax ?? undefined,
           movedInApp: moved || undefined,
           done: done ? { pct: done.pct, why: done.why, km: done.km, activityId: done.id || undefined, manual: done.manual || undefined } : undefined,
         })),

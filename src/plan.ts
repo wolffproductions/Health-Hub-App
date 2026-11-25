@@ -43,6 +43,8 @@ export interface Session {
   date: string; type: SessionType; title: string; km: number; detail: string; zone: string; moved?: boolean;
   /** geplante Wiederholungen und Zielpace (s/km) harter Einheiten, für das Abhaken */
   reps?: number; pace?: number;
+  /** Mindestanzahl Wiederholungen, die auch voll zählt (Plan erlaubt, früher aufzuhören) */
+  repsMin?: number;
   /** erledigt: gelaufene Einheit (id), Erfüllung in % (null beim Wettkampf), Begründung; manual = selbst abgehakt */
   done?: { id: string | null; pct: number | null; why: string; km: number | null; sec: number | null; manual?: boolean };
   /** vergangen und nicht gelaufen */
@@ -364,13 +366,20 @@ function score(s: Session, r: DoneRun, z2: [number, number] | null): { pct: numb
   const laps = (r.laps || []).filter((l) => (l.v || 0) > 0 && (l.s || 0) > 0);
   const why: string[] = [];
   if ((s.type === "tempo" || s.type === "interval") && s.reps && s.pace) {
-    // schnellste Runden ab 1 Minute als Wiederholungen
-    const fast = laps.filter((l) => (l.s as number) >= 60).sort((a, b) => (b.v as number) - (a.v as number)).slice(0, s.reps);
+    // schnellste Runden ab 1 Minute als Wiederholungen. Nur Runden bis 25 % langsamer als das Ziel zählen,
+    // sonst füllen Ein- und Auslaufen fehlende Wiederholungen auf und drücken das Tempo.
+    // Liegt keine Runde in diesem Bereich, zählen wie bisher die schnellsten (das Tempo kostet dann).
+    const pace = (l: { v?: number | null }) => 1000 / (l.v as number);
+    const long = laps.filter((l) => (l.s as number) >= 60).sort((a, b) => (b.v as number) - (a.v as number));
+    const near = long.filter((l) => pace(l) <= s.pace! * 1.25);
+    const fast = (near.length ? near : long).slice(0, s.reps);
     if (fast.length) {
       const sec = fast.reduce((t, l) => t + (l.s as number), 0), m = fast.reduce((t, l) => t + (l.m || (l.v as number) * (l.s as number)), 0);
       const p = sec / (m / 1000), slow = (p - s.pace) / s.pace;
-      const repPart = Math.min(1, fast.length / s.reps), pacePart = slow <= 0.02 ? 1 : 1 - Math.min(0.6, (slow - 0.02) * 4);
-      if (fast.length < s.reps) why.push(fast.length + " von " + s.reps + " Wiederholungen");
+      const need = s.repsMin && s.repsMin < s.reps ? s.repsMin : s.reps;
+      const repPart = Math.min(1, fast.length / need), pacePart = slow <= 0.02 ? 1 : 1 - Math.min(0.6, (slow - 0.02) * 4);
+      if (fast.length < need) why.push(fast.length + " von " + need + " Wiederholungen");
+      else if (fast.length < s.reps) why.push(fast.length + " Wiederholungen (mindestens " + need + " eingeplant)");
       why.push(slow <= 0.02 ? "Tempo getroffen" : Math.round(slow * 100) + " % langsamer als geplant");
       return { pct: Math.round(100 * repPart * pacePart), why: why.join(" · ") };
     }

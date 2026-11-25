@@ -9,6 +9,8 @@ export interface TSession {
   km?: number | null; min?: number | null;
   /** Wiederholungen und Zielpace (s/km) harter Einheiten, fürs Abhaken in Prozent */
   reps?: number | null; pace?: number | null;
+  /** so viele Wiederholungen reichen auch („nach 8 aufhören“): ab hier zählt die Anzahl voll */
+  repsMin?: number | null;
   /** obere Pulsgrenze (bpm), z. B. für lockere Läufe */
   hrMax?: number | null;
   /** in der App verschoben (Tag geändert) */
@@ -45,6 +47,8 @@ export function cleanSession(x: any): TSession | string {
   if (km != null) s.km = Math.round(km * 10) / 10;
   if (min != null) s.min = Math.round(min);
   if (reps != null) s.reps = Math.round(reps);
+  const rmin = numIn(x.reps_min ?? x.repsMin, 1, 60);
+  if (s.reps != null && rmin != null && Math.round(rmin) < s.reps) s.repsMin = Math.round(rmin);
   if (pace != null) s.pace = Math.round(pace);
   if (hr != null) s.hrMax = Math.round(hr);
   return s;
