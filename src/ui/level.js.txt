@@ -1,0 +1,51 @@
+// ---------- Level und Punkte (#192) ----------
+// Rechnung im Worker (src/level.ts), /api/data liefert `level` fertig. Hier nur Anzeige:
+// Konto (Karte unter dem Profil, Unterseite „Level“ mit den letzten Punkten und den Regeln) und eine Zeile auf „Heute“.
+const lvNum = (n) => Math.round(n).toLocaleString('de-DE');
+function lvLine(l) { return 'noch ' + lvNum(l.need - l.into) + ' bis Level ' + (l.level + 1); }
+
+function renderLevel() {
+  const l = S.level, card = $('#lv-card');
+  if (!card) return;
+  card.hidden = !l;
+  if (!l) return;
+  $('#lv-lvl').textContent = 'Level ' + l.level;
+  $('#lv-pts').textContent = lvNum(l.into) + ' / ' + lvNum(l.need);
+  $('#lv-fill').style.width = Math.max(2, Math.min(100, (l.into / l.need) * 100)) + '%';
+  $('#lv-sub').textContent = l.today ? '+' + lvNum(l.today) + ' heute · ' + lvLine(l) : lvLine(l);
+  // Unterseite
+  const big = $('#lv-big'); if (!big) return;
+  big.textContent = 'Level ' + l.level;
+  $('#lv-big-fill').style.width = Math.max(2, Math.min(100, (l.into / l.need) * 100)) + '%';
+  $('#lv-big-sub').textContent = lvNum(l.into) + ' von ' + lvNum(l.need) + ' Punkten · ' + lvLine(l) + ' · insgesamt ' + lvNum(l.xp);
+  $('#lv-start').textContent = 'Punkte zählen seit ' + dayLabel(l.start) + '. Alle haben bei Level 1 angefangen.';
+  const ul = $('#lv-list'); ul.replaceChildren();
+  ul.hidden = !l.recent.length;
+  $('#lv-empty').hidden = !!l.recent.length;
+  for (const e of l.recent) {
+    const li = el('li');
+    const left = el('div', 'lv-what');
+    if (e.kind === 'woche') left.append(el('b', null, 'Wochenbonus'), el('span', 'note', dayLabel(e.date) + ' · ' + e.note));
+    else {
+      const sp = sportOf(e.type || '');
+      const bits = [dayLabel(e.date), lvNum(e.min) + ' Min.' + (e.hard ? ' · hart ×1,5' : '')];
+      if (e.note) bits.push(e.note);
+      left.append(el('b', null, e.name || sp.label), el('span', 'note', bits.join(' · ')));
+    }
+    li.append(left, el('span', 'lv-plus', '+' + lvNum(e.pts)));
+    ul.append(li);
+  }
+}
+
+function renderLevelToday() {
+  const b = $('#lv-today'); if (!b) return;
+  const l = S.level;
+  b.hidden = !(l && l.today > 0);
+  if (b.hidden) return;
+  b.replaceChildren(el('b', null, '+' + lvNum(l.today) + ' Punkte'), document.createTextNode(' · Level ' + l.level + ' · ' + lvLine(l)));
+}
+
+function initLevel() {
+  const b = $('#lv-today');
+  if (b) b.addEventListener('click', () => { S.kontoView = 'level'; showTab('konto'); showKontoView('level'); });
+}

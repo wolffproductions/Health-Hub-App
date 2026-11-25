@@ -51,7 +51,7 @@ function renderSources() {
 
 // Unterseiten im Konto (iOS-artig „hineinnavigieren“); 'main' = Übersicht. Jede Unterseite ist ein <div id="konto-…">.
 const KONTO_TITLES = {
-  main: 'Konto', profil: 'Profil', freunde: 'Freunde', quellen: 'Datenquellen', push: 'Benachrichtigungen', claude: 'Claude', zonen: 'Pulszonen',
+  main: 'Konto', profil: 'Profil', level: 'Level', freunde: 'Freunde', quellen: 'Datenquellen', push: 'Benachrichtigungen', claude: 'Claude', zonen: 'Pulszonen',
   prognose: 'Wettkampfprognose', feedback: 'Feedback', radwetter: 'Rad-Wetter', anmeldung: 'Anmeldung', garmin: 'Garmin Connect', strava: 'Strava', withings: 'Withings', whoop: 'WHOOP', google: 'Google Health',
 };
 // Zurück führt von einer Quelle zu den Datenquellen, sonst zur Übersicht
@@ -69,6 +69,7 @@ function showKontoView(view) {
 
 function renderAccount() {
   renderMe();
+  renderLevel(); // #192
   renderWeatherCfg();
   renderRwSettings(); // Rad-Wetter (#153)
   renderFriendAdmin();

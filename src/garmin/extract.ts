@@ -194,6 +194,8 @@ export function normalizeActivity(a: Obj): Obj | null {
     name: a.activityName || "",
     km: round((a.distance || 0) / 1000, 2),
     min: round((a.duration || 0) / 60, 1),
+    // Bewegungszeit ohne Stehen (Punkte, #192); fehlt bei manchen Sportarten
+    mov: a.movingDuration > 0 ? round(a.movingDuration / 60, 1) : null,
     hr: a.averageHR ?? null,
     maxHr: a.maxHR ?? null,
     spd: round(a.averageSpeed, 3),

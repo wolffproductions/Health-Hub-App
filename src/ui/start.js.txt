@@ -142,5 +142,6 @@ initPredCfg();
 initPasskeys();
 initMe();
 initFriends();
+initLevel();
 initWeatherCfg();
 initRadwetter();

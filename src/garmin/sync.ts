@@ -51,7 +51,7 @@ const nowS = () => Math.floor(Date.now() / 1000);
 // 3: Stress-Höchstwert, Zeit je Stressstufe, Body Battery geladen/verbraucht (Balance)
 // 4: VO2max je Einheit · 5: Kalorien je Einheit (#17) · 6: Runden mit Intensität und Auslöser (#105) · 8: VO2max aus der .fit
 // 7: Pausen in den Verläufen (#152, Karte)
-const EXTRACT_VERSION = 8;
+const EXTRACT_VERSION = 9;
 const EXTRACTORS: Record<string, (json: unknown) => MetricRow[]> = {
   dailysummaries: extractDailySummaries,
   sleep: extractSleep,
@@ -94,6 +94,10 @@ async function reextract(env: Env): Promise<boolean> {
   if (done < 8) {
     await env.DB.prepare("UPDATE activities SET laps_done = 0 WHERE source = 'garmin' AND type LIKE '%running%' AND day >= date('now', '-365 days') AND json_extract(data, '$.vo2') IS NULL").run();
     await env.DB.prepare("UPDATE activities SET route_done = 0 WHERE source = 'garmin' AND (type LIKE '%cycl%' OR type LIKE '%biking%') AND day >= date('now', '-60 days') AND json_extract(data, '$.vo2') IS NULL").run();
+  }
+  // Version 9 (#192): Bewegungszeit je Einheit aus der gespeicherten Garmin-Antwort nachtragen (für die Punkte)
+  if (done < 9) {
+    await env.DB.prepare("UPDATE activities SET data = json_set(data, '$.mov', round(json_extract(payload, '$.movingDuration') / 60.0, 1)) WHERE source = 'garmin' AND payload IS NOT NULL AND json_valid(payload) AND json_extract(payload, '$.movingDuration') > 0").run();
   }
   await kvPut(env, "extractVersion", String(EXTRACT_VERSION));
   return true;
