@@ -1,2 +1,2 @@
 // Von scripts/oeffentliche-kopie.mjs geschrieben
-export const VERSION = "2026-11-25 (87f9795)";
+export const VERSION = "2026-11-25 (edb749b)";

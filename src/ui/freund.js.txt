@@ -73,7 +73,7 @@ async function renderFriendProfile() {
   const last = acts[0];
   fpSection(list, id, 'akt', 'einheiten', 'Aktivitäten', last ? acts.length + ' zuletzt · ' + dayLabel(last.date).split(',')[0] + ': ' + (last.name || (sportOf(last.type || '') || {}).label || '') : 'teilt noch keine', () => {
     if (!acts.length) return el('p', 'note fp-hint', p.name + ' teilt seine Aktivitäten noch nicht. Freigeben kann er das unter Konto → Freunde („Letzte 10 Aktivitäten mit Karte“). Danach dauert es bis zu 15 Minuten.');
-    const w = el('div', 'actposts fp-acts'); for (const a of acts) w.append(fpPost(a)); return w;
+    const w = el('div', 'actposts fp-acts'); for (const a of acts) w.append(fpPost(a, p.name)); return w;
   });
   const sports = FP_SPORT.filter(([sp]) => p[sp] && (p[sp].w || p[sp].m || p[sp].y));
   if (sports.length) {
@@ -113,7 +113,7 @@ async function renderFriendProfile() {
 }
 
 // Eine Aktivität wie ein Post: Titel, Datum, Kennzahlen, Karte (erst laden, wenn sie ins Bild kommt)
-function fpPost(a) {
+function fpPost(a, who) {
   const sp = sportOf(a.type || '') || SPORTS[SPORTS.length - 1];
   const c = el('div', 'card fp-post');
   const top = el('div', 'fp-ptop');
@@ -131,6 +131,14 @@ function fpPost(a) {
   if (a.route && a.route.length > 1) {
     const m = el('div', 'fp-map');
     c.append(m);
+    // Antippen: Vollbild-Karte mit „Abspielen“ (Distanz und Zeit laufen anteilig mit, Verläufe teilt niemand)
+    c.classList.add('fp-tap'); c.setAttribute('role', 'button'); c.tabIndex = 0;
+    c.setAttribute('aria-label', (a.name || sp.label) + ': Karte im Vollbild öffnen und abspielen');
+    const open = () => openRouteFull(a, c, { route: a.route, who: who });
+    c.addEventListener('click', open);
+    c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    const hint = el('div', 'note fp-play'); hint.innerHTML = icon('abspielen'); hint.append('Antippen zum Abspielen');
+    c.append(hint);
     const io = new IntersectionObserver((es) => {
       if (!es.some((e) => e.isIntersecting)) return;
       io.disconnect();

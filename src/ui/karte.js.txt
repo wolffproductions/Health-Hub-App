@@ -143,16 +143,18 @@ async function drawRoute(node, id) {
 }
 
 /** Vollbild-Ansicht einer Aktivität: zoombare Karte, Kennzahlen, „Fertig“; Zurück-Taste schließt sie */
-async function openRouteFull(a, card) {
+// opts.route: Route schon da (Aktivität eines Freundes, #87): nicht laden, ohne Verläufe und Werkzeuge, nur Karte und Abspielen
+async function openRouteFull(a, card, opts = {}) {
   if (document.querySelector('.mapfull')) return;
   const view = el('div', 'mapfull');
   view.setAttribute('role', 'dialog'); view.setAttribute('aria-modal', 'true');
   const bar = el('div', 'mf-bar'), title = el('div', 'ap-title');
-  title.append(el('div', 'ap-name', a.name || sportOf(a.type).label), el('div', 'note', (a.date === S.today ? 'Heute' : dayLabel(a.date)) + ' · ' + a.start + ' Uhr'));
+  title.append(el('div', 'ap-name', a.name || sportOf(a.type).label), el('div', 'note', (a.date === S.today ? 'Heute' : dayLabel(a.date)) + (a.start ? ' · ' + a.start + ' Uhr' : '') + (opts.who ? ' · ' + opts.who : '')));
   const done = el('button', 'btn small', 'Fertig'); done.type = 'button';
   bar.append(title, done);
   const mapNode = el('div', 'mf-map');
-  const stats = card.querySelector('.ap-stats')?.cloneNode(true) || el('div');
+  const stats = card.querySelector('.ap-stats, .fp-facts')?.cloneNode(true) || el('div');
+  stats.className = 'ap-stats';
   view.append(bar, mapNode, stats);
   document.body.append(view);
   document.body.classList.add('mapfull-open');
@@ -171,11 +173,11 @@ async function openRouteFull(a, card) {
   done.addEventListener('click', () => close(false));
   done.focus();
   try {
-    const route = await loadRoute(a.id);
+    const route = opts.route || await loadRoute(a.id);
     if (Array.isArray(route) && route.length > 1) {
       map = await routeMap(mapNode, route, true);
       if (!view.isConnected) { map.remove(); return; }
-      cleanup = mapControls(mapNode, map, a);
+      if (!opts.route) cleanup = mapControls(mapNode, map, a);
       addPlayback(mapNode, map, route, a);
     }
   } catch {

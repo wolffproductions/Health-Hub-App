@@ -948,6 +948,10 @@
   .fp-facts span { font-size: 12px; color: var(--muted); }
   .fp-facts b { font-family: var(--num); font-size: 17px; font-weight: 500; font-variant-numeric: tabular-nums; }
   .fp-map { height: 190px; border-radius: 8px; overflow: hidden; background: var(--fill); }
+  .fp-tap { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .fp-tap:active { opacity: .85; }
+  .fp-play { display: flex; align-items: center; gap: 6px; }
+  .fp-play svg { width: 16px; height: 16px; color: var(--accent); }
   .fp-nums { display: flex; flex-wrap: wrap; gap: 8px 22px; flex: 1; justify-content: space-around; }
   .fp-num { display: flex; flex-direction: column; gap: 2px; align-items: center; text-align: center; }
   .fp-num b { font-family: var(--num); font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; }

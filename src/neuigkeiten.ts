@@ -19,6 +19,7 @@ export const NEWS: NewsEntry[] = [
     punkte: [
       "Folgst du jemandem zurück, der dir schon folgt, muss er das nicht mehr bestätigen. Ihr folgt euch dann sofort gegenseitig.",
       "„Zurückfolgen“ trifft jetzt immer die richtige Person, und Follower ohne Namen bekommen ihren Namen nachträglich.",
+      "Im Profil eines Freundes kannst du seine Aktivitäten jetzt antippen: Die Karte öffnet sich groß, und mit „Abspielen“ läuft die Strecke ab.",
     ],
   },
   {
