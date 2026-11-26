@@ -146,7 +146,42 @@ async function syncWindow(env: Env, token: string, from: string, to: string, bud
   return true;
 }
 
+// ---------- Gespeicherte Fenster neu auswerten ----------
+// Version 2 (Feedback #8): Schlaf und Trainings ohne civil-Felder (nur Weltzeit + Zeitunterschied) wurden verworfen.
+// Die Rohantworten liegen in raw_records (kind 'window'), also ohne neuen Abruf bei Google nachholen: 4 Fenster je Lauf,
+// damit ein Aufruf klein bleibt. Stand in kv `googleExtract` { v, after = rowid }.
+const GOOGLE_EXTRACT_VERSION = 2, REEXTRACT_PER_RUN = 4;
+
+/** Alle Tageswerte aus einem gespeicherten Fenster (gleiche Teile wie syncWindow) */
+export function extractWindow(got: Record<string, unknown>): ReturnType<typeof extractSleep> {
+  const arr = (v: unknown) => (Array.isArray(v) ? v : []);
+  const rows = [...extractSleep({ dataPoints: arr(got.sleep) })];
+  for (const type of Object.keys(DAILY)) rows.push(...extractDaily(type, { dataPoints: arr(got[type]) }));
+  for (const type of ["weight", "body-fat"]) rows.push(...extractBody({ dataPoints: arr(got[type]) }));
+  rows.push(...extractSteps(got.steps));
+  return rows;
+}
+
+async function reextract(env: Env) {
+  const st = await kvGetJson<{ v?: number; after?: number }>(env, "googleExtract", {});
+  if ((st.v || 1) >= GOOGLE_EXTRACT_VERSION) return;
+  const { results } = await env.DB.prepare("SELECT rowid AS id, payload FROM raw_records WHERE source = 'google' AND kind = 'window' AND rowid > ?1 ORDER BY rowid LIMIT ?2")
+    .bind(st.after || 0, REEXTRACT_PER_RUN).all<{ id: number; payload: string }>();
+  for (const r of results) {
+    try {
+      const got = JSON.parse(r.payload) as Record<string, unknown>;
+      await saveMetrics(env, "google", extractWindow(got));
+      if (Array.isArray(got.exercise) && got.exercise.length) await saveExercises(env, got.exercise);
+    } catch { /* einzelnes kaputtes Fenster überspringen */ }
+    st.after = r.id;
+  }
+  if (results.length < REEXTRACT_PER_RUN) { st.v = GOOGLE_EXTRACT_VERSION; st.after = 0; }
+  await kvPut(env, "googleExtract", JSON.stringify(st));
+}
+
 export async function googleStep(env: Env): Promise<GoogleMeta> {
+  // Ohne Google-Abruf, darf scheitern: ältere Fenster mit der neuen Auswertung nachrechnen
+  await reextract(env).catch((e) => console.error("google reextract", e));
   const meta = await kvGetJson<GoogleMeta>(env, "googleMeta", {});
   if (meta.pauseUntil && Date.now() < meta.pauseUntil) return meta;
   meta.lastRun = new Date().toISOString();

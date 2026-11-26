@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  civil, extractBody, extractDaily, extractSleep, extractSteps, googleType, mergeGoogle, normalizeExercise, sameExercise, seconds, ymd,
+  civil, localAt, extractBody, extractDaily, extractSleep, extractSteps, googleType, mergeGoogle, normalizeExercise, sameExercise, seconds, ymd,
 } from "../src/google/extract.ts";
 import { pickDaily, priority } from "../src/quellen.ts";
 
@@ -124,4 +124,20 @@ test("Quellen: Fitbit-Nachtwerte nach WHOOP und Garmin, auf Wunsch zuerst; nur F
   assert.deepEqual(d["2026-11-10"], { d: "2026-11-10", hrv: 42, hrvSrc: "google", slp: 7.4 });
   const g = pickDaily([R("2026-11-10", "slp", "google", 7), R("2026-11-10", "slp", "garmin", 7.4)], { night: "google" });
   assert.equal(g["2026-11-10"].slp, 7);
+});
+
+test("Google: ohne civil-Felder Ortszeit aus Weltzeit + Zeitunterschied (Feedback #8)", () => {
+  assert.equal(localAt(undefined, "2026-11-24T22:40:00Z", "3600s"), "2026-11-24T23:40");
+  assert.equal(localAt(undefined, "2026-11-24T22:40:00Z", undefined), null);
+  const sleep = { dataPoints: [{ name: "users/me/dataTypes/sleep/dataPoints/1", sleep: {
+    interval: { startTime: "2026-11-24T22:40:00Z", startUtcOffset: "3600s", endTime: "2026-11-25T05:58:00Z", endUtcOffset: "3600s" },
+    metadata: { mainSleep: true }, summary: { minutesAsleep: "402", stagesSummary: [{ type: "DEEP", minutes: "70" }] } } }] };
+  const rows = extractSleep(sleep);
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every((r) => r.day === "2026-11-25"));
+  assert.ok(rows.some((r) => r.metric === "slp"));
+  const ex = normalizeExercise({ name: "users/me/dataTypes/exercise/dataPoints/77", exercise: {
+    exerciseType: "RUNNING", interval: { startTime: "2026-11-25T16:02:00Z", startUtcOffset: "3600s", endTime: "2026-11-25T16:52:00Z", endUtcOffset: "3600s" } } });
+  assert.equal(ex?.date, "2026-11-25");
+  assert.equal(ex?.start, "17:02");
 });

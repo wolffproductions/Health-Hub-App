@@ -7,7 +7,9 @@
 //   slp/deep/rem h · awake min · bed/wake Uhrzeit in h · steps · kg · fat %
 // Kein Schlafscore (liefert die API nicht) und keine Garmin-artige Trainingswirkung.
 //
-// Zeiten: Die API liefert zu jedem Zeitpunkt die Ortszeit („civil“) mit. Tage kommen deshalb direkt von dort,
+// Zeiten: Laut Doku liefert die API zu jedem Zeitpunkt die Ortszeit („civil“) mit. Echte Antworten (Fitbit Air, Feedback #8)
+// haben bei Schlaf und Trainings aber nur Weltzeit + Zeitunterschied (startTime, startUtcOffset). Dann rechnet `localAt` die
+// Ortszeit selbst aus. Tage kommen aus der Ortszeit,
 // Schlaf zählt (wie bei Garmin und WHOOP) zum Tag des Aufwachens.
 import type { MetricRow } from "../garmin/extract";
 
@@ -40,6 +42,18 @@ export function civil(c: unknown): string | null {
 }
 /** Dauer „123.5s“ → Sekunden */
 export const seconds = (d: unknown): number | null => (typeof d === "string" && /^-?\d+(\.\d+)?s$/.test(d) ? Number(d.slice(0, -1)) : null);
+/** Ortszeit „JJJJ-MM-TTTHH:MM“: zuerst das civil-Feld, sonst Weltzeit + Zeitunterschied („3600s“). Ohne beides null. */
+export function localAt(civilField: unknown, utc: unknown, offset: unknown): string | null {
+  const c = civil(civilField);
+  if (c) return c;
+  const t = typeof utc === "string" ? Date.parse(utc) : NaN, off = seconds(offset);
+  return isFinite(t) && off != null ? new Date(t + off * 1000).toISOString().slice(0, 16) : null;
+}
+/** Anfang bzw. Ende eines Intervalls ({startTime, startUtcOffset, civilStartTime, …}) in Ortszeit */
+export const intervalAt = (iv: Obj, edge: "start" | "end"): string | null =>
+  edge === "start" ? localAt(iv.civilStartTime, iv.startTime, iv.startUtcOffset) : localAt(iv.civilEndTime, iv.endTime, iv.endUtcOffset);
+/** Messzeitpunkt (sampleTime {civilTime | physicalTime + utcOffset}) in Ortszeit */
+const sampleAt = (st: unknown): string | null => (isObj(st) ? localAt(st.civilTime, st.physicalTime ?? st.time, st.utcOffset) : null);
 const hours = (local: string, wrap: boolean) => {
   const h = Number(local.slice(11, 13)) + Number(local.slice(14, 16)) / 60;
   return Math.round((wrap && h < 12 ? h + 24 : h) * 100) / 100;
@@ -60,7 +74,7 @@ export function extractSleep(body: unknown): MetricRow[] {
     const s = p.sleep;
     if (!isObj(s) || !isObj(s.interval)) continue;
     if (s.metadata?.nap === true) continue;
-    const start = civil(s.interval.civilStartTime), end = civil(s.interval.civilEndTime);
+    const start = intervalAt(s.interval, "start"), end = intervalAt(s.interval, "end");
     const asleep = n(s.summary?.minutesAsleep);
     if (!start || !end || !asleep) continue;
     const day = end.slice(0, 10), prev = best.get(day);
@@ -116,7 +130,7 @@ export function extractBody(body: unknown): MetricRow[] {
   for (const p of dataPoints(body)) {
     const w = isObj(p.weight) ? p.weight : null, f = isObj(p.bodyFat) ? p.bodyFat : null;
     const x = w || f;
-    const t = x ? civil(x.sampleTime?.civilTime) : null;
+    const t = x ? sampleAt(x.sampleTime) : null;
     if (!x || !t) continue;
     const metric = w ? "kg" : "fat";
     const value = w ? round((n(w.weightGrams) ?? NaN) / 1000, 2) : round(n(f!.percentage), 1);
@@ -132,7 +146,7 @@ export function extractSteps(body: unknown): MetricRow[] {
   const list = isObj(body) && Array.isArray(body.rollupDataPoints) ? body.rollupDataPoints.filter(isObj) : [];
   const rows: MetricRow[] = [];
   for (const r of list) {
-    const day = civil(r.civilStartTime)?.slice(0, 10);
+    const day = localAt(r.civilStartTime, r.startTime, r.startUtcOffset)?.slice(0, 10);
     const v = isObj(r.steps) ? n(r.steps.countSum ?? r.steps.count) : null;
     if (day && v != null) rows.push({ day, metric: "steps", value: Math.round(v) });
   }
@@ -165,7 +179,7 @@ export const googleType = (t: unknown) => {
 export function normalizeExercise(p: Obj): Obj | null {
   const id = pointId(p), e = p.exercise;
   if (!id || !isObj(e) || !isObj(e.interval)) return null;
-  const start = civil(e.interval.civilStartTime);
+  const start = intervalAt(e.interval, "start");
   const t0 = Date.parse(e.interval.startTime), t1 = Date.parse(e.interval.endTime);
   if (!start) return null;
   const m = isObj(e.metricsSummary) ? e.metricsSummary : {};

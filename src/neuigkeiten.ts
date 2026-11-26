@@ -5,6 +5,13 @@ export interface NewsEntry { id: string; titel: string; punkte: string[] }
 
 export const NEWS: NewsEntry[] = [
   {
+    id: "2026-11-29d",
+    titel: "Schlaf von Fitbit und Pixel Watch",
+    punkte: [
+      "Mit Google Health erscheinen jetzt Schlaf und Trainings, die bisher gefehlt haben. Ältere Nächte holt die App nach und nach von selbst nach, ohne neu bei Google zu laden.",
+    ],
+  },
+  {
     id: "2026-11-29c",
     titel: "Einen Tag als Datei verschicken",
     punkte: [
