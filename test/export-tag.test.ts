@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  type Call, camelType, dayOf, embedPage, EXCLUDED_SOURCES, GOOGLE_NOT_QUERIED, GOOGLE_PROBES, isLocationKey, isProfileKey, namingMatters, nextDay,
+  type Call, camelType, dayOf, dayStartUtc, embedPage, physicalFilter, EXCLUDED_SOURCES, GOOGLE_NOT_QUERIED, GOOGLE_PROBES, isLocationKey, isProfileKey, namingMatters, nextDay,
   pageTokenOf, probeFilter, probeJson, rawTouches, rollupBody, runProbe, snakeType, stripPrivate, touchesDay, trimToDay,
 } from "../src/export-tag.ts";
 
@@ -210,4 +210,25 @@ test("Google live: große Antworten gehen als Text unverändert durch, Einheiten
   assert.deepEqual(JSON.parse(embedPage("<html>Fehler</html>", false)), { keinJson: "<html>Fehler</html>" });
   const ex = '{"dataPoints":[{"name":"e","exercise":{"route":{"points":[[52.1,13.4]]},"startLatitude":52.1,"activeDuration":"1800s"}}]}';
   assert.deepEqual(JSON.parse(embedPage(ex, true)), { dataPoints: [{ name: "e", exercise: { activeDuration: "1800s" } }] });
+});
+
+test("Google live: lehnt Google den Ortszeit-Filter ab, Ausweich über die Weltzeit des Tages", async () => {
+  assert.equal(dayStartUtc("2026-11-25", "Europe/Berlin"), "2026-11-24T23:00:00Z");
+  assert.equal(dayStartUtc("2026-07-01", "Europe/Berlin"), "2026-06-30T22:00:00Z");
+  assert.equal(dayStartUtc("2026-03-29", "Europe/Berlin"), "2026-03-28T23:00:00Z"); // Tag der Umstellung
+  assert.equal(physicalFilter(probe("list:heart-rate"), "2026-11-25", "Europe/Berlin"),
+    'heart_rate.sample_time.physical_time >= "2026-11-24T23:00:00Z" AND heart_rate.sample_time.physical_time < "2026-11-25T23:00:00Z"');
+  assert.match(physicalFilter(probe("list:sleep"), "2026-11-25", "Europe/Berlin")!, /^sleep\.interval\.end_time >= /);
+  assert.equal(physicalFilter(probe("list:exercise"), "2026-11-25", "Europe/Berlin"), null);
+  const bad = { status: 400, text: '{"error":{"code":400}}' };
+  const g = fakeGoogle([bad, bad, { status: 200, text: '{"dataPoints":[{"name":"x"}]}' }]);
+  const r = await runProbe(probe("list:heart-rate"), "2026-11-25", { ...io(g.call), tz: "Europe/Berlin" });
+  assert.equal(r.ok, true);
+  assert.equal(g.seen.length, 3);
+  assert.match(new URL(g.seen[2].url).searchParams.get("filter")!, /physical_time >= "2026-11-24T23:00:00Z"/);
+  assert.equal(r.naming, null);
+  // Ohne Zeitzone oder bei anderen Fehlern kein Ausweich
+  const g2 = fakeGoogle([{ status: 403, text: "{}" }]);
+  await runProbe(probe("list:steps"), "2026-11-25", { ...io(g2.call), tz: "Europe/Berlin" });
+  assert.equal(g2.seen.length, 1);
 });

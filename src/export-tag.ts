@@ -206,6 +206,32 @@ export function probeFilter(p: GoogleProbe, day: string, naming: "s" | "c" = "s"
     default: return null;
   }
 }
+/** Beginn eines Tages in Ortszeit als UTC-Zeitpunkt (RFC 3339), z. B. 2026-11-25 in Europe/Berlin → 2026-11-24T23:00:00Z */
+export function dayStartUtc(day: string, tz: string): string {
+  const offset = (t: number) => {
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+      .formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - t;
+  };
+  const guess = Date.parse(day + "T00:00:00Z");
+  let t = guess - offset(guess);
+  t = guess - offset(t); // zweimal, falls am Tag die Uhr umgestellt wird
+  return new Date(t).toISOString().replace(".000Z", "Z");
+}
+
+/** Ausweich-Filter über die Weltzeit [Tagesbeginn, Folgetag) in Ortszeit; null, wo die Referenz keinen kennt (Einheiten, Tageswerte) */
+export function physicalFilter(p: GoogleProbe, day: string, tz: string): string | null {
+  const from = dayStartUtc(day, tz), to = dayStartUtc(nextDay(day), tz);
+  const t = snakeType(p.type);
+  const range = (field: string) => `${field} >= "${from}" AND ${field} < "${to}"`;
+  switch (p.kind) {
+    case "interval": return range(`${t}.interval.start_time`);
+    case "sample": return range(`${t}.sample_time.physical_time`);
+    case "sleep": return range(`${t}.interval.end_time`);
+    default: return null;
+  }
+}
+
 /** Lohnt ein zweiter Versuch mit der anderen Schreibweise? Nur bei Typen aus mehreren Wörtern mit Filter */
 export const namingMatters = (p: GoogleProbe) => p.type.includes("-") && p.kind !== "none" && p.method === "list";
 
@@ -247,7 +273,7 @@ const errorBody = (text: string): unknown => {
  * falschen Filternamen (HTTP 400) einem zweiten Versuch in der anderen Schreibweise. `first` = Schreibweise für den
  * ersten Versuch (gelernt im Abgleich bzw. zuletzt erfolgreich). Höchstens 4 Anfragen.
  */
-export async function runProbe(p: GoogleProbe, day: string, io: { call: Call; base: string; token: string; first: "s" | "c" }): Promise<ProbeResult> {
+export async function runProbe(p: GoogleProbe, day: string, io: { call: Call; base: string; token: string; first: "s" | "c"; tz?: string }): Promise<ProbeResult> {
   const auth = { Authorization: "Bearer " + io.token, Accept: "application/json" };
   const res: ProbeResult = { ok: false, status: 0, retry: null, versuche: [], pages: [], more: false, naming: null };
   if (p.method === "dailyRollUp") {
@@ -260,9 +286,8 @@ export async function runProbe(p: GoogleProbe, day: string, io: { call: Call; ba
     if (r.status === 200) res.pages.push(r.text);
     res.versuche.push(r.status === 200 ? { status: 200 } : { status: r.status, fehler: errorBody(r.text) });
   } else {
-    const order: Array<"s" | "c"> = namingMatters(p) ? [io.first, io.first === "s" ? "c" : "s"] : ["s"];
-    for (const n of order) {
-      const filter = probeFilter(p, day, n);
+    /** Ein Filter, bis zu `pages` Seiten; true = mindestens eine Seite kam */
+    const attempt = async (filter: string | null): Promise<boolean> => {
       let tok = "";
       for (let i = 0; i < (p.pages || 1); i++) {
         const q = new URLSearchParams();
@@ -277,14 +302,22 @@ export async function runProbe(p: GoogleProbe, day: string, io: { call: Call; ba
         tok = pageTokenOf(r.text);
         if (!tok) break;
       }
-      if (res.pages.length) {
-        res.versuche.push({ filter, status: 200 });
-        if (namingMatters(p)) res.naming = n;
-        res.more = !!tok;
-        break;
-      }
+      if (!res.pages.length) return false;
+      res.versuche.push({ filter, status: 200 });
+      res.more = !!tok;
+      return true;
+    };
+    const order: Array<"s" | "c"> = namingMatters(p) ? [io.first, io.first === "s" ? "c" : "s"] : ["s"];
+    let done = false;
+    for (const n of order) {
+      if (await attempt(probeFilter(p, day, n))) { if (namingMatters(p)) res.naming = n; done = true; break; }
       // Nur ein falscher Filtername (HTTP 400) lohnt den Versuch mit der anderen Schreibweise
       if (res.status !== 400) break;
+    }
+    // Lehnt Google auch den Ortszeit-Filter ab (400), über die Weltzeit: echte Antworten haben teils keine civil-Felder (#207)
+    if (!done && res.status === 400 && io.tz) {
+      const f = physicalFilter(p, day, io.tz);
+      if (f) await attempt(f);
     }
   }
   res.ok = res.pages.length > 0;

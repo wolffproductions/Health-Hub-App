@@ -174,6 +174,8 @@ async function googleProbe(env: Env, day: string, id: string, hint: string | nul
   // Schreibweise des Typs im Filter: gelernt im Abgleich, sonst die zuletzt erfolgreiche (von der Oberfläche), sonst snake_case
   const learned = (await kvGetJson<GoogleMeta>(env, "googleMeta", {})).fields?.[p.type];
   const base = p.beta ? google.API.replace(/\/v4$/, "/v4beta") : google.API;
-  const r = await runProbe(p, day, { call, base, token, first: learned || (hint === "c" ? "c" : "s") });
+  const profile = await kvGetJson<{ tz?: string } | null>(env, "profile", null);
+  const tz = profile?.tz || env.TIMEZONE || "Europe/Berlin";
+  const r = await runProbe(p, day, { call, base, token, first: learned || (hint === "c" ? "c" : "s"), tz });
   return respond(probeJson(p, r, new Date().toISOString()));
 }
