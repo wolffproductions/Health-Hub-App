@@ -38,7 +38,6 @@ import neuJs from "./neu.js.txt";
 import figurJs from "./figur.js.txt";
 import radwetterJs from "./radwetter.js.txt";
 import radwetterKontoJs from "./radwetter-konto.js.txt";
-import levelJs from "./level.js.txt";
 import kontoJs from "./konto.js.txt";
 import ablauf from "./ablauf.js.txt";
 import daten from "./daten.js.txt";
@@ -81,7 +80,6 @@ export const UI_PARTS: Record<string, string> = {
   "figur.js": figurJs,
   "radwetter.js": radwetterJs,
   "radwetter-konto.js": radwetterKontoJs,
-  "level.js": levelJs,
   "konto.js": kontoJs,
   "ablauf.js": ablauf,
   "daten.js": daten,

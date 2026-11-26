@@ -796,42 +796,6 @@
   /* Konto wie die iPhone-Einstellungen: Profil oben, Bereiche als Listen, jede Zeile öffnet eine Seite */
   .me-head { display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
   .me-head:active { background: var(--fill); }
-  /* Level (#192) */
-  .lv-card { display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
-  .lv-card:active { background: var(--fill); }
-  .lv-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .lv-top b { font-size: 17px; font-weight: 600; }
-  .lv-pts { font-family: var(--num); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .lv-bar { display: block; height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
-  .lv-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s ease; }
-  .lv-head { display: flex; flex-direction: column; gap: 12px; }
-  .lv-big { font-size: 28px; font-weight: 600; letter-spacing: -.02em; }
-  .lv-list { list-style: none; margin: 0 -18px; padding: 0; }
-  .lv-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 18px; position: relative; }
-  .lv-list li + li::before { content: ""; position: absolute; top: 0; right: 0; left: 18px; border-top: .5px solid var(--line); }
-  .lv-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .lv-what b { font-weight: 500; }
-  .lv-plus { font-family: var(--num); font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .lv-list:not([hidden]) + #lv-empty { display: none; }
-  .lv-rules { display: flex; flex-direction: column; gap: 12px; }
-  .lv-rules p { margin: 0; font-size: 15px; line-height: 1.4; }
-  .lv-rules b { font-weight: 600; }
-  /* Abzeichen (#192): Metallfarben nur für die Medaille, nicht als Bewertung */
-  .bd-list { display: flex; flex-direction: column; gap: 0; }
-  .bd-tile { display: flex; gap: 14px; align-items: flex-start; padding: 14px 0; }
-  .bd-tile + .bd-tile { border-top: .5px solid var(--line); }
-  .bd-tile:first-child { padding-top: 0; } .bd-tile:last-child { padding-bottom: 0; }
-  .bd-medal { flex: none; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; border: 2.5px solid var(--line); color: var(--muted); background: var(--fill); }
-  .bd-medal svg { width: 22px; height: 22px; }
-  .bd-medal.t1 { border-color: #b8794a; color: #b8794a; }
-  .bd-medal.t2 { border-color: #a3adb7; color: #a3adb7; }
-  .bd-medal.t3 { border-color: #d6a62a; color: #d6a62a; box-shadow: 0 0 0 3px rgba(214, 166, 42, .18); }
-  .bd-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-  .bd-txt b { font-weight: 600; }
-  .bd-tier { font-size: 13px; color: var(--muted); margin-top: -4px; }
-  .bd-desc { color: var(--ter); }
-  .lv-today { display: block; width: 100%; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
-  .lv-today b { color: var(--accent); font-weight: 600; }
   .me-av { width: 60px; height: 60px; flex: none; border-radius: 50%; overflow: hidden; background: var(--fill); color: var(--muted); display: grid; place-items: center; }
   .me-av .ico { width: 30px; height: 30px; stroke-width: 1.6; }
   .me-av img { width: 100%; height: 100%; object-fit: cover; display: block; }

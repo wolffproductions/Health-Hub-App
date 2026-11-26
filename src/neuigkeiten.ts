@@ -5,22 +5,6 @@ export interface NewsEntry { id: string; titel: string; punkte: string[] }
 
 export const NEWS: NewsEntry[] = [
   {
-    id: "2026-12-01",
-    titel: "Abzeichen in Bronze, Silber und Gold",
-    punkte: [
-      "Unter Konto → Level gibt es jetzt Abzeichen: Kilometer im Monat (Laufen, Rad), Höhenmeter, Wochenserie, lange Einheiten, Frühaufsteher, Wettkämpfe und Plan-Treue.",
-      "Die Monats-Abzeichen kannst du jeden Monat neu holen. Jede neue Stufe bringt Punkte fürs Level: Bronze +25, Silber +50, Gold +100.",
-    ],
-  },
-  {
-    id: "2026-11-30",
-    titel: "Level und Punkte",
-    punkte: [
-      "Jede Einheit bringt jetzt Punkte: 1 Punkt pro Minute Bewegung, harte Einheiten 1,5-fach, dazu ein Bonus für Wochen mit mindestens 3 Trainingstagen. Alle fangen ab heute bei Level 1 an.",
-      "Dein Level siehst du im Konto unter deinem Profil. Antippen zeigt, wofür es zuletzt Punkte gab und wie die Regeln sind. Auf „Heute“ steht nach einer Einheit, wie viele Punkte sie gebracht hat.",
-    ],
-  },
-  {
     id: "2026-11-29b",
     titel: "Farben für deinen Bereich",
     punkte: [

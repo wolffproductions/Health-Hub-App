@@ -8,12 +8,6 @@
         <span class="me-txt"><span class="me-name" id="me-name">Dein Profil</span><span class="me-sub" id="me-follow" role="button" tabindex="0">Name und Bild</span></span>
         <span class="chev"><i data-icon="weiter"></i></span>
       </button>
-      <!-- Level und Punkte (#192) -->
-      <button class="lv-card" id="lv-card" type="button" data-view="level" hidden>
-        <span class="lv-top"><b id="lv-lvl">Level 1</b><span class="lv-pts" id="lv-pts"></span></span>
-        <span class="lv-bar" aria-hidden="true"><span id="lv-fill"></span></span>
-        <span class="note" id="lv-sub"></span>
-      </button>
       <ul class="srclist konto-menu" aria-label="Einstellungen">
         <li><button class="srcrow" type="button" data-view="quellen"><span class="srcicon"><i data-icon="stecker"></i></span><span class="srctext"><span class="srcname">Datenquellen</span><span class="srcsub" id="m-quellen"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
         <li><button class="srcrow" type="button" data-view="push"><span class="srcicon"><i data-icon="glocke"></i></span><span class="srctext"><span class="srcname">Benachrichtigungen</span><span class="srcsub" id="m-push"></span></span><span class="chev"><i data-icon="weiter"></i></span></button></li>
@@ -155,33 +149,6 @@
       <div class="row"><button class="btn" id="zone-save" type="button">Speichern</button><button class="btn ghost" id="zone-reset" type="button">Beispielwerte einsetzen</button></div>
       <p class="msg" id="zone-msg" role="status"></p>
     </div>
-    </div>
-
-    <!-- Level (#192): Stand, letzte Punkte, Regeln -->
-    <div id="konto-level" hidden>
-      <div class="card lv-head">
-        <b class="lv-big" id="lv-big">Level 1</b>
-        <span class="lv-bar" aria-hidden="true"><span id="lv-big-fill"></span></span>
-        <p class="note" id="lv-big-sub"></p>
-      </div>
-      <h3 class="sec" id="lv-badges-h">Abzeichen</h3>
-      <div class="card bd-list" id="lv-badges"></div>
-      <h3 class="sec">Letzte Punkte</h3>
-      <div class="card">
-        <ul class="lv-list" id="lv-list"></ul>
-        <p class="note" id="lv-empty">Noch keine Punkte. Deine nächste Einheit bringt die ersten.</p>
-      </div>
-      <h3 class="sec">So gibt es Punkte</h3>
-      <div class="card lv-rules">
-        <p><b>1 Punkt pro Minute</b> Bewegungszeit, egal welche Sportart. Stehen an der Ampel zählt nicht, wo deine Uhr oder Strava die Bewegungszeit kennt.</p>
-        <p><b>Harte Einheiten zählen 1,5-fach:</b> Wettkämpfe, Trainingseffekt ab 3,0 oder Schnittpuls ab 80 % deines Maximalpulses.</p>
-        <p><b>Kraft, Yoga und Ähnliches</b> zählen höchstens 60 Minuten pro Einheit.</p>
-        <p><b>+50 Punkte</b> für jede Woche mit mindestens 3 Trainingstagen.</p>
-        <p><b>Grenzen:</b> höchstens 200 Punkte am Tag, über 15 Stunden in der Woche zählt jede Minute halb. Pausen kosten nie Punkte.</p>
-        <p><b>Level:</b> Level 2 braucht 120 Punkte, jedes weitere 20 mehr.</p>
-        <p><b>Abzeichen:</b> jede neue Stufe bringt Punkte, Bronze +25, Silber +50, Gold +100. Monats-Abzeichen kannst du jeden Monat neu holen.</p>
-        <p class="note" id="lv-start"></p>
-      </div>
     </div>
 
     <!-- Feedback (#162): geht über die eigene Instanz an den Feedback-Worker (Issue in hhub-team/feedback) -->

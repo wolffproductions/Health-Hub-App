@@ -16,7 +16,7 @@ function renderWeekNav() {
 function renderAll() {
   if (!S.today) return;
   renderWeekNav();
-  const fns = { heute: () => { renderToday(); renderTodayPlan(true); renderLevelToday(); }, training: () => { renderLoad(); renderForm(); renderVolume(); }, leistung: () => { renderPerf(); renderBest(); renderWeatherPace(); renderFitAge(); renderBody(); }, schlaf: renderSleep, freunde: renderFriends, einheiten: () => { renderStats(); renderTraining(); renderGear(); }, konto: renderAccount, einheit: renderUnit, freund: renderFriendProfile, diagramm: renderDiagram, balance: renderBalance, radwetter: renderRadwetter };
+  const fns = { heute: () => { renderToday(); renderTodayPlan(true); }, training: () => { renderLoad(); renderForm(); renderVolume(); }, leistung: () => { renderPerf(); renderBest(); renderWeatherPace(); renderFitAge(); renderBody(); }, schlaf: renderSleep, freunde: renderFriends, einheiten: () => { renderStats(); renderTraining(); renderGear(); }, konto: renderAccount, einheit: renderUnit, freund: renderFriendProfile, diagramm: renderDiagram, balance: renderBalance, radwetter: renderRadwetter };
   try { fns[S.tab](); } catch (e) { console.error(e); }
 }
 

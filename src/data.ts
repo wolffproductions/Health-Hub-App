@@ -1,14 +1,12 @@
 // Liest Tageswerte und Trainings aus D1 im Format, das die Oberfläche erwartet:
 //   { daily: { "YYYY-MM-DD": { d, rhr, hrv, ... } }, acts: { id: {...} }, zones, profile, updated }
 import type { Env } from "./env";
-import { addDays, kvGetJson, kvPut, localDate } from "./util";
+import { addDays, kvGetJson, localDate } from "./util";
 import type { Profile } from "./garmin/sync";
 import { zoneTotals, type HrHist } from "./garmin/extract";
 import { mergeDuplicates } from "./strava/extract";
 import { prognose, type PredMode } from "./prognose";
 import { assess } from "./ampel";
-import { computeLevel } from "./level";
-import { loadPlan, markPlan, type TView } from "./training-api";
 import { DEFAULT_SRC_CFG, pickDaily, type SrcCfg } from "./quellen";
 import { mergeWhoop } from "./whoop/extract";
 import { mergeGoogle } from "./google/extract";
@@ -105,27 +103,6 @@ export async function buildData(env: Env, days: number, opts: BuildOpts = {}) {
     });
   } catch (e) { console.error("prognose", e); }
 
-  // Level und Punkte (#192): zählen erst ab dem ersten Tag mit dieser Version (kv `levelStart`), alle beginnen bei Level 1
-  let level = null;
-  try {
-    let lvStart = await kvGetJson<string | null>(env, "levelStart", null);
-    if (!lvStart || !/^\d{4}-\d{2}-\d{2}$/.test(lvStart)) { lvStart = today; await kvPut(env, "levelStart", JSON.stringify(lvStart)); }
-    const lvActs = (Object.values(actsOut) as Array<Record<string, any> & { id: string; date: string }>).map((a) => {
-      const wt = a.strava ? a.strava.wt : a.src === "strava" ? a.wt : null;
-      return { id: a.id, date: a.date, start: a.start, type: a.type, name: a.name, min: a.min, mov: a.mov, hr: a.hr, te: a.te, hidden: a.hidden, race: wt === 1 || wt === 11, km: a.km, elev: a.elev };
-    });
-    // Plan-Treue: Plan-Einheiten ab dem Start abhaken; Kraft/Alternativ zählen auch mit passender Einheit am selben Tag
-    const [plan, manual] = await Promise.all([loadPlan(env), kvGetJson<string[]>(env, "trainingManual", [])]);
-    const ses: TView[] = plan.sessions.filter((s) => s.date >= lvStart! && s.date <= today).map((s, i) => ({ ...s, index: i }));
-    const all = Object.values(actsOut) as Array<Record<string, any>>;
-    if (ses.length) markPlan(ses, all, zones, today, manual);
-    const dayActs = (d: string) => all.filter((a) => a.date === d && !a.hidden);
-    const planDone = ses.map((s) => ({ date: s.date, type: s.type, done: !!s.done
-      || (s.type === "strength" && dayActs(s.date).some((a) => /strength/.test(a.type || "")))
-      || (s.type === "cross" && dayActs(s.date).some((a) => !/running/.test(a.type || ""))) }));
-    level = computeLevel(lvActs, lvStart, today, runZone?.max ?? (skip.has("whoop") ? null : whoopBody?.maxHr) ?? null, planDone);
-  } catch (e) { console.error("level", e); }
-
   // Body-Battery-Verlauf von heute und gestern (#79), nur wenn vorhanden
   const bb = await kvGetJson<{ at: string; curves: Array<{ day: string; pts: Array<[number, number]> }> } | null>(env, "bbCurves", null);
 
@@ -134,7 +111,6 @@ export async function buildData(env: Env, days: number, opts: BuildOpts = {}) {
     bb,
     ampel,
     prognose: pred,
-    level,
     daily,
     acts: actsOut,
     zones,

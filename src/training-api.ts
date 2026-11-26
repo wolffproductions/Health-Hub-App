@@ -28,32 +28,27 @@ export async function trainingView(env: Env, opts: { from?: string; to?: string;
   const list: TView[] = plan.sessions.map((s) => { const k = idx.get(s.date) || 0; idx.set(s.date, k + 1); return { ...s, index: k }; })
     .filter((s) => s.date >= from && s.date <= to);
   // Abgleich nur für Vergangenes und heute, mit den Läufen der letzten Wochen
-  const manual = await kvGetJson<string[]>(env, "trainingManual", []);
-  const due = list.some((s) => s.date <= today && RUN_TYPES.has(s.type));
-  const data = due ? await buildData(env, 120, { exclude: opts.exclude }) : null;
-  markPlan(list, data ? (Object.values(data.acts) as Array<Record<string, any>>) : [], data?.zones || [], today, manual);
-  return { goal: plan.goal, note: plan.note, updated: plan.updated, today, sessions: list };
-}
-
-/** Plan-Einheiten abhaken (ohne eigenen Datenabruf, auch für die Abzeichen in buildData, #192):
- *  Läufe über checkOff mit Prozent, Kraft/Alternativ nur selbst abgehakt (sonst nicht als verpasst) */
-export function markPlan(list: TView[], acts: Array<Record<string, any>>, zones: unknown, today: string, manual: string[]) {
   const due = list.filter((s) => s.date <= today && RUN_TYPES.has(s.type));
   if (due.length) {
-    const runs: DoneRun[] = acts
+    const data = await buildData(env, 120, { exclude: opts.exclude });
+    const runs: DoneRun[] = (Object.values(data.acts) as Array<Record<string, any>>)
       .filter((a) => /running/.test(a.type || "") && a.id && a.date && a.km > 0)
       .map((a) => ({ id: String(a.id), date: a.date, km: a.km, min: a.min || 0, hr: a.hr, laps: Array.isArray(a.laps) ? a.laps : null }));
-    const zl = (Array.isArray(zones) ? zones : []) as Array<{ sport?: string; max?: number }>;
+    const zl = (Array.isArray(data.zones) ? data.zones : []) as Array<{ sport?: string; max?: number }>;
     const zone = zl.find((z) => z && /RUN/i.test(z.sport || "") && z.max) || zl.find((z) => z && z.max);
     // checkOff kennt nur die Plan-Einheiten des Regel-Plans: hier in Wochen gruppiert nachgebaut
     const conv = due.map((s) => ({ src: s, ses: { date: s.date, type: s.type === "recovery" ? "easy" : s.type, title: s.title, km: s.km ?? 0, detail: s.detail, zone: "", reps: s.reps ?? undefined, repsMin: s.repsMin ?? undefined, pace: s.pace ?? undefined } as Session }));
     const weeks = new Map<string, Session[]>();
     for (const c of conv) weeks.set(mondayOf(c.ses.date), [...(weeks.get(mondayOf(c.ses.date)) || []), c.ses]);
     const p = { weeks: [...weeks.entries()].map(([start, sessions]) => ({ start, sessions })), paces: { hr: zonesFrom(zone) } } as unknown as Plan;
+    const manual = await kvGetJson<string[]>(env, "trainingManual", []);
     checkOff(p, runs, today, manual);
     for (const c of conv) { if (c.ses.done) c.src.done = c.ses.done; if (c.ses.missed) c.src.missed = true; }
   }
+  // Kraft/Alternativ: selbst abhaken, sonst nicht als verpasst werten
+  const manual = await kvGetJson<string[]>(env, "trainingManual", []);
   for (const s of list) if (!RUN_TYPES.has(s.type) && s.date <= today && manual.includes(s.date) && !s.done) s.done = { id: null, pct: null, why: "selbst abgehakt", km: null, sec: null, manual: true };
+  return { goal: plan.goal, note: plan.note, updated: plan.updated, today, sessions: list };
 }
 
 /** /api/training: GET Plan (±Wochen), POST move {from, index, to} | tick {date} */

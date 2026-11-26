@@ -22,7 +22,6 @@ async function loadData() {
   S.ampel = data.ampel || null;
   S.gear = null; // Ausrüstung (#52) beim nächsten Anzeigen neu laden (Kilometer ändern sich mit neuen Einheiten)
   S.prognose = data.prognose || null;
-  S.level = data.level || null; // #192
   if (Array.isArray(zones) && zones.length === 3) S.zoneCfg = zones;
   S.daily = Object.values(data.daily || {}).sort((a, b) => a.d < b.d ? -1 : 1);
   S.acts = Object.values(data.acts || {}).sort((a, b) => (a.date + a.start) < (b.date + b.start) ? -1 : 1);
