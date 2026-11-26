@@ -227,13 +227,22 @@ function addPlayback(node, map, route, a) {
   const btn = el('button', 'btn mf-play'); btn.type = 'button';
   const again = el('button', 'btn ghost mf-again'); again.type = 'button'; again.hidden = true;
   again.innerHTML = icon('aktualisieren'); again.append('Von vorn');
-  const ctl = el('div', 'mf-ctl'); ctl.append(btn, again); node.append(ctl);
+  // Tempo (Eddies Wunsch): ×1 ist bewusst ruhig (eine Minute für 10 km), ×10 entsprechend flott. Antippen schaltet weiter,
+  // die Wahl bleibt auf dem Gerät (mapPrefs.rate) und wirkt sofort, auch mitten in der Fahrt.
+  const RATES = [1, 2, 3, 5, 10];
+  let rate = RATES.includes(mapPrefs().rate) ? mapPrefs().rate : 3;
+  const rb = el('button', 'btn ghost mf-rate'); rb.type = 'button';
+  const showRate = () => { rb.textContent = '×' + rate; rb.setAttribute('aria-label', 'Tempo ' + rate + '-fach, antippen zum Ändern'); };
+  showRate();
+  rb.addEventListener('click', (e) => { e.stopPropagation(); rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length]; saveMapPrefs({ ...mapPrefs(), rate }); showRate(); });
+  const ctl = el('div', 'mf-ctl'); ctl.append(btn, again, rb); node.append(ctl);
   const label = (txt, ic) => { btn.innerHTML = icon(ic); btn.append(txt); };
   label('Abspielen', 'abspielen');
   const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const km = total / 1000;
   const zoom = km < 15 ? 15 : km < 50 ? 13.8 : 12.6;
-  const dur = Math.min(16000, 8000 + km * 500);
+  // Dauer bei ×1: 40 s plus 2 s je km, mindestens 30 s, höchstens 3 Minuten (10 km ≈ 1 Minute)
+  const dur1 = Math.min(180000, Math.max(30000, 40000 + km * 2000));
   const run = sportOf(a.type || '').key === 'run' || /walk|hik/.test(a.type || '');
   // Punkt auf der Strecke nach d Metern (zwischen zwei Messpunkten linear)
   const at = (d) => {
@@ -330,10 +339,12 @@ function addPlayback(node, map, route, a) {
     for (const id of ['r-line', 'r-glow', 'r-casing']) if (map.getLayer(id)) map.setPaintProperty(id, 'line-opacity', on ? 0.22 : id === 'r-line' ? ROUTE.opacity : id === 'r-glow' ? ROUTE.glowOpacity : P.casingOpacity);
     for (const id of ['live-glow', 'live-line', 'runner']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
   };
-  // Anflug beim Start (#117): Kamera gleitet in INTRO ms von der Übersicht zum Startpunkt und neigt sich, in derselben
-  // Animation wie die Fahrt. Ab der Hälfte des Anflugs rollt der Punkt schon langsam los (ANLAUF_START), kein Übergabe-Ruck.
-  const INTRO = 1800, ANLAUF_START = 1200;
-  let intro = null; // { f: Kamera vorher, t: vergangene ms }
+  // Anflug beim Start (#117, neu nach Eddies Wunsch): Die Kamera kommt von oben herunter und dreht sich dabei in Fahrtrichtung
+  // zum Start (INTRO ms, etwas weiter weg, leicht geneigt). Erst dann rollt der Punkt los (ANLAUF_START), und die Kamera geht in
+  // SETTLE ms noch näher ran und steiler von schräg oben, so folgt sie dem Punkt.
+  const INTRO = 2400, ANLAUF_START = 1400, SETTLE = 1600;
+  const INTRO_Z = zoom - 0.8, INTRO_P = 40, FOLLOW_Z = zoom + 0.5, FOLLOW_P = 60;
+  let intro = null, settle = null; // intro: { f: Kamera vorher, t: vergangene ms }; settle: { t }
   const lerp = (x, y, k) => x + (y - x) * k;
   const lerpAng = (x, y, k) => (x + ((((y - x) % 360) + 540) % 360 - 180) * k + 360) % 360;
   // Stand bei d Metern zeichnen: Linie, Punkt, Werte und (beim Fahren) die Kamera
@@ -348,28 +359,35 @@ function addPlayback(node, map, route, a) {
       const want = geoBearing(h.p, at(Math.min(total, d + 250)).p);
       const diff = ((want - bearing + 540) % 360) - 180;
       bearing = (bearing + diff * (1 - Math.pow(0.94, dt / 16.7)) + 360) % 360;
-      if (!intro) { map.jumpTo({ center: ll(h.p), zoom, pitch: 55, bearing }); return; }
+      if (!intro) {
+        // Nach dem Anflug: in SETTLE ms näher ran und steiler von schräg oben, dann so dem Punkt folgen
+        let z = FOLLOW_Z, p = FOLLOW_P;
+        if (settle) { settle.t += dt; const k = smooth(Math.min(1, settle.t / SETTLE)); z = lerp(INTRO_Z, FOLLOW_Z, k); p = lerp(INTRO_P, FOLLOW_P, k); if (k >= 1) settle = null; }
+        map.jumpTo({ center: ll(h.p), zoom: z, pitch: p, bearing });
+        return;
+      }
       intro.t += dt;
       const k = smooth(Math.min(1, intro.t / INTRO)), f = intro.f, c = ll(h.p);
-      map.jumpTo({ center: [lerp(f.c[0], c[0], k), lerp(f.c[1], c[1], k)], zoom: lerp(f.z, zoom, k), pitch: lerp(f.p, 55, k), bearing: lerpAng(f.b, bearing, k) });
-      if (k >= 1) intro = null;
+      map.jumpTo({ center: [lerp(f.c[0], c[0], k), lerp(f.c[1], c[1], k)], zoom: lerp(f.z, INTRO_Z, k), pitch: lerp(f.p, INTRO_P, k), bearing: lerpAng(f.b, bearing, k) });
+      if (k >= 1) { intro = null; settle = { t: 0 }; }
     }
   };
   // Sanft anfahren und abbremsen (#117, Eddies Wunsch): die Geschwindigkeit wächst in ANLAUF ms auf das volle Tempo
   // und fällt beim Stopp in BREMS ms auf null. Ein schneller Wechsel Stopp/Weiter kehrt nur die Richtung um, ohne Sprung.
-  const ANLAUF = 450, BREMS = 350, speed = total / dur; // Meter pro Millisekunde, gleiches Tempo wie bisher
+  const ANLAUF = 450, BREMS = 350;
+  const speed = () => (total / dur1) * rate; // Meter pro Millisekunde beim gewählten Tempo
   let gain = 0, braking = false, last = 0, startRamp = false;
   function smooth(k) { return k * k * (3 - 2 * k); }
   // Stopp: an Ort und Stelle stehen bleiben (Kamera schräg, Werte dieser Stelle sichtbar)
   const stopped = () => {
-    cancelAnimationFrame(raf); playing = false; braking = false; gain = 0; intro = null; startRamp = false;
+    cancelAnimationFrame(raf); playing = false; braking = false; gain = 0; intro = null; settle = null; startRamp = false;
     if (!node.isConnected) return;
     draw(pos, false, true);
   };
   const pause = () => { braking = true; label('Weiter', 'abspielen'); again.hidden = false; };
   // Ziel erreicht: zurück zur ganzen Strecke, unten wieder die Zusammenfassung
   const finish = () => {
-    cancelAnimationFrame(raf); playing = false; active = false; braking = false; gain = 0; pos = 0; intro = null; startRamp = false;
+    cancelAnimationFrame(raf); playing = false; active = false; braking = false; gain = 0; pos = 0; intro = null; settle = null; startRamp = false;
     if (!node.isConnected) return; // Vollbild schon geschlossen, Karte ist weg
     label('Abspielen', 'abspielen'); again.hidden = true; dim(false); showLive(false);
     const lo = route.map((r) => r[1]), la = route.map((r) => r[0]);
@@ -380,14 +398,14 @@ function addPlayback(node, map, route, a) {
     const step = (now) => {
       if (!playing || !node.isConnected) return;
       const dt = Math.min(now - last, 50); last = now;
-      // im Anflug erst ab der Hälfte und langsamer anfahren
-      const wait = intro && intro.t < INTRO * 0.5;
+      // während des Anflugs steht der Punkt am Start, danach fährt er langsam an
+      const wait = !!intro;
       gain = braking ? Math.max(0, gain - dt / BREMS) : wait ? 0 : Math.min(1, gain + dt / (intro || gain < 1 && startRamp ? ANLAUF_START : ANLAUF));
       if (gain >= 1) startRamp = false;
       // Ende sanft: auf den letzten Metern gleichmäßig abbremsen (Tempo ~ Wurzel der Reststrecke), wie der Anlauf am Start
-      const rest = total - pos, AUSLAUF = speed * 900;
+      const rest = total - pos, AUSLAUF = speed() * 900;
       const endF = rest < AUSLAUF ? Math.max(0.03, Math.sqrt(rest / AUSLAUF)) : 1;
-      pos = Math.min(total, pos + speed * dt * smooth(gain) * endF);
+      pos = Math.min(total, pos + speed() * dt * smooth(gain) * endF);
       if (total - pos < 0.5) pos = total;
       draw(pos, true, pos >= total, dt);
       if (pos >= total) { playing = false; label('Abspielen', 'abspielen'); setTimeout(finish, 700); return; }

@@ -5,6 +5,14 @@ export interface NewsEntry { id: string; titel: string; punkte: string[] }
 
 export const NEWS: NewsEntry[] = [
   {
+    id: "2026-11-29e",
+    titel: "Abspielen mit Tempo",
+    punkte: [
+      "Beim Abspielen einer Strecke kannst du das Tempo wählen: ×1, ×2, ×3, ×5 oder ×10. Antippen schaltet weiter, die App merkt sich deine Wahl.",
+      "Die Kamera kommt jetzt von oben herunter, dreht sich zum Start und geht beim Losfahren noch etwas näher ran.",
+    ],
+  },
+  {
     id: "2026-11-29d",
     titel: "Schlaf von Fitbit und Pixel Watch",
     punkte: [
