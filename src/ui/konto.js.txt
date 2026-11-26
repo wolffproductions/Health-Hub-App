@@ -70,6 +70,7 @@ function showKontoView(view) {
 function renderAccount() {
   renderMe();
   renderWeatherCfg();
+  renderDayExport();
   renderRwSettings(); // Rad-Wetter (#153)
   renderFriendAdmin();
   renderZoneForm();
@@ -857,6 +858,120 @@ function initWeatherCfg() {
     await api('/api/wetter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: e.target.checked }) }).catch(() => {});
     renderWeatherCfg();
   });
+}
+
+// ---------- Tag exportieren: alle Daten eines Tages als Datei (Server: src/export-api.ts) ----------
+// Zwei Schritte, weil Safari das Teilen-Menü nur direkt aus einem Antippen öffnet: erst „Datei erstellen“ (lädt, dauert
+// mit Google etwa eine halbe Minute), dann „Teilen“ bzw. „Sichern“ mit der fertigen Datei.
+const DX = { blob: null, day: '', busy: false };
+function renderDayExport() {
+  const inp = $('#dx-day'), today = new Date().toLocaleDateString('en-CA');
+  inp.max = today;
+  // Standard gestern: der Tag ist abgeschlossen und die Nacht davor ausgewertet
+  if (!inp.value) inp.value = addDays(today, -1);
+  const g = S.status && S.status.google;
+  $('#dx-google-box').hidden = !(g && g.connected);
+}
+/** Anzahl Datenpunkte einer Google-Antwort (list: dataPoints, dailyRollUp: rollupDataPoints) */
+function dxPoints(a) {
+  return (a.antworten || []).reduce((n, x) => n + ((x && (x.dataPoints || x.rollupDataPoints)) || []).length, 0);
+}
+/** Jede Google-Datenart in einem eigenen Aufruf (Limit von 50 Anfragen je Aufruf), drei gleichzeitig */
+async function dxGoogle(day, ids, step) {
+  const arten = new Array(ids.length);
+  let next = 0, done = 0, stop = '', name = 's';
+  const one = async (id) => {
+    try {
+      const r = await fetch('/api/export/google?day=' + day + '&id=' + encodeURIComponent(id) + '&name=' + name, { credentials: 'same-origin' });
+      if (r.status === 401) { stop = 'anmeldung'; return { id, ok: false, fehler: 'Nicht mehr angemeldet' }; }
+      const a = await r.json();
+      // Schreibweise im Filter, die Google angenommen hat, für die nächsten Arten zuerst probieren
+      if (a.benennung) name = a.benennung;
+      if (a.stop) stop = a.stop;
+      return a;
+    } catch (e) { return { id, ok: false, fehler: 'Antwort nicht lesbar: ' + ((e && e.message) || e) }; }
+  };
+  const worker = async () => { while (!stop && next < ids.length) { const i = next++; arten[i] = await one(ids[i]); step(++done); } };
+  await Promise.all([worker(), worker(), worker()]);
+  const why = stop === 'pause' ? 'Google bat um eine Pause' : stop === 'anmeldung' ? 'nicht mehr angemeldet' : 'Google-Verbindung fehlt oder ist abgelaufen';
+  for (let i = 0; i < ids.length; i++) if (!arten[i]) arten[i] = { id: ids[i], ok: false, fehler: 'Nicht abgefragt: ' + why };
+  for (const a of arten) a.punkte = dxPoints(a);
+  return { arten, stop, why };
+}
+/** Große Teile (Verläufe, Rohantworten, Google-Antworten) kompakt, alles andere eingerückt und lesbar */
+function dxJson(file) {
+  const big = [];
+  const mark = (v) => (v == null ? v : (big.push(JSON.stringify(v)), '@@dx' + (big.length - 1) + '@@'));
+  const c = {
+    ...file,
+    einheiten: (file.einheiten || []).map((e) => ({ ...e, streams: mark(e.streams), hr_hist: mark(e.hr_hist), payload: mark(e.payload) })),
+    rohdaten: (file.rohdaten || []).map((r) => ({ ...r, payload: mark(r.payload) })),
+  };
+  if (file.googleLive && file.googleLive.arten) c.googleLive = { ...file.googleLive, arten: file.googleLive.arten.map((a) => ({ ...a, antworten: (a.antworten || []).map(mark) })) };
+  return JSON.stringify(c, null, 1).replace(/"@@dx(\d+)@@"/g, (_, i) => big[+i]);
+}
+const dxSize = (b) => (b < 1e6 ? Math.max(1, Math.round(b / 1e3)) + '\u00a0KB' : (b / 1e6).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + '\u00a0MB');
+async function dxBuild() {
+  if (DX.busy) return;
+  const day = $('#dx-day').value, msg = $('#dx-msg'), bar = $('#dx-progress');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) { msg.textContent = 'Bitte einen Tag wählen.'; return; }
+  DX.busy = true; DX.blob = null; DX.day = day;
+  $('#dx-ready').hidden = true; $('#dx-make').disabled = true;
+  msg.textContent = 'Lade die gespeicherten Daten …';
+  try {
+    const r = await fetch('/api/export/tag?day=' + day, { credentials: 'same-origin' });
+    if (r.status === 401) { location.href = '/login'; return; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const file = await r.json();
+    const ids = file.googleProben || [], notAsked = file.googleNichtAbgefragt || [];
+    delete file.googleProben; delete file.googleNichtAbgefragt;
+    if (ids.length && $('#dx-google').checked) {
+      bar.hidden = false; bar.firstElementChild.style.width = '0%';
+      const g = await dxGoogle(day, ids, (n) => {
+        bar.firstElementChild.style.width = Math.round(n / ids.length * 100) + '%';
+        msg.textContent = 'Google: ' + n + ' von ' + ids.length + ' Datenarten …';
+      });
+      file.googleLive = { abgefragt: new Date().toISOString(), arten: g.arten, nichtAbgefragt: notAsked };
+      if (g.stop) file.googleLive.abbruch = g.why + ', die übrigen Arten fehlen';
+    } else {
+      file.googleLive = { abgefragt: false, grund: ids.length ? 'Haken „Rohdaten live bei Google abrufen“ war aus' : 'Google Health ist nicht verbunden' };
+    }
+    DX.blob = new Blob([dxJson(file)], { type: 'application/json' });
+    const n = file.einheiten.length, arten = file.googleLive.arten;
+    const parts = [file.tageswerte.length + ' Tageswerte', n + (n === 1 ? ' Einheit' : ' Einheiten'), file.rohdaten.length + ' Rohdatensätze'];
+    if (arten) parts.push('Google ' + arten.filter((a) => a.punkte > 0).length + ' von ' + arten.length + ' Datenarten mit Daten');
+    msg.textContent = 'Fertig: ' + parts.join(', ') + ' (' + dxSize(DX.blob.size) + ').' + (file.googleLive.abbruch ? ' ' + file.googleLive.abbruch + '.' : '');
+    $('#dx-ready').hidden = false;
+  } catch (e) {
+    msg.textContent = 'Das hat nicht geklappt: ' + ((e && e.message) || e);
+  } finally {
+    DX.busy = false; $('#dx-make').disabled = false; bar.hidden = true;
+  }
+}
+/** Teilen-Menü mit der fertigen Datei (direkt im Antippen), sonst als Download sichern */
+async function dxDeliver(share) {
+  if (!DX.blob) return;
+  const name = 'health-hub-tag-' + DX.day + '.json';
+  if (share && navigator.canShare) {
+    let file = new File([DX.blob], name, { type: 'application/json' });
+    // Chrome (Android) teilt keine .json-Dateien, wohl aber Text: gleicher Inhalt als .json.txt
+    if (!navigator.canShare({ files: [file] })) file = new File([DX.blob], name + '.txt', { type: 'text/plain' });
+    if (navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+  }
+  const url = URL.createObjectURL(DX.blob);
+  const link = document.createElement('a'); link.href = url; link.download = name;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  $('#dx-msg').textContent = 'Gesichert als ' + name + '.';
+}
+function initDayExport() {
+  $('#dx-make').addEventListener('click', dxBuild);
+  $('#dx-share').addEventListener('click', () => dxDeliver(true));
+  $('#dx-save').addEventListener('click', () => dxDeliver(false));
+  // Anderer Tag: die fertige Datei gehört nicht mehr dazu
+  $('#dx-day').addEventListener('change', () => { if (DX.busy) return; DX.blob = null; $('#dx-ready').hidden = true; $('#dx-msg').textContent = ''; });
 }
 
 // ---------- Feedback (#162) ----------

@@ -86,6 +86,21 @@
         <label class="mcp-mood"><input type="checkbox" id="wx-on"><span>Wetter von Open-Meteo holen</span></label>
         <p class="note" id="wx-state"></p>
       </div>
+      <!-- Tag exportieren: alle Daten eines Tages als Datei, die du selbst verschickst (src/export-api.ts) -->
+      <div class="card form" id="dx-card">
+        <h3>Tag exportieren</h3>
+        <p class="note">Legt alle Daten eines Tages in eine Datei: Tageswerte, Einheiten ohne GPS-Route und die gespeicherten Rohdaten deiner Quellen. Die kannst du zum Beispiel Pablo und Eddie schicken, damit sie sehen, was deine Uhr alles liefert.</p>
+        <label>Tag<input type="date" id="dx-day"></label>
+        <div class="dx-google" id="dx-google-box" hidden>
+          <label class="mcp-mood"><input type="checkbox" id="dx-google" checked><span>Rohdaten live bei Google abrufen</span></label>
+          <p class="note">Fragt jede Datenart dieses Tages einzeln bei Google Health ab, zum Beispiel Puls im Tagesverlauf, Schritte, Sauerstoff und Schlafphasen, und legt Googles Antworten unverändert in die Datei. Das passiert nur jetzt, wenn du auf „Datei erstellen“ tippst, und dauert etwa eine halbe Minute.</p>
+        </div>
+        <div class="progress" id="dx-progress" hidden><i></i></div>
+        <div class="row"><button class="btn" id="dx-make" type="button">Datei erstellen</button></div>
+        <p class="msg" id="dx-msg" role="status"></p>
+        <div class="row" id="dx-ready" hidden><button class="btn" id="dx-share" type="button">Teilen</button><button class="btn ghost" id="dx-save" type="button">Sichern</button></div>
+        <p class="note"><b>Die Datei enthält deine Gesundheitsdaten.</b> Teile sie nur mit Menschen, denen du vertraust. Nicht dabei: Passwörter und Schlüssel, Stimmung, Freunde, Profilbild, GPS-Routen sowie Daten aus Strava und WHOOP.</p>
+      </div>
     </div>
 
     <div id="konto-push" hidden>
@@ -322,7 +337,7 @@
       <h3>Nicht alle 7 Tage neu verbinden</h3>
       <p class="note">Solange dein Google-Projekt im Status „Testing“ ist, läuft die Verbindung nach 7 Tagen ab, und du musst hier neu verbinden. Die App erinnert dich daran.</p>
       <p class="note">Damit sie dauerhaft hält: in der Google Cloud Console unter <b>Google Auth Platform → Zielgruppe</b> auf „App veröffentlichen“ tippen und danach hier neu verbinden. Google zeigt dann einmal „Google hat diese App nicht überprüft“. Das ist deine eigene App: auf „Erweitert“ und „Weiter zu Mein Health Hub“ tippen.</p>
-      <p class="note">Google-Daten siehst nur du. Für Freunde sind sie nie dabei, beim Claude-Zugang nur, wenn du sie unter „Claude“ ausdrücklich freigibst (so verlangen es Googles Regeln für Gesundheitsdaten).</p>
+      <p class="note">Google-Daten siehst nur du. Für Freunde sind sie nie dabei, beim Claude-Zugang nur, wenn du sie unter „Claude“ ausdrücklich freigibst (so verlangen es Googles Regeln für Gesundheitsdaten). Mit „Tag exportieren“ unter Datenquellen kannst du sie selbst als Datei weitergeben.</p>
     </div>
     </div>
 

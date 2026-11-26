@@ -37,6 +37,7 @@ import { kindOn, kindsOf, PUSH_KINDS } from "./mitteilungen";
 import { friendsRoute, publicFriendRoute, refreshFriends } from "./freunde-api";
 import { weatherRoute, weatherStep } from "./wetter-api";
 import { radwetterPushInfo, radwetterRoute, radwetterTick } from "./radwetter-api";
+import { exportRoute } from "./export-api";
 import { VERSION } from "./version";
 import { NEWS } from "./neuigkeiten";
 import { b64u, encrypt, hmacKey, isDay, json, kvDelete, kvGet, kvGetJson, kvPut, localDate, respond, round, SECURITY_HEADERS } from "./util";
@@ -787,6 +788,8 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   if (path === "/api/wetter") return weatherRoute(req, env, ctx);
   // Rad-Wetter-Planer (#153): Vorhersage, Fenster, Kleidung, Dranbleiben, Einstellungen
   if (path === "/api/radwetter" || path.startsWith("/api/radwetter/")) return radwetterRoute(req, url, env, path.slice(15).replace(/^\//, ""));
+  // Tag exportieren: alles zu einem Tag als Datei, Google Health live je Datenart (nur lesend, Person verschickt selbst)
+  if (path.startsWith("/api/export/") && req.method === "GET") return exportRoute(url, env, path.slice(12));
   if (path === "/api/mood") return moodRoute(req, env);
   if (path === "/api/zones") return zonesRoute(req, env);
   if (path === "/api/key" && (req.method === "POST" || req.method === "DELETE")) return keyRoute(req, env);

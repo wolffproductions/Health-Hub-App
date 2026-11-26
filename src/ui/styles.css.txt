@@ -408,6 +408,8 @@
   /* Claude-Zugang (#5) */
   .form label.mcp-mood { flex-direction: row; align-items: center; gap: 12px; font-size: 15px; color: var(--fg); }
   .form .mcp-mood input { width: 22px; height: 22px; min-height: 0; padding: 0; flex: none; accent-color: var(--ok); }
+  /* Tag exportieren: Haken und Erklärung als eine Gruppe */
+  .dx-google { display: flex; flex-direction: column; gap: 8px; }
   .mcp-list { list-style: none; margin: 0 -18px; padding: 0; border-top: .5px solid var(--line); }
   .mcp-list li { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
   .mcp-list li + li { border-top: .5px solid var(--line); }
