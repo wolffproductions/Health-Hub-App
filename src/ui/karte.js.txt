@@ -468,12 +468,18 @@ const MAP_SOURCES = {
 MAP_PAL.sat = { ...MAP_PAL.dark, route: '#64d2ff', casingOpacity: 0.65 };
 const routePal = (base) => (base === 'satellit' ? MAP_PAL.sat : base === 'topo' ? MAP_PAL.light : mapPal());
 
-// Einstellungen je Gerät. laps: null = automatisch (an bei echten Runden/Intervallen, aus bei Auto-Runden je km);
-// km: null = automatisch (an, außer echte Runden sind eingeblendet, sonst stehen zwei Zahlenreihen auf der Route)
+// Einstellungen je Gerät. Einblendungen (Kilometer, Richtung, Runden, Pausen) sind anfangs alle aus (Eddies Wunsch: die Karte
+// zeigt zuerst nur die Route), man schaltet sie im Menü rechts selbst ein. laps/km: null = automatisch wäre auch möglich
+// (Runden an bei echten Runden, Kilometer an ohne Runden), wird aber nicht mehr als Standard genutzt.
+// v: Stand der Standardwerte. v < 2 (alte Geräte mit gespeicherten Werten): Einblendungen einmalig zurück auf aus.
 const MAP_PREF_KEY = 'mapPrefs';
-const MAP_PREF_DEF = { base: 'standard', hill: false, km: null, arrows: false, laps: null, pauses: true, color: 'none' };
+const MAP_PREF_DEF = { v: 2, base: 'standard', hill: false, km: false, arrows: false, laps: false, pauses: false, color: 'none' };
 function mapPrefs() {
-  try { return { ...MAP_PREF_DEF, ...JSON.parse(localStorage.getItem(MAP_PREF_KEY) || '{}') }; } catch { return { ...MAP_PREF_DEF }; }
+  try {
+    const p = { ...MAP_PREF_DEF, ...JSON.parse(localStorage.getItem(MAP_PREF_KEY) || '{}') };
+    if (!(p.v >= 2)) { Object.assign(p, { v: 2, km: false, arrows: false, laps: false, pauses: false }); saveMapPrefs(p); }
+    return p;
+  } catch { return { ...MAP_PREF_DEF }; }
 }
 function saveMapPrefs(p) { try { localStorage.setItem(MAP_PREF_KEY, JSON.stringify(p)); } catch { /* privates Fenster: nur für diese Sitzung */ } }
 
